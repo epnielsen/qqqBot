@@ -25,8 +25,17 @@ if (cmdOverrides == null)
     return;
 }
 
+// Set up graceful shutdown on Ctrl+C
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (sender, e) =>
+{
+    e.Cancel = true; // Prevent immediate termination
+    Log("\n⚠️  Shutdown requested (Ctrl+C). Liquidating positions...");
+    cts.Cancel();
+};
+
 // Run the trading bot
-await RunTradingBotAsync(cmdOverrides);
+await RunTradingBotAsync(cmdOverrides, cts.Token);
 
 // ============================================================================
 // COMMAND LINE PARSING
@@ -52,6 +61,23 @@ CommandLineOverrides? ParseCommandLineOverrides(string[] args)
         else if (arg.Equals("-usebtc", StringComparison.OrdinalIgnoreCase))
         {
             overrides.UseBtcEarlyTrading = true;
+        }
+        else if (arg.StartsWith("-neutralwait=", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = arg.Substring("-neutralwait=".Length).Trim();
+            if (int.TryParse(value, out var seconds) && seconds > 0)
+            {
+                overrides.NeutralWaitSecondsOverride = seconds;
+            }
+            else
+            {
+                LogError($"-neutralwait must be a positive integer. Got: {value}");
+                return null;
+            }
+        }
+        else if (arg.Equals("-watchbtc", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.WatchBtc = true;
         }
     }
     
@@ -175,7 +201,7 @@ async Task<bool> RunDotnetCommandAsync(string arguments)
 // ============================================================================
 // TRADING BOT
 // ============================================================================
-async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
+async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationToken cancellationToken = default)
 {
     Log("=== QQQ Trading Bot Starting ===\n");
 
@@ -217,6 +243,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
         SMALength = configuration.GetValue("TradingBot:SMALength", 12),
         ChopThresholdPercent = configuration.GetValue("TradingBot:ChopThresholdPercent", 0.0015m),
         NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
+        WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
         StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m)
     };
     
@@ -233,10 +260,11 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
         CryptoBenchmarkSymbol = configSettings.CryptoBenchmarkSymbol,
         SMALength = configSettings.SMALength,
         ChopThresholdPercent = configSettings.ChopThresholdPercent,
-        NeutralWaitSeconds = configSettings.NeutralWaitSeconds,
+        NeutralWaitSeconds = cmdOverrides.NeutralWaitSecondsOverride ?? configSettings.NeutralWaitSeconds,
         StartingAmount = configSettings.StartingAmount,
         BullOnlyMode = cmdOverrides.BullOnlyMode,
-        UseBtcEarlyTrading = useBtcEarlyTrading
+        UseBtcEarlyTrading = useBtcEarlyTrading,
+        WatchBtc = cmdOverrides.WatchBtc || configSettings.WatchBtc
     };
 
     // Initialize Alpaca clients (Paper Trading) - needed for ticker validation
@@ -371,6 +399,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
     Log($"  SMA Length: {settings.SMALength}");
     Log($"  Chop Threshold: {settings.ChopThresholdPercent * 100:N3}%");
     Log($"  Neutral Wait: {settings.NeutralWaitSeconds}s");
+    Log($"  BTC Correlation (Neutral Nudge): {(settings.WatchBtc ? "Enabled" : "Disabled")}");
     Log($"  Polling Interval: {settings.PollingIntervalSeconds}s");
     Log($"  Starting Amount: ${tradingState.StartingAmount:N2}");
     Log($"  Current Available Cash: ${tradingState.AvailableCash:N2}");
@@ -401,6 +430,44 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
         LogError($"Failed to connect to Alpaca: {ex.Message}");
         return;
     }
+    
+    // Startup check: Verify local state matches Alpaca positions
+    if (!string.IsNullOrEmpty(tradingState.CurrentPosition) && tradingState.CurrentShares > 0)
+    {
+        try
+        {
+            var positions = await tradingClient.ListPositionsAsync();
+            var matchingPosition = positions.FirstOrDefault(p => 
+                p.Symbol.Equals(tradingState.CurrentPosition, StringComparison.OrdinalIgnoreCase));
+            
+            if (matchingPosition == null)
+            {
+                LogError($"⚠️  STATE MISMATCH: Local state shows {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
+                LogError($"   but Alpaca has NO position for this symbol.");
+                LogError($"   This may happen if a previous shutdown failed to liquidate.");
+                LogError($"   Clearing local position state and continuing with available cash.");
+                
+                // Clear position tracking but keep cash tracking
+                tradingState.CurrentPosition = null;
+                tradingState.CurrentShares = 0;
+                SaveTradingState(stateFilePath, tradingState);
+            }
+            else if (matchingPosition.Quantity < tradingState.CurrentShares)
+            {
+                LogError($"⚠️  STATE MISMATCH: Local state shows {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
+                LogError($"   but Alpaca only has {matchingPosition.Quantity} shares.");
+                LogError($"   Adjusting local state to match Alpaca.");
+                
+                tradingState.CurrentShares = (long)matchingPosition.Quantity;
+                SaveTradingState(stateFilePath, tradingState);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogError($"Warning: Could not verify position state: {ex.Message}");
+            Log("Continuing with local state...");
+        }
+    }
 
     // Eastern Time Zone
     var easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
@@ -414,6 +481,9 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
     await SeedRollingSmaAsync(settings, dataClient, cryptoDataClient, priceQueue, easternZone);
     Log($"Rolling SMA Engine Initialized with {priceQueue.Count} data points.");
 
+    // BTC Correlation Queue (for -watchbtc mode)
+    var btcQueue = new Queue<decimal>();
+
     // Track last market closed notification to avoid spam
     DateTime? lastMarketClosedLog = null;
     const int marketClosedLogIntervalMinutes = 30;
@@ -426,7 +496,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
     string lastSignal = string.Empty;
 
     // Main trading loop
-    while (true)
+    while (!cancellationToken.IsCancellationRequested)
     {
         try
         {
@@ -489,7 +559,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
             var upperBand = currentSma * (1 + settings.ChopThresholdPercent);
             var lowerBand = currentSma * (1 - settings.ChopThresholdPercent);
 
-            // Determine Signal
+            // Determine Primary Signal (from benchmark)
             string signal;
             var timeOfDay = easternNow.TimeOfDay;
             // Force liquidation 2 minutes before market close (3:58 PM ET)
@@ -512,10 +582,56 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
                 signal = "NEUTRAL";
             }
 
-            // LOGGING CONTROL
-            bool stateChanged = signal != lastSignal;
+            // BTC Correlation Logic (Neutral Nudge / Tie-Breaker)
+            string btcSignal = "NEUTRAL";
+            string finalSignal = signal;
+            
+            if (settings.WatchBtc)
+            {
+                // Fetch BTC price
+                var btcTrades = await cryptoDataClient.ListLatestTradesAsync(
+                    new LatestDataListRequest([settings.CryptoBenchmarkSymbol]));
+                var btcPrice = btcTrades[settings.CryptoBenchmarkSymbol].Price;
+                
+                // Update BTC SMA Queue (same length as primary)
+                btcQueue.Enqueue(btcPrice);
+                if (btcQueue.Count > settings.SMALength)
+                {
+                    btcQueue.Dequeue();
+                }
+                
+                // Calculate BTC signal using same SMA/Band logic
+                if (btcQueue.Count >= settings.SMALength)
+                {
+                    var btcSma = btcQueue.Average();
+                    var btcUpperBand = btcSma * (1 + settings.ChopThresholdPercent);
+                    var btcLowerBand = btcSma * (1 - settings.ChopThresholdPercent);
+                    
+                    if (btcPrice > btcUpperBand)
+                        btcSignal = "BULL";
+                    else if (btcPrice < btcLowerBand)
+                        btcSignal = "BEAR";
+                    else
+                        btcSignal = "NEUTRAL";
+                }
+                
+                // Apply BTC nudge only when primary signal is NEUTRAL
+                if (signal == "NEUTRAL" && btcSignal != "NEUTRAL")
+                {
+                    finalSignal = btcSignal;
+                }
+            }
+
+            // LOGGING CONTROL (check against finalSignal for state changes)
+            bool stateChanged = finalSignal != lastSignal;
             // Use 30s as default log interval
             bool shouldLog = stateChanged || (DateTime.UtcNow - lastLogTime).TotalSeconds >= 30;
+
+            // Log BTC nudge if it occurred
+            if (settings.WatchBtc && signal == "NEUTRAL" && finalSignal != "NEUTRAL" && shouldLog)
+            {
+                Log($"    [BTC NUDGE] Overriding NEUTRAL to {finalSignal} (BTC correlation)");
+            }
 
             if (shouldLog)
             {
@@ -542,25 +658,25 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
 
                 Log($"--- {easternNow:HH:mm:ss} ET | {benchmarkSymbol}: ${currentPrice:N2} | SMA: ${currentSma:N2} ---");
                 Log($"    Bands: [${lowerBand:N2} - ${upperBand:N2}]");
-                Log($"    Signal: {signal} 🟢🔴⚪");
+                Log($"    Signal: {finalSignal} 🟢🔴⚪{(signal != finalSignal ? $" (was {signal})" : "")}");
 
                 lastLogTime = DateTime.UtcNow;
             }
             
-            lastSignal = signal;
+            lastSignal = finalSignal;
 
-            // Execute Strategy based on Signal
-            if (signal == "MARKET_CLOSE")
+            // Execute Strategy based on finalSignal
+            if (finalSignal == "MARKET_CLOSE")
             {
                 neutralDetectionTime = null; // Reset neutral timer
                 await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "MARKET CLOSE", showStatus: shouldLog);
             }
-            else if (signal == "BULL")
+            else if (finalSignal == "BULL")
             {
                 neutralDetectionTime = null; // Reset neutral timer
                 await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
             }
-            else if (signal == "BEAR")
+            else if (finalSignal == "BEAR")
             {
                 neutralDetectionTime = null; // Reset neutral timer
                 // In bull-only mode, BEAR signal dumps to cash
@@ -573,7 +689,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
                     await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
                 }
             }
-            else // NEUTRAL
+            else // NEUTRAL (true chop - BTC didn't nudge or WatchBtc is off)
             {
                 if (neutralDetectionTime == null)
                 {
@@ -607,14 +723,66 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
 
         try
         {
-            // Wait for next poll (Micro-polling)
-            await Task.Delay(TimeSpan.FromSeconds(settings.PollingIntervalSeconds));
+            // Wait for next poll (Micro-polling) - use cancellation token
+            await Task.Delay(TimeSpan.FromSeconds(settings.PollingIntervalSeconds), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown requested - exit loop gracefully
+            break;
         }
         catch (Exception delayEx)
         {
             LogError($"Error during delay: {delayEx.Message}");
         }
     }
+    
+    // =========================================================================
+    // GRACEFUL SHUTDOWN - Liquidate positions before exit
+    // =========================================================================
+    Log("\n=== Graceful Shutdown ===");
+    
+    if (!string.IsNullOrEmpty(tradingState.CurrentPosition) && tradingState.CurrentShares > 0)
+    {
+        Log($"Attempting to liquidate {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}...");
+        try
+        {
+            var positions = await tradingClient.ListPositionsAsync();
+            var currentPosition = positions.FirstOrDefault(p => 
+                p.Symbol.Equals(tradingState.CurrentPosition, StringComparison.OrdinalIgnoreCase));
+            
+            var liquidated = await LiquidatePositionAsync(
+                tradingState.CurrentPosition, 
+                currentPosition, 
+                tradingState, 
+                tradingClient, 
+                dataClient, 
+                stateFilePath);
+            
+            if (liquidated)
+            {
+                LogSuccess("Position liquidated successfully.");
+            }
+            else
+            {
+                LogError("⚠️  POSITION NOT LIQUIDATED - Market may be closed.");
+                LogError($"   You still hold {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
+                LogError("   State file preserved. Position will be liquidated on next run when market opens.");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogError($"Failed to liquidate position during shutdown: {ex.Message}");
+            LogError($"⚠️  You may still hold {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
+        }
+    }
+    else
+    {
+        Log("No positions to liquidate. Already in cash.");
+    }
+    
+    Log("Bot shutdown complete. Final state saved.");
+    Log($"Final Balance: ${tradingState.AvailableCash + tradingState.AccumulatedLeftover:N2}");
 }
 
 // Validate ticker symbol using GetAssetAsync and checking IsTradable
@@ -643,6 +811,7 @@ async Task<bool> ValidateTickerAsync(string ticker, IAlpacaTradingClient trading
 }
 
 // Liquidate positions from config file before trading with override tickers
+// IMPORTANT: Only liquidate positions this instance claims ownership of (via local state)
 async Task LiquidateConfiguredPositionsAsync(
     TradingSettings configSettings,
     TradingState tradingState,
@@ -650,27 +819,35 @@ async Task LiquidateConfiguredPositionsAsync(
     IAlpacaDataClient dataClient,
     string stateFilePath)
 {
-    var positions = await tradingClient.ListPositionsAsync();
-    
-    // Check for configured Bull position
-    var bullPosition = positions.FirstOrDefault(p => 
-        p.Symbol.Equals(configSettings.BullSymbol, StringComparison.OrdinalIgnoreCase));
-    if (bullPosition != null)
+    // Only proceed if local state claims ownership of a position
+    // This prevents liquidating positions owned by other bot instances
+    if (string.IsNullOrEmpty(tradingState.CurrentPosition) || tradingState.CurrentShares <= 0)
     {
-        Log($"Liquidating configured bull position: {configSettings.BullSymbol}");
-        await LiquidatePositionAsync(configSettings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath);
+        Log("No locally-owned positions to liquidate (fresh state or already in cash).");
+        return;
     }
     
-    // Check for configured Bear position (only if BearSymbol is configured)
-    if (!string.IsNullOrEmpty(configSettings.BearSymbol))
+    var ownedSymbol = tradingState.CurrentPosition;
+    
+    // Only liquidate if the owned position matches one of the configured symbols
+    var isBullOwned = ownedSymbol.Equals(configSettings.BullSymbol, StringComparison.OrdinalIgnoreCase);
+    var isBearOwned = !string.IsNullOrEmpty(configSettings.BearSymbol) && 
+                      ownedSymbol.Equals(configSettings.BearSymbol, StringComparison.OrdinalIgnoreCase);
+    
+    if (!isBullOwned && !isBearOwned)
     {
-        var bearPosition = positions.FirstOrDefault(p => 
-            p.Symbol.Equals(configSettings.BearSymbol, StringComparison.OrdinalIgnoreCase));
-        if (bearPosition != null)
-        {
-            Log($"Liquidating configured bear position: {configSettings.BearSymbol}");
-            await LiquidatePositionAsync(configSettings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath);
-        }
+        Log($"Locally-owned position ({ownedSymbol}) doesn't match configured symbols. Skipping liquidation.");
+        return;
+    }
+    
+    var positions = await tradingClient.ListPositionsAsync();
+    var ownedPosition = positions.FirstOrDefault(p => 
+        p.Symbol.Equals(ownedSymbol, StringComparison.OrdinalIgnoreCase));
+    
+    if (ownedPosition != null || tradingState.CurrentShares > 0)
+    {
+        Log($"Liquidating locally-owned position: {ownedSymbol} ({tradingState.CurrentShares} shares)");
+        await LiquidatePositionAsync(ownedSymbol, ownedPosition, tradingState, tradingClient, dataClient, stateFilePath);
     }
 }
 
@@ -834,7 +1011,8 @@ async Task EnsureNeutralAsync(
 
 
 // Helper: Liquidate Position
-async Task LiquidatePositionAsync(
+// Returns true if liquidation succeeded, false if it failed
+async Task<bool> LiquidatePositionAsync(
     string symbol, 
     IPosition? position, 
     TradingState tradingState, 
@@ -850,52 +1028,83 @@ async Task LiquidatePositionAsync(
     var trade = await dataClient.GetLatestTradeAsync(quoteRequest);
     var price = trade.Price;
     
-    // Use Alpaca position quantity if available, otherwise use local state
-    var shareCount = position?.Quantity ?? tradingState.CurrentShares;
+    // Use LOCAL state share count (not Alpaca position) to support multi-instance scenarios
+    // This ensures we only sell shares this bot instance "owns", not shares from other instances
+    var shareCount = tradingState.CurrentShares;
+    
+    if (shareCount <= 0)
+    {
+        Log($"[WARN] No shares to liquidate for {symbol} (local state shows 0). Clearing state.");
+        tradingState.CurrentPosition = null;
+        tradingState.CurrentShares = 0;
+        SaveTradingState(stateFilePath, tradingState);
+        return true; // Nothing to sell, state is clean
+    }
+    
     var saleProceeds = shareCount * price;
     
-    // Liquidate
+    // Liquidate using a market sell order for specific share count (not DeletePositionAsync)
     Log($"[SELL] Liquidating {shareCount} shares of {symbol} @ ~${price:N2}");
     Log($"       Expected proceeds: ${saleProceeds:N2}");
     
+    bool sellSucceeded = false;
+    bool positionNotFound = false;
+    
     try
     {
-        if (position != null)
-        {
-            await tradingClient.DeletePositionAsync(new DeletePositionRequest(symbol));
-        }
-        else
-        {
-            Log($"[WARN] Position {symbol} not found on Alpaca. Updating local state to match.");
-        }
+        var sellOrder = new NewOrderRequest(
+            symbol,
+            OrderQuantity.FromInt64(shareCount),
+            OrderSide.Sell,
+            OrderType.Market,
+            TimeInForce.Day
+        );
+        
+        var order = await tradingClient.PostOrderAsync(sellOrder);
+        LogSuccess($"Sell order submitted: {order.OrderId}");
+        sellSucceeded = true;
     }
     catch (Exception ex)
     {
-        // 404 Not Found is common if position was already closed
-        if (ex.Message.Contains("position not found"))
+        // Handle case where position doesn't exist or insufficient shares
+        if (ex.Message.Contains("insufficient") || ex.Message.Contains("not found"))
         {
-            Log($"[WARN] Position already closed ({ex.Message}). updating local state.");
+            Log($"[WARN] Could not sell shares ({ex.Message}). Position may not exist.");
+            positionNotFound = true;
+        }
+        else if (ex.Message.Contains("market") || ex.Message.Contains("closed") || ex.Message.Contains("outside"))
+        {
+            LogError($"[WARN] Market may be closed. Cannot liquidate: {ex.Message}");
+            return false; // Don't update state - position still exists
         }
         else
         {
-            throw; // Re-throw other errors
+            LogError($"[ERROR] Liquidation failed: {ex.Message}");
+            return false; // Don't update state on unknown errors
         }
     }
     
-    // Update trading state
-    tradingState.AvailableCash = saleProceeds + tradingState.AccumulatedLeftover;
-    tradingState.AccumulatedLeftover = 0m; 
-    tradingState.CurrentPosition = null;
-    tradingState.CurrentShares = 0;
-    SaveTradingState(stateFilePath, tradingState);
+    // Only update trading state if sell succeeded or position doesn't exist
+    if (sellSucceeded || positionNotFound)
+    {
+        tradingState.AvailableCash = sellSucceeded ? (saleProceeds + tradingState.AccumulatedLeftover) : tradingState.AccumulatedLeftover;
+        tradingState.AccumulatedLeftover = 0m; 
+        tradingState.CurrentPosition = null;
+        tradingState.CurrentShares = 0;
+        SaveTradingState(stateFilePath, tradingState);
+        
+        // Display balance and P/L after sale
+        var totalBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
+        var profitLoss = totalBalance - tradingState.StartingAmount;
+        LogBalanceWithPL(totalBalance, profitLoss);
+        
+        // Small delay to allow order to process
+        if (sellSucceeded) await Task.Delay(2000);
+        
+        return true;
+    }
     
-    // Display balance and P/L after sale
-    var totalBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
-    var profitLoss = totalBalance - tradingState.StartingAmount;
-    LogBalanceWithPL(totalBalance, profitLoss);
-    
-    // Small delay to allow order to process
-    await Task.Delay(2000);
+    return false;
 }
 
 // Helper: Buy Position
@@ -1093,6 +1302,7 @@ class TradingSettings
     public decimal StartingAmount { get; set; } = 10000m;
     public bool BullOnlyMode { get; set; } = false;
     public bool UseBtcEarlyTrading { get; set; } = true; // Use BTC/USD as early trading weathervane
+    public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
 }
 
 class TradingState
@@ -1122,6 +1332,8 @@ class CommandLineOverrides
     public bool BullOnlyMode { get; set; }
     public bool HasOverrides { get; set; }
     public bool UseBtcEarlyTrading { get; set; }
+    public int? NeutralWaitSecondsOverride { get; set; }
+    public bool WatchBtc { get; set; }
 }
 
 // Marker class for user secrets

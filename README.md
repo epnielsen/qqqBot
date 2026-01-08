@@ -118,6 +118,9 @@ dotnet run -- -bull=UPRO -bear=SPXU -benchmark=SPY
 
 # Use BTC/USD early trading weathervane with overrides
 dotnet run -- -bull=UPRO -usebtc
+
+# Enable BTC correlation (neutral nudge) with custom neutral wait
+dotnet run -- -watchbtc -neutralwait=60
 ```
 
 | Option | Description |
@@ -126,6 +129,8 @@ dotnet run -- -bull=UPRO -usebtc
 | `-bear=TICKER` | Override the bear ETF symbol (requires -bull) |
 | `-benchmark=TICKER` | Override the benchmark symbol |
 | `-usebtc` | Enable BTC/USD early trading (9:30-9:55 AM) with overrides |
+| `-watchbtc` | Enable BTC correlation to nudge NEUTRAL signals to BULL/BEAR |
+| `-neutralwait=SECONDS` | Override neutral wait time (must be > 0) |
 
 **Rules:**
 - All tickers are validated before trading begins; invalid tickers cause the bot to exit
@@ -139,6 +144,12 @@ dotnet run -- -bull=UPRO -usebtc
 - By default (no CLI overrides), BTC/USD is used from 9:30-9:55 AM to set initial market direction
 - When CLI overrides are active, BTC/USD is disabled (SMA starts neutral and gradually seeds)
 - Use `-usebtc` with overrides to re-enable BTC/USD early trading for correlated assets
+
+**BTC Correlation (Neutral Nudge):**
+- When `-watchbtc` is enabled, BTC/USD is monitored alongside the benchmark
+- If the primary signal is NEUTRAL but BTC shows BULL or BEAR, the bot "nudges" to that direction
+- BTC can only resolve NEUTRAL states - it cannot override explicit BULL/BEAR signals
+- This helps avoid choppy sideways markets by using BTC as a tie-breaker
 
 ## Strategy Logic
 
