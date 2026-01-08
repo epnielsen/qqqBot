@@ -99,6 +99,47 @@ The bot will:
 5. Calculate SMA and determine trend
 6. Execute trades using the fixed amount strategy
 
+### Command Line Overrides
+
+You can override ticker symbols at runtime without modifying the config file:
+
+```bash
+# Trade a different bull ticker (neutral/bear signals go to cash)
+dotnet run -- -bull=UPRO
+
+# Trade with a different benchmark (uses same ticker for bull)
+dotnet run -- -benchmark=SPY
+
+# Full override: custom bull and bear tickers
+dotnet run -- -bull=UPRO -bear=SPXU
+
+# Full override with custom benchmark
+dotnet run -- -bull=UPRO -bear=SPXU -benchmark=SPY
+
+# Use BTC/USD early trading weathervane with overrides
+dotnet run -- -bull=UPRO -usebtc
+```
+
+| Option | Description |
+|--------|-------------|
+| `-bull=TICKER` | Override the bull ETF symbol |
+| `-bear=TICKER` | Override the bear ETF symbol (requires -bull) |
+| `-benchmark=TICKER` | Override the benchmark symbol |
+| `-usebtc` | Enable BTC/USD early trading (9:30-9:55 AM) with overrides |
+
+**Rules:**
+- All tickers are validated before trading begins; invalid tickers cause the bot to exit
+- `-bear` cannot be specified without `-bull`
+- If only `-bull` is specified, neutral and bear signals dump to cash (bull-only mode)
+- If only `-benchmark` is specified, it's used as both benchmark and bull symbol (bull-only mode)
+- Command line overrides do NOT modify the config file
+- The bot will liquidate any positions from the configured symbols before trading with override tickers
+
+**Early Trading (BTC/USD Weathervane):**
+- By default (no CLI overrides), BTC/USD is used from 9:30-9:55 AM to set initial market direction
+- When CLI overrides are active, BTC/USD is disabled (SMA starts neutral and gradually seeds)
+- Use `-usebtc` with overrides to re-enable BTC/USD early trading for correlated assets
+
 ## Strategy Logic
 
 ```

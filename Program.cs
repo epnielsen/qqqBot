@@ -17,8 +17,71 @@ if (args.Length > 0 && args[0].Equals("--setup", StringComparison.OrdinalIgnoreC
     return;
 }
 
+// Parse command line overrides
+var cmdOverrides = ParseCommandLineOverrides(args);
+if (cmdOverrides == null)
+{
+    // Parsing failed with error message already printed
+    return;
+}
+
 // Run the trading bot
-await RunTradingBotAsync();
+await RunTradingBotAsync(cmdOverrides);
+
+// ============================================================================
+// COMMAND LINE PARSING
+// ============================================================================
+CommandLineOverrides? ParseCommandLineOverrides(string[] args)
+{
+    var overrides = new CommandLineOverrides();
+    
+    foreach (var arg in args)
+    {
+        if (arg.StartsWith("-bull=", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.BullTicker = arg.Substring("-bull=".Length).Trim().ToUpperInvariant();
+        }
+        else if (arg.StartsWith("-bear=", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.BearTicker = arg.Substring("-bear=".Length).Trim().ToUpperInvariant();
+        }
+        else if (arg.StartsWith("-benchmark=", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.BenchmarkTicker = arg.Substring("-benchmark=".Length).Trim().ToUpperInvariant();
+        }
+        else if (arg.Equals("-usebtc", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.UseBtcEarlyTrading = true;
+        }
+    }
+    
+    // Validation: -bear may not be specified without -bull
+    if (!string.IsNullOrEmpty(overrides.BearTicker) && string.IsNullOrEmpty(overrides.BullTicker))
+    {
+        LogError("-bear may not be specified without -bull. Please specify -bull=TICKER or remove -bear.");
+        return null;
+    }
+    
+    // If only -bull is specified, use bull ticker as both benchmark and bull (neutral/bear -> cash)
+    if (!string.IsNullOrEmpty(overrides.BullTicker) && string.IsNullOrEmpty(overrides.BearTicker))
+    {
+        overrides.BenchmarkTicker ??= overrides.BullTicker;
+        overrides.BullOnlyMode = true;
+    }
+    
+    // If only -benchmark is specified, use it as both benchmark and bull (neutral/bear -> cash)
+    if (!string.IsNullOrEmpty(overrides.BenchmarkTicker) && string.IsNullOrEmpty(overrides.BullTicker))
+    {
+        overrides.BullTicker = overrides.BenchmarkTicker;
+        overrides.BullOnlyMode = true;
+    }
+    
+    overrides.HasOverrides = !string.IsNullOrEmpty(overrides.BullTicker) || 
+                             !string.IsNullOrEmpty(overrides.BearTicker) || 
+                             !string.IsNullOrEmpty(overrides.BenchmarkTicker);
+    
+    return overrides;
+}
 
 // ============================================================================
 // SETUP CONFIGURATION
@@ -112,7 +175,7 @@ async Task<bool> RunDotnetCommandAsync(string arguments)
 // ============================================================================
 // TRADING BOT
 // ============================================================================
-async Task RunTradingBotAsync()
+async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides)
 {
     Log("=== QQQ Trading Bot Starting ===\n");
 
@@ -143,8 +206,8 @@ async Task RunTradingBotAsync()
             "Please reconfigure with paper trading keys (starting with 'PK').");
     }
 
-    // Load trading settings
-    var settings = new TradingSettings
+    // Load trading settings from config file
+    var configSettings = new TradingSettings
     {
         PollingIntervalSeconds = configuration.GetValue("TradingBot:PollingIntervalSeconds", 5),
         BullSymbol = configuration["TradingBot:BullSymbol"] ?? "TQQQ",
@@ -156,10 +219,107 @@ async Task RunTradingBotAsync()
         NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
         StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m)
     };
+    
+    // Create effective settings (may be modified by command line overrides)
+    // BTC/USD early trading is enabled by default, but disabled for CLI overrides unless -usebtc is specified
+    var useBtcEarlyTrading = !cmdOverrides.HasOverrides || cmdOverrides.UseBtcEarlyTrading;
+    
+    var settings = new TradingSettings
+    {
+        PollingIntervalSeconds = configSettings.PollingIntervalSeconds,
+        BullSymbol = cmdOverrides.BullTicker ?? configSettings.BullSymbol,
+        BearSymbol = cmdOverrides.BullOnlyMode ? null : (cmdOverrides.BearTicker ?? configSettings.BearSymbol),
+        BenchmarkSymbol = cmdOverrides.BenchmarkTicker ?? configSettings.BenchmarkSymbol,
+        CryptoBenchmarkSymbol = configSettings.CryptoBenchmarkSymbol,
+        SMALength = configSettings.SMALength,
+        ChopThresholdPercent = configSettings.ChopThresholdPercent,
+        NeutralWaitSeconds = configSettings.NeutralWaitSeconds,
+        StartingAmount = configSettings.StartingAmount,
+        BullOnlyMode = cmdOverrides.BullOnlyMode,
+        UseBtcEarlyTrading = useBtcEarlyTrading
+    };
+
+    // Initialize Alpaca clients (Paper Trading) - needed for ticker validation
+    var secretKey = new SecretKey(apiKey, apiSecret);
+    
+    using var tradingClient = Environments.Paper.GetAlpacaTradingClient(secretKey);
+    using var dataClient = Environments.Paper.GetAlpacaDataClient(secretKey);
+    using var cryptoDataClient = Environments.Paper.GetAlpacaCryptoDataClient(secretKey);
+
+    // Validate command line override tickers before any trades
+    if (cmdOverrides.HasOverrides)
+    {
+        Log("Command line overrides detected. Validating tickers...");
+        
+        var tickersToValidate = new List<string>();
+        if (!string.IsNullOrEmpty(cmdOverrides.BullTicker))
+            tickersToValidate.Add(cmdOverrides.BullTicker);
+        if (!string.IsNullOrEmpty(cmdOverrides.BearTicker))
+            tickersToValidate.Add(cmdOverrides.BearTicker);
+        if (!string.IsNullOrEmpty(cmdOverrides.BenchmarkTicker) && 
+            cmdOverrides.BenchmarkTicker != cmdOverrides.BullTicker)
+            tickersToValidate.Add(cmdOverrides.BenchmarkTicker);
+        
+        foreach (var ticker in tickersToValidate.Distinct())
+        {
+            if (!await ValidateTickerAsync(ticker, tradingClient))
+            {
+                LogError("Please verify the ticker symbol and try again.");
+                return;
+            }
+            LogSuccess($"  Validated: {ticker} (tradable)");
+        }
+        
+        // Log explicit override summary
+        Log("");
+        LogSuccess($"Running with Overrides: Bull={settings.BullSymbol}, Bear={settings.BearSymbol ?? "(none)"}, Bench={settings.BenchmarkSymbol}");
+        Log("");
+    }
 
     // Load or initialize trading state
     var stateFilePath = Path.Combine(AppContext.BaseDirectory, "trading_state.json");
     var tradingState = LoadTradingState(stateFilePath);
+    
+    // Check for symbol mismatch between saved state and current settings
+    if (tradingState.Metadata != null)
+    {
+        var symbolsMatch = 
+            tradingState.Metadata.SymbolBull == settings.BullSymbol &&
+            tradingState.Metadata.SymbolBear == settings.BearSymbol &&
+            tradingState.Metadata.SymbolIndex == settings.BenchmarkSymbol;
+        
+        if (!symbolsMatch)
+        {
+            Log("⚠️  Config mismatch: Discarding old state");
+            Log($"   Previous: Bull={tradingState.Metadata.SymbolBull}, Bear={tradingState.Metadata.SymbolBear}, Bench={tradingState.Metadata.SymbolIndex}");
+            Log($"   Current:  Bull={settings.BullSymbol}, Bear={settings.BearSymbol ?? "(none)"}, Bench={settings.BenchmarkSymbol}");
+            
+            // Reset to neutral/cash state but preserve financial tracking
+            tradingState.CurrentPosition = null;
+            tradingState.CurrentShares = 0;
+            
+            // Update metadata to reflect new symbols
+            tradingState.Metadata = new TradingStateMetadata
+            {
+                SymbolBull = settings.BullSymbol,
+                SymbolBear = settings.BearSymbol,
+                SymbolIndex = settings.BenchmarkSymbol
+            };
+            SaveTradingState(stateFilePath, tradingState);
+            Log("   State reset to Neutral/Cash. SMA will be re-seeded.\n");
+        }
+    }
+    else
+    {
+        // First time or missing metadata - initialize it
+        tradingState.Metadata = new TradingStateMetadata
+        {
+            SymbolBull = settings.BullSymbol,
+            SymbolBear = settings.BearSymbol,
+            SymbolIndex = settings.BenchmarkSymbol
+        };
+        SaveTradingState(stateFilePath, tradingState);
+    }
     
     // Initialize state if first run
     if (!tradingState.IsInitialized)
@@ -180,11 +340,34 @@ async Task RunTradingBotAsync()
         Log($"Migrated StartingAmount from config: ${settings.StartingAmount:N2}");
     }
 
+    // If command line overrides are active, liquidate configured positions first
+    if (cmdOverrides.HasOverrides)
+    {
+        Log("Command line overrides active. Checking for configured positions to liquidate...");
+        await LiquidateConfiguredPositionsAsync(configSettings, tradingState, tradingClient, dataClient, stateFilePath);
+        Log("");
+    }
+
     Log($"Configuration loaded:");
     Log($"  Benchmark: {settings.BenchmarkSymbol}");
-    Log($"  Crypto Benchmark (early trading): {settings.CryptoBenchmarkSymbol}");
+    if (settings.UseBtcEarlyTrading)
+    {
+        Log($"  Crypto Benchmark (early trading): {settings.CryptoBenchmarkSymbol}");
+    }
+    else
+    {
+        Log($"  Early Trading: Using {settings.BenchmarkSymbol} (BTC/USD disabled)");
+    }
     Log($"  Bull ETF: {settings.BullSymbol}");
-    Log($"  Bear ETF: {settings.BearSymbol}");
+    if (settings.BullOnlyMode)
+    {
+        Log($"  Bear ETF: (disabled - bull-only mode)");
+        Log($"  Mode: Bull-only (neutral/bear signals dump to cash)");
+    }
+    else
+    {
+        Log($"  Bear ETF: {settings.BearSymbol}");
+    }
     Log($"  SMA Length: {settings.SMALength}");
     Log($"  Chop Threshold: {settings.ChopThresholdPercent * 100:N3}%");
     Log($"  Neutral Wait: {settings.NeutralWaitSeconds}s");
@@ -203,13 +386,6 @@ async Task RunTradingBotAsync()
     Log($"");
     LogBalanceWithPL(startupBalance, startupPL);
     Log($"");
-
-    // Initialize Alpaca clients (Paper Trading)
-    var secretKey = new SecretKey(apiKey, apiSecret);
-    
-    using var tradingClient = Environments.Paper.GetAlpacaTradingClient(secretKey);
-    using var dataClient = Environments.Paper.GetAlpacaDataClient(secretKey);
-    using var cryptoDataClient = Environments.Paper.GetAlpacaCryptoDataClient(secretKey);
 
     // Verify connection
     try
@@ -277,9 +453,9 @@ async Task RunTradingBotAsync()
             
             // Determine which benchmark to use based on time
             // Use BTC/USD from 9:30-9:55 AM (before QQQ has enough bars for SMA)
-            // Use QQQ after 9:55 AM
+            // Only use BTC/USD if enabled (default for config, disabled for CLI overrides unless -usebtc)
             var earlyTradingEnd = new TimeSpan(9, 55, 0);
-            var usesCrypto = easternNow.TimeOfDay < earlyTradingEnd;
+            var usesCrypto = settings.UseBtcEarlyTrading && easternNow.TimeOfDay < earlyTradingEnd;
             var benchmarkSymbol = usesCrypto ? settings.CryptoBenchmarkSymbol : settings.BenchmarkSymbol;
             
             decimal currentPrice = 0m;
@@ -382,12 +558,20 @@ async Task RunTradingBotAsync()
             else if (signal == "BULL")
             {
                 neutralDetectionTime = null; // Reset neutral timer
-                await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath);
+                await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
             }
             else if (signal == "BEAR")
             {
                 neutralDetectionTime = null; // Reset neutral timer
-                await EnsurePositionAsync(settings.BearSymbol, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath);
+                // In bull-only mode, BEAR signal dumps to cash
+                if (settings.BullOnlyMode)
+                {
+                    await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "BEAR (bull-only mode)", showStatus: shouldLog);
+                }
+                else
+                {
+                    await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
+                }
             }
             else // NEUTRAL
             {
@@ -433,6 +617,63 @@ async Task RunTradingBotAsync()
     }
 }
 
+// Validate ticker symbol using GetAssetAsync and checking IsTradable
+async Task<bool> ValidateTickerAsync(string ticker, IAlpacaTradingClient tradingClient)
+{
+    try
+    {
+        var asset = await tradingClient.GetAssetAsync(ticker);
+        if (asset == null)
+        {
+            LogError($"[Error] Invalid Ticker: {ticker} - Asset not found");
+            return false;
+        }
+        if (!asset.IsTradable)
+        {
+            LogError($"[Error] Invalid Ticker: {ticker} - Asset is not tradable");
+            return false;
+        }
+        return true;
+    }
+    catch (Exception ex)
+    {
+        LogError($"[Error] Invalid Ticker: {ticker} - {ex.Message}");
+        return false;
+    }
+}
+
+// Liquidate positions from config file before trading with override tickers
+async Task LiquidateConfiguredPositionsAsync(
+    TradingSettings configSettings,
+    TradingState tradingState,
+    IAlpacaTradingClient tradingClient,
+    IAlpacaDataClient dataClient,
+    string stateFilePath)
+{
+    var positions = await tradingClient.ListPositionsAsync();
+    
+    // Check for configured Bull position
+    var bullPosition = positions.FirstOrDefault(p => 
+        p.Symbol.Equals(configSettings.BullSymbol, StringComparison.OrdinalIgnoreCase));
+    if (bullPosition != null)
+    {
+        Log($"Liquidating configured bull position: {configSettings.BullSymbol}");
+        await LiquidatePositionAsync(configSettings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath);
+    }
+    
+    // Check for configured Bear position (only if BearSymbol is configured)
+    if (!string.IsNullOrEmpty(configSettings.BearSymbol))
+    {
+        var bearPosition = positions.FirstOrDefault(p => 
+            p.Symbol.Equals(configSettings.BearSymbol, StringComparison.OrdinalIgnoreCase));
+        if (bearPosition != null)
+        {
+            Log($"Liquidating configured bear position: {configSettings.BearSymbol}");
+            await LiquidatePositionAsync(configSettings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath);
+        }
+    }
+}
+
 // Data Seeding Logic
 async Task SeedRollingSmaAsync(TradingSettings settings, IAlpacaDataClient dataClient, IAlpacaCryptoDataClient cryptoDataClient, Queue<decimal> priceQueue, TimeZoneInfo easternZone)
 {
@@ -440,8 +681,9 @@ async Task SeedRollingSmaAsync(TradingSettings settings, IAlpacaDataClient dataC
     var utcNow = DateTime.UtcNow;
     var easternNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, easternZone);
     
+    // Only use BTC/USD for seeding if enabled (default for config, disabled for CLI overrides unless -usebtc)
     var earlyTradingEnd = new TimeSpan(9, 55, 0);
-    var usesCrypto = easternNow.TimeOfDay < earlyTradingEnd;
+    var usesCrypto = settings.UseBtcEarlyTrading && easternNow.TimeOfDay < earlyTradingEnd;
     var benchmarkSymbol = usesCrypto ? settings.CryptoBenchmarkSymbol : settings.BenchmarkSymbol;
 
     // Use UTC for API requests. Fetch last 15 minutes to be safe.
@@ -509,23 +751,27 @@ async Task SeedRollingSmaAsync(TradingSettings settings, IAlpacaDataClient dataC
 // Execution Logic: Enter Position
 async Task EnsurePositionAsync(
     string targetSymbol, 
-    string oppositeSymbol, 
+    string? oppositeSymbol, 
     TradingState tradingState, 
     IAlpacaTradingClient tradingClient, 
     IAlpacaDataClient dataClient, 
-    string stateFilePath)
+    string stateFilePath,
+    TradingSettings settings)
 {
     // Get current positions from Alpaca
     var positions = await tradingClient.ListPositionsAsync();
     var targetPosition = positions.FirstOrDefault(p => p.Symbol.Equals(targetSymbol, StringComparison.OrdinalIgnoreCase));
-    var oppositePosition = positions.FirstOrDefault(p => p.Symbol.Equals(oppositeSymbol, StringComparison.OrdinalIgnoreCase));
+    var oppositePosition = !string.IsNullOrEmpty(oppositeSymbol) 
+        ? positions.FirstOrDefault(p => p.Symbol.Equals(oppositeSymbol, StringComparison.OrdinalIgnoreCase))
+        : null;
     
     // Also check local state
     var localHoldsTarget = tradingState.CurrentPosition?.Equals(targetSymbol, StringComparison.OrdinalIgnoreCase) ?? false;
-    var localHoldsOpposite = tradingState.CurrentPosition?.Equals(oppositeSymbol, StringComparison.OrdinalIgnoreCase) ?? false;
+    var localHoldsOpposite = !string.IsNullOrEmpty(oppositeSymbol) && 
+        (tradingState.CurrentPosition?.Equals(oppositeSymbol, StringComparison.OrdinalIgnoreCase) ?? false);
 
-    // 1. Liquidate Opposite if held
-    if (oppositePosition != null || localHoldsOpposite)
+    // 1. Liquidate Opposite if held (only if we have an opposite symbol)
+    if (!string.IsNullOrEmpty(oppositeSymbol) && (oppositePosition != null || localHoldsOpposite))
     {
         Log($"Current signal targets {targetSymbol}, but holding {oppositeSymbol}. Liquidating...");
         await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath);
@@ -567,14 +813,17 @@ async Task EnsureNeutralAsync(
         await LiquidatePositionAsync(settings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath);
     }
 
-    // Check for Bear Symbol
-    var bearPosition = positions.FirstOrDefault(p => p.Symbol.Equals(settings.BearSymbol, StringComparison.OrdinalIgnoreCase));
-    var localHoldsBear = tradingState.CurrentPosition?.Equals(settings.BearSymbol, StringComparison.OrdinalIgnoreCase) ?? false;
-
-    if (bearPosition != null || localHoldsBear)
+    // Check for Bear Symbol (only if BearSymbol is configured)
+    if (!string.IsNullOrEmpty(settings.BearSymbol))
     {
-         Log($"Signal is {reason}. Liquidating {settings.BearSymbol} to Cash.");
-         await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath);
+        var bearPosition = positions.FirstOrDefault(p => p.Symbol.Equals(settings.BearSymbol, StringComparison.OrdinalIgnoreCase));
+        var localHoldsBear = tradingState.CurrentPosition?.Equals(settings.BearSymbol, StringComparison.OrdinalIgnoreCase) ?? false;
+
+        if (bearPosition != null || localHoldsBear)
+        {
+             Log($"Signal is {reason}. Liquidating {settings.BearSymbol} to Cash.");
+             await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath);
+        }
     }
 
     if (showStatus)
@@ -835,13 +1084,15 @@ class TradingSettings
 {
     public int PollingIntervalSeconds { get; set; } = 5;
     public string BullSymbol { get; set; } = "TQQQ";
-    public string BearSymbol { get; set; } = "SQQQ";
+    public string? BearSymbol { get; set; } = "SQQQ";
     public string BenchmarkSymbol { get; set; } = "QQQ";
     public string CryptoBenchmarkSymbol { get; set; } = "BTC/USD";
     public int SMALength { get; set; } = 12;
     public decimal ChopThresholdPercent { get; set; } = 0.0015m;
     public int NeutralWaitSeconds { get; set; } = 30;
     public decimal StartingAmount { get; set; } = 10000m;
+    public bool BullOnlyMode { get; set; } = false;
+    public bool UseBtcEarlyTrading { get; set; } = true; // Use BTC/USD as early trading weathervane
 }
 
 class TradingState
@@ -853,6 +1104,24 @@ class TradingState
     public string? CurrentPosition { get; set; }
     public long CurrentShares { get; set; }
     public decimal StartingAmount { get; set; } // Track original amount for P/L calculation
+    public TradingStateMetadata? Metadata { get; set; } // Track symbols used during session
+}
+
+class TradingStateMetadata
+{
+    public string? SymbolBull { get; set; }
+    public string? SymbolBear { get; set; }
+    public string? SymbolIndex { get; set; }
+}
+
+class CommandLineOverrides
+{
+    public string? BullTicker { get; set; }
+    public string? BearTicker { get; set; }
+    public string? BenchmarkTicker { get; set; }
+    public bool BullOnlyMode { get; set; }
+    public bool HasOverrides { get; set; }
+    public bool UseBtcEarlyTrading { get; set; }
 }
 
 // Marker class for user secrets
