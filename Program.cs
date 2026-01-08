@@ -79,6 +79,19 @@ CommandLineOverrides? ParseCommandLineOverrides(string[] args)
         {
             overrides.WatchBtc = true;
         }
+        else if (arg.StartsWith("-minchop=", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = arg.Substring("-minchop=".Length).Trim();
+            if (decimal.TryParse(value, out var dollars) && dollars >= 0)
+            {
+                overrides.MinChopAbsoluteOverride = dollars;
+            }
+            else
+            {
+                LogError($"-minchop must be a non-negative number. Got: {value}");
+                return null;
+            }
+        }
     }
     
     // Validation: -bear may not be specified without -bull
@@ -242,6 +255,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         CryptoBenchmarkSymbol = configuration["TradingBot:CryptoBenchmarkSymbol"] ?? "BTC/USD",
         SMALength = configuration.GetValue("TradingBot:SMALength", 12),
         ChopThresholdPercent = configuration.GetValue("TradingBot:ChopThresholdPercent", 0.0015m),
+        MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
         NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
         WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
         StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m)
@@ -260,6 +274,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         CryptoBenchmarkSymbol = configSettings.CryptoBenchmarkSymbol,
         SMALength = configSettings.SMALength,
         ChopThresholdPercent = configSettings.ChopThresholdPercent,
+        MinChopAbsolute = cmdOverrides.MinChopAbsoluteOverride ?? configSettings.MinChopAbsolute,
         NeutralWaitSeconds = cmdOverrides.NeutralWaitSecondsOverride ?? configSettings.NeutralWaitSeconds,
         StartingAmount = configSettings.StartingAmount,
         BullOnlyMode = cmdOverrides.BullOnlyMode,
@@ -398,6 +413,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     }
     Log($"  SMA Length: {settings.SMALength}");
     Log($"  Chop Threshold: {settings.ChopThresholdPercent * 100:N3}%");
+    Log($"  Min Chop Absolute: ${settings.MinChopAbsolute:N4}");
     Log($"  Neutral Wait: {settings.NeutralWaitSeconds}s");
     Log($"  BTC Correlation (Neutral Nudge): {(settings.WatchBtc ? "Enabled" : "Disabled")}");
     Log($"  Polling Interval: {settings.PollingIntervalSeconds}s");
@@ -555,9 +571,11 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
 
             var currentSma = priceQueue.Average();
 
-            // Calculate Hysteresis Bands
-            var upperBand = currentSma * (1 + settings.ChopThresholdPercent);
-            var lowerBand = currentSma * (1 - settings.ChopThresholdPercent);
+            // Calculate Hysteresis Bands (with absolute floor for low-priced stocks)
+            decimal percentageWidth = currentSma * settings.ChopThresholdPercent;
+            decimal effectiveWidth = Math.Max(percentageWidth, settings.MinChopAbsolute);
+            var upperBand = currentSma + effectiveWidth;
+            var lowerBand = currentSma - effectiveWidth;
 
             // Determine Primary Signal (from benchmark)
             string signal;
@@ -1298,6 +1316,7 @@ class TradingSettings
     public string CryptoBenchmarkSymbol { get; set; } = "BTC/USD";
     public int SMALength { get; set; } = 12;
     public decimal ChopThresholdPercent { get; set; } = 0.0015m;
+    public decimal MinChopAbsolute { get; set; } = 0.02m; // Absolute floor for hysteresis (tick-aware)
     public int NeutralWaitSeconds { get; set; } = 30;
     public decimal StartingAmount { get; set; } = 10000m;
     public bool BullOnlyMode { get; set; } = false;
@@ -1333,6 +1352,7 @@ class CommandLineOverrides
     public bool HasOverrides { get; set; }
     public bool UseBtcEarlyTrading { get; set; }
     public int? NeutralWaitSecondsOverride { get; set; }
+    public decimal? MinChopAbsoluteOverride { get; set; }
     public bool WatchBtc { get; set; }
 }
 
