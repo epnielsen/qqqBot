@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using System.Threading.Channels;
 using Alpaca.Markets;
 using CsvHelper;
 using Microsoft.Extensions.Configuration;
@@ -140,6 +141,14 @@ CommandLineOverrides? ParseCommandLineOverrides(string[] args)
                 LogError($"-maxslip must be a non-negative number (percent). Got: {value}");
                 return null;
             }
+        }
+        else if (arg.Equals("-lowlatency", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.LowLatencyMode = true;
+        }
+        else if (arg.Equals("-ioc", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.UseIocOrders = true;
         }
     }
     
@@ -605,7 +614,13 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m),
         UseMarketableLimits = configuration.GetValue("TradingBot:UseMarketableLimits", false),
         MaxSlippagePercent = configuration.GetValue("TradingBot:MaxSlippagePercent", 0.002m),
-        MaxChaseDeviationPercent = configuration.GetValue("TradingBot:MaxChaseDeviationPercent", 0.003m)
+        MaxChaseDeviationPercent = configuration.GetValue("TradingBot:MaxChaseDeviationPercent", 0.003m),
+        // Low-latency mode settings
+        LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
+        UseIocOrders = configuration.GetValue("TradingBot:UseIocOrders", false),
+        IocLimitOffsetCents = configuration.GetValue("TradingBot:IocLimitOffsetCents", 1m),
+        KeepAlivePingSeconds = configuration.GetValue("TradingBot:KeepAlivePingSeconds", 5),
+        WarmUpIterations = configuration.GetValue("TradingBot:WarmUpIterations", 10000)
     };
     
     // Create effective settings (may be modified by command line overrides)
@@ -634,7 +649,13 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         StopLossCooldownSeconds = configSettings.StopLossCooldownSeconds,
         UseMarketableLimits = cmdOverrides.UseMarketableLimits || configSettings.UseMarketableLimits,
         MaxSlippagePercent = cmdOverrides.MaxSlippagePercentOverride ?? configSettings.MaxSlippagePercent,
-        MaxChaseDeviationPercent = configSettings.MaxChaseDeviationPercent
+        MaxChaseDeviationPercent = configSettings.MaxChaseDeviationPercent,
+        // Low-latency mode settings (pass through from config)
+        LowLatencyMode = cmdOverrides.LowLatencyMode || configSettings.LowLatencyMode,
+        UseIocOrders = cmdOverrides.UseIocOrders || configSettings.UseIocOrders,
+        IocLimitOffsetCents = configSettings.IocLimitOffsetCents,
+        KeepAlivePingSeconds = configSettings.KeepAlivePingSeconds,
+        WarmUpIterations = configSettings.WarmUpIterations
     };
 
     // Initialize Alpaca clients (Paper Trading) - needed for ticker validation
@@ -1030,6 +1051,146 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         return currentTime >= streamStartTime && currentTime < marketClose;
     }
     
+    // =========================================================================
+    // LOW-LATENCY MODE: Connection Warming & Keep-Alive
+    // =========================================================================
+    
+    // Track warm-up state
+    bool _warmedUp = false;
+    CancellationTokenSource? _keepAliveCts = null;
+    Task? _keepAliveTask = null;
+    
+    // JIT warm-up: Force .NET to compile hot-path code before real money is on the line
+    void WarmUpStrategyLogic(int iterations)
+    {
+        Log($"[WARM-UP] JIT compiling strategy logic ({iterations} iterations)...");
+        var stopwatch = Stopwatch.StartNew();
+        
+        // Create a temporary IncrementalSma for warm-up
+        var warmUpSma = new IncrementalSma(settings.SMALength);
+        var random = new Random(42); // Deterministic seed for reproducibility
+        
+        // Simulate price movements and signal calculations
+        for (int i = 0; i < iterations; i++)
+        {
+            // Generate dummy price in realistic range
+            decimal dummyPrice = 500m + (decimal)(random.NextDouble() * 10 - 5);
+            
+            // Force SMA calculation (hot path)
+            var sma = warmUpSma.Add(dummyPrice);
+            
+            // Force signal calculation (hot path)
+            var upperBand = sma * (1 + settings.ChopThresholdPercent);
+            var lowerBand = sma * (1 - settings.ChopThresholdPercent);
+            string signal = dummyPrice > upperBand ? "BULL" : dummyPrice < lowerBand ? "BEAR" : "NEUTRAL";
+            
+            // Prevent dead code elimination
+            if (signal == "INVALID") throw new InvalidOperationException();
+        }
+        
+        stopwatch.Stop();
+        Log($"[WARM-UP] JIT compilation complete ({stopwatch.ElapsedMilliseconds}ms)");
+    }
+    
+    // Connection warm-up: Prime HTTP connection pool to avoid cold-start latency
+    async Task WarmUpConnectionsAsync()
+    {
+        Log("[WARM-UP] Priming HTTP connection pool...");
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            // Fire several requests to establish and warm up connections
+            // GetClockAsync is lightweight and safe to call repeatedly
+            for (int i = 0; i < 5; i++)
+            {
+                var clock = await tradingClient.GetClockAsync();
+                await Task.Delay(100); // Brief pause between requests
+            }
+            
+            // Also warm up data client with a simple request
+            try
+            {
+                var latestTrade = await dataClient.GetLatestTradeAsync(new LatestMarketDataRequest(settings.BenchmarkSymbol) { Feed = MarketDataFeed.Iex });
+            }
+            catch { /* Ignore - may fail if market closed */ }
+            
+            stopwatch.Stop();
+            Log($"[WARM-UP] Connection pool primed ({stopwatch.ElapsedMilliseconds}ms)");
+        }
+        catch (Exception ex)
+        {
+            Log($"[WARM-UP] Connection warming failed: {ex.Message}");
+        }
+    }
+    
+    // Keep-alive pinger: Maintain hot connections to Alpaca API
+    void StartKeepAlivePinger()
+    {
+        if (_keepAliveTask != null) return; // Already running
+        
+        _keepAliveCts = new CancellationTokenSource();
+        var pingInterval = TimeSpan.FromSeconds(settings.KeepAlivePingSeconds);
+        
+        _keepAliveTask = Task.Run(async () =>
+        {
+            Log($"[KEEP-ALIVE] Started (ping every {settings.KeepAlivePingSeconds}s)");
+            
+            while (!_keepAliveCts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(pingInterval, _keepAliveCts.Token);
+                    
+                    // Lightweight ping to keep SSL/TCP connection warm
+                    var sw = Stopwatch.StartNew();
+                    await tradingClient.GetClockAsync();
+                    sw.Stop();
+                    
+                    // Only log if latency is concerning (>50ms)
+                    if (sw.ElapsedMilliseconds > 50)
+                    {
+                        Log($"[KEEP-ALIVE] Ping: {sw.ElapsedMilliseconds}ms (elevated)");
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break; // Normal shutdown
+                }
+                catch (Exception ex)
+                {
+                    // Connection may have dropped - will be re-established on next ping
+                    Log($"[KEEP-ALIVE] Ping failed: {ex.Message}");
+                }
+            }
+            
+            Log("[KEEP-ALIVE] Stopped");
+        }, _keepAliveCts.Token);
+    }
+    
+    void StopKeepAlivePinger()
+    {
+        if (_keepAliveCts != null)
+        {
+            _keepAliveCts.Cancel();
+            _keepAliveCts.Dispose();
+            _keepAliveCts = null;
+        }
+        _keepAliveTask = null;
+    }
+    
+    // =========================================================================
+    // LOW-LATENCY MODE: Channel-Based Pipeline Infrastructure
+    // =========================================================================
+    
+    // High-performance bounded channel for trade prices (DropOldest prevents lag)
+    var tradeChannel = Channel.CreateBounded<TradeTick>(new BoundedChannelOptions(100)
+    {
+        FullMode = BoundedChannelFullMode.DropOldest,
+        SingleReader = true,
+        SingleWriter = false // Multiple streams may write
+    });
+    
     // Track if streams have been started this session
     bool _streamsStarted = false;
 
@@ -1087,6 +1248,24 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     _streamConnected = true;
                     _streamsStarted = true;
                     Log("Real-time data streams ready.\n");
+                    
+                    // LOW-LATENCY MODE: Run warm-up routines before market open
+                    if (settings.LowLatencyMode && !_warmedUp)
+                    {
+                        Log("\n[LOW-LATENCY MODE] Running pre-market warm-up...");
+                        
+                        // 1. JIT compile strategy logic
+                        WarmUpStrategyLogic(settings.WarmUpIterations);
+                        
+                        // 2. Prime HTTP connection pool
+                        await WarmUpConnectionsAsync();
+                        
+                        // 3. Start keep-alive pinger
+                        StartKeepAlivePinger();
+                        
+                        _warmedUp = true;
+                        Log("[LOW-LATENCY MODE] Warm-up complete. Ready for market open.\n");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1782,6 +1961,9 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         }
     }
     
+    // Stop keep-alive pinger (low-latency mode)
+    StopKeepAlivePinger();
+    
     Log("Bot shutdown complete. Final state saved.");
     Log($"Final Balance: ${tradingState.AvailableCash + tradingState.AccumulatedLeftover:N2}");
 }
@@ -2123,13 +2305,29 @@ async Task<bool> LiquidatePositionAsync(
     
     var estimatedProceeds = shareCount * quotePrice;
     
-    // Calculate limit price if using marketable limits
-    // SELL: LimitPrice = BasePrice * (1.0 - MaxSlippagePercent)
-    var useLimit = settings.UseMarketableLimits;
-    var limitPrice = useLimit ? Math.Round(quotePrice * (1m - settings.MaxSlippagePercent), 2) : 0m;
+    // Determine order execution mode
+    var useIoc = settings.UseIocOrders;
+    var useLimit = settings.UseMarketableLimits && !useIoc; // IOC takes precedence
     
-    // Liquidate using market or limit sell order
-    var orderTypeStr = useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET";
+    // Calculate limit price based on mode
+    decimal limitPrice;
+    if (useIoc)
+    {
+        // IOC "Sniper Mode": Limit at Bid - offset cents for instant fills
+        limitPrice = Math.Round(quotePrice - (settings.IocLimitOffsetCents / 100m), 2);
+    }
+    else if (useLimit)
+    {
+        // Marketable Limit: Allow MaxSlippagePercent deviation
+        limitPrice = Math.Round(quotePrice * (1m - settings.MaxSlippagePercent), 2);
+    }
+    else
+    {
+        limitPrice = 0m; // Market order
+    }
+    
+    // Liquidate using market, limit, or IOC sell order
+    var orderTypeStr = useIoc ? $"IOC LIMIT @ ${limitPrice:N2}" : (useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET");
     Log($"[SELL] Liquidating {shareCount} shares of {symbol} @ ~${quotePrice:N2} ({orderTypeStr})");
     Log($"       Expected proceeds: ${estimatedProceeds:N2}");
     
@@ -2137,8 +2335,26 @@ async Task<bool> LiquidatePositionAsync(
     
     try
     {
-        var sellOrder = useLimit
-            ? new NewOrderRequest(
+        NewOrderRequest sellOrder;
+        
+        if (useIoc)
+        {
+            // IOC (Immediate-Or-Cancel) - fills instantly or cancels
+            sellOrder = new NewOrderRequest(
+                symbol,
+                OrderQuantity.FromInt64(shareCount),
+                OrderSide.Sell,
+                OrderType.Limit,
+                TimeInForce.Ioc
+            )
+            {
+                ClientOrderId = settings.GenerateClientOrderId(),
+                LimitPrice = limitPrice
+            };
+        }
+        else if (useLimit)
+        {
+            sellOrder = new NewOrderRequest(
                 symbol,
                 OrderQuantity.FromInt64(shareCount),
                 OrderSide.Sell,
@@ -2148,8 +2364,11 @@ async Task<bool> LiquidatePositionAsync(
             {
                 ClientOrderId = settings.GenerateClientOrderId(),
                 LimitPrice = limitPrice
-            }
-            : new NewOrderRequest(
+            };
+        }
+        else
+        {
+            sellOrder = new NewOrderRequest(
                 symbol,
                 OrderQuantity.FromInt64(shareCount),
                 OrderSide.Sell,
@@ -2159,6 +2378,7 @@ async Task<bool> LiquidatePositionAsync(
             {
                 ClientOrderId = settings.GenerateClientOrderId()
             };
+        }
         
         var order = await tradingClient.PostOrderAsync(sellOrder);
         LogSuccess($"Sell order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
@@ -2198,9 +2418,13 @@ async Task<bool> LiquidatePositionAsync(
     bool chaserTriggered = false;
     long filledQtySoFar = 0;
     
-    for (int i = 0; i < 20; i++) // Up to 10 seconds (20 x 500ms)
+    // IOC orders resolve immediately - use shorter polling for faster response
+    var pollDelayMs = useIoc ? 100 : 500;
+    var maxIterations = useIoc ? 30 : 20; // IOC: 3s total, Limit: 10s total
+    
+    for (int i = 0; i < maxIterations; i++)
     {
-        await Task.Delay(500);
+        await Task.Delay(pollDelayMs);
         try
         {
             var filledOrder = await tradingClient.GetOrderAsync(sellOrderId!.Value);
@@ -2248,6 +2472,53 @@ async Task<bool> LiquidatePositionAsync(
                      filledOrder.OrderStatus == OrderStatus.Expired ||
                      filledOrder.OrderStatus == OrderStatus.Rejected)
             {
+                // For IOC orders, check if we got a partial fill
+                var partialQty = (long)filledOrder.FilledQuantity;
+                
+                if (useIoc && partialQty > 0 && filledOrder.AverageFillPrice.HasValue)
+                {
+                    // IOC partial fill on sell - sold some shares, need to keep the rest
+                    var soldPrice = filledOrder.AverageFillPrice.Value;
+                    var soldProceeds = partialQty * soldPrice;
+                    var remainingShares = shareCount - partialQty;
+                    
+                    LogWarning($"[FILL] IOC partial fill: Sold {partialQty}/{shareCount} @ ${soldPrice:N4}");
+                    Log($"    Remaining {remainingShares} shares still held. Force-selling with market order...");
+                    
+                    // Force-sell remaining shares with market order
+                    try
+                    {
+                        var forceOrder = new NewOrderRequest(
+                            symbol,
+                            OrderQuantity.FromInt64(remainingShares),
+                            OrderSide.Sell,
+                            OrderType.Market,
+                            TimeInForce.Day
+                        )
+                        {
+                            ClientOrderId = settings.GenerateClientOrderId()
+                        };
+                        
+                        var forceResult = await tradingClient.PostOrderAsync(forceOrder);
+                        sellOrderId = forceResult.OrderId;
+                        Log($"    Force-sell order submitted: {forceResult.OrderId}");
+                        
+                        // Update partial fill tracking
+                        filledQtySoFar = partialQty;
+                        actualProceeds = soldProceeds;
+                        continue; // Continue polling for the force-sell to complete
+                    }
+                    catch (Exception forceEx)
+                    {
+                        LogError($"    Force-sell failed: {forceEx.Message}");
+                        // Update state with partial results
+                        tradingState.AvailableCash = soldProceeds + tradingState.AccumulatedLeftover;
+                        tradingState.CurrentShares = remainingShares;
+                        SaveTradingState(stateFilePath, tradingState);
+                        return false; // Partial liquidation
+                    }
+                }
+                
                 // Order failed - don't update state, position still exists
                 LogError($"[FILL] Sell order {filledOrder.OrderStatus} - position still held");
                 return false;
@@ -2260,10 +2531,10 @@ async Task<bool> LiquidatePositionAsync(
                 filledQtySoFar = partialQty;
             }
             
-            // EXIT CHASER LOGIC: Limit order hasn't filled in time
+            // EXIT CHASER LOGIC: Limit order hasn't filled in time (not for IOC - handles itself)
             // SMART EXIT: Re-check signal before forcing market sell
             // This catches "V-shaped" reversals where price recovers during timeout
-            if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
+            if (useLimit && !useIoc && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
             {
                 chaserTriggered = true;
                 filledQtySoFar = (long)filledOrder.FilledQuantity;
@@ -2438,24 +2709,59 @@ async Task BuyPositionAsync(
     var trade = await dataClient.GetLatestTradeAsync(quoteRequest);
     var basePrice = trade.Price;
 
-    // Calculate limit price if using marketable limits
-    // BUY: LimitPrice = BasePrice * (1.0 + MaxSlippagePercent)
-    var useLimit = settings.UseMarketableLimits;
-    var limitPrice = useLimit ? Math.Round(basePrice * (1m + settings.MaxSlippagePercent), 2) : 0m;
+    // Determine order execution mode
+    var useIoc = settings.UseIocOrders;
+    var useLimit = settings.UseMarketableLimits && !useIoc; // IOC takes precedence
+    
+    // Calculate limit price based on mode
+    decimal limitPrice;
+    if (useIoc)
+    {
+        // IOC "Sniper Mode": Limit at Ask + offset cents for instant fills
+        limitPrice = Math.Round(basePrice + (settings.IocLimitOffsetCents / 100m), 2);
+    }
+    else if (useLimit)
+    {
+        // Marketable Limit: Allow MaxSlippagePercent deviation
+        limitPrice = Math.Round(basePrice * (1m + settings.MaxSlippagePercent), 2);
+    }
+    else
+    {
+        limitPrice = 0m; // Market order
+    }
 
     // Calculate max shares (use limit price if applicable to ensure we can afford at max slippage)
-    var effectivePrice = useLimit ? limitPrice : basePrice;
+    var effectivePrice = (useIoc || useLimit) ? limitPrice : basePrice;
     var quantity = (long)(availableForPurchase / effectivePrice);
     var totalCost = quantity * basePrice; // Estimate at base price
     var leftover = availableForPurchase - (quantity * effectivePrice);
 
     if (quantity > 0)
     {
-        var orderTypeStr = useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET";
+        var orderTypeStr = useIoc ? $"IOC LIMIT @ ${limitPrice:N2}" : (useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET");
         Log($"[BUY] {symbol} x {quantity} @ ~${basePrice:N2} ({orderTypeStr})");
         
-        var orderRequest = useLimit 
-            ? new NewOrderRequest(
+        NewOrderRequest orderRequest;
+        
+        if (useIoc)
+        {
+            // IOC (Immediate-Or-Cancel) Limit Order - "Sniper Mode"
+            // Fills instantly against available liquidity or cancels completely
+            orderRequest = new NewOrderRequest(
+                symbol,
+                OrderQuantity.FromInt64(quantity),
+                OrderSide.Buy,
+                OrderType.Limit,
+                TimeInForce.Ioc
+            )
+            {
+                ClientOrderId = settings.GenerateClientOrderId(),
+                LimitPrice = limitPrice
+            };
+        }
+        else if (useLimit)
+        {
+            orderRequest = new NewOrderRequest(
                 symbol,
                 OrderQuantity.FromInt64(quantity),
                 OrderSide.Buy,
@@ -2465,8 +2771,11 @@ async Task BuyPositionAsync(
             {
                 ClientOrderId = settings.GenerateClientOrderId(),
                 LimitPrice = limitPrice
-            }
-            : new NewOrderRequest(
+            };
+        }
+        else
+        {
+            orderRequest = new NewOrderRequest(
                 symbol,
                 OrderQuantity.FromInt64(quantity),
                 OrderSide.Buy,
@@ -2476,6 +2785,7 @@ async Task BuyPositionAsync(
             {
                 ClientOrderId = settings.GenerateClientOrderId()
             };
+        }
 
         var order = await tradingClient.PostOrderAsync(orderRequest);
         LogSuccess($"Order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
@@ -2496,6 +2806,7 @@ async Task BuyPositionAsync(
         var quotePrice = basePrice; // Capture quote price for slippage calculation
         var preBuyCash = availableForPurchase; // Capture for rollback
         var chaserTimeoutMs = 5000; // 5 second timeout for limit orders before chaser kicks in
+        var isIocOrder = useIoc; // Capture IOC mode for closure
         
         _ = Task.Run(async () =>
         {
@@ -2506,9 +2817,13 @@ async Task BuyPositionAsync(
                 decimal totalFillCost = 0m;
                 bool chaserTriggered = false;
                 
-                for (int i = 0; i < 20; i++) // Up to 10 seconds total
+                // IOC orders resolve immediately - use shorter polling for faster response
+                var pollDelayMs = isIocOrder ? 100 : 500;
+                var maxIterations = isIocOrder ? 30 : 20; // IOC: 3s total, Limit: 10s total
+                
+                for (int i = 0; i < maxIterations; i++)
                 {
-                    await Task.Delay(500);
+                    await Task.Delay(pollDelayMs);
                     var filledOrder = await tradingClient.GetOrderAsync(orderId);
                     
                     if (filledOrder.OrderStatus == OrderStatus.Filled && filledOrder.AverageFillPrice.HasValue)
@@ -2553,6 +2868,24 @@ async Task BuyPositionAsync(
                              filledOrder.OrderStatus == OrderStatus.Expired ||
                              filledOrder.OrderStatus == OrderStatus.Rejected)
                     {
+                        // For IOC orders, check if we got a partial fill
+                        var partialQty = (long)filledOrder.FilledQuantity;
+                        
+                        if (isIocOrder && partialQty > 0 && filledOrder.AverageFillPrice.HasValue)
+                        {
+                            // IOC partial fill - keep what we got
+                            var actualPrice = filledOrder.AverageFillPrice.Value;
+                            var actualCost = partialQty * actualPrice;
+                            
+                            tradingState.CurrentShares = partialQty;
+                            tradingState.AccumulatedLeftover = preBuyCash - actualCost;
+                            SaveTradingState(stateFilePath, tradingState);
+                            
+                            LogWarning($"[FILL] IOC partial fill: {partialQty}/{quantity} @ ${actualPrice:N4}");
+                            Log($"    Unfilled {quantity - partialQty} shares cancelled. Remaining cash: ${tradingState.AccumulatedLeftover:N2}");
+                            return;
+                        }
+                        
                         LogError($"[FILL] Buy order {filledOrder.OrderStatus} - rolling back state");
                         tradingState.AvailableCash = preBuyCash;
                         tradingState.AccumulatedLeftover = 0m;
@@ -2562,9 +2895,9 @@ async Task BuyPositionAsync(
                         LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
                         return;
                     }
-                    else if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
+                    else if (useLimit && !isIocOrder && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
                     {
-                        // SMART CHASER LOGIC FOR ENTRIES
+                        // SMART CHASER LOGIC FOR ENTRIES (not used for IOC - IOC handles itself)
                         // Priority: VALUE / SIGNAL VALIDITY
                         // If price runs away, don't blindly chase - re-evaluate first
                         chaserTriggered = true;
@@ -2854,6 +3187,13 @@ class TradingSettings
     public decimal MaxSlippagePercent { get; set; } = 0.002m; // 0.2% max slippage for limit orders
     public decimal MaxChaseDeviationPercent { get; set; } = 0.003m; // 0.3% max price move before aborting entry chase
     
+    // LOW-LATENCY MODE SETTINGS
+    public bool LowLatencyMode { get; set; } = false;     // Enable channel-based reactive pipeline
+    public bool UseIocOrders { get; set; } = false;       // Use IOC limit orders ("sniper mode")
+    public decimal IocLimitOffsetCents { get; set; } = 1m; // Offset above ask (buy) or below bid (sell)
+    public int KeepAlivePingSeconds { get; set; } = 5;    // HTTP connection keep-alive ping interval
+    public int WarmUpIterations { get; set; } = 10000;    // JIT warm-up iterations before market open
+    
     // Derived: Calculate queue size dynamically from window and interval
     public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
     
@@ -2898,6 +3238,9 @@ class CommandLineOverrides
     public decimal? TrailingStopPercentOverride { get; set; }
     public bool UseMarketableLimits { get; set; }
     public decimal? MaxSlippagePercentOverride { get; set; }
+    // Low-latency mode flags
+    public bool LowLatencyMode { get; set; }
+    public bool UseIocOrders { get; set; }
 }
 
 // CSV record for report export
@@ -2911,6 +3254,129 @@ class TradeRecord
     public decimal? FilledValue { get; set; }
     public string OrderId { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+}
+
+// ============================================================================
+// HIGH-PERFORMANCE DATA STRUCTURES
+// ============================================================================
+
+/// <summary>
+/// O(1) Incremental SMA calculator using circular buffer and running sum.
+/// Avoids O(N) recalculation on every tick for low-latency trading.
+/// </summary>
+class IncrementalSma
+{
+    private readonly decimal[] _buffer;
+    private readonly int _capacity;
+    private int _count;
+    private int _head;
+    private decimal _runningSum;
+    
+    public IncrementalSma(int capacity)
+    {
+        if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
+        _capacity = capacity;
+        _buffer = new decimal[capacity];
+        _count = 0;
+        _head = 0;
+        _runningSum = 0m;
+    }
+    
+    /// <summary>Add a new price and return the updated SMA. O(1) complexity.</summary>
+    public decimal Add(decimal price)
+    {
+        if (_count < _capacity)
+        {
+            // Buffer not full yet - just add
+            _buffer[_count] = price;
+            _runningSum += price;
+            _count++;
+        }
+        else
+        {
+            // Buffer full - subtract oldest, add newest (circular)
+            decimal oldest = _buffer[_head];
+            _runningSum = _runningSum - oldest + price;
+            _buffer[_head] = price;
+            _head = (_head + 1) % _capacity;
+        }
+        
+        return _runningSum / _count;
+    }
+    
+    /// <summary>Current SMA value (or 0 if empty).</summary>
+    public decimal CurrentAverage => _count > 0 ? _runningSum / _count : 0m;
+    
+    /// <summary>Number of samples currently in buffer.</summary>
+    public int Count => _count;
+    
+    /// <summary>Whether buffer has reached full capacity.</summary>
+    public bool IsFull => _count >= _capacity;
+    
+    /// <summary>Reset to empty state.</summary>
+    public void Clear()
+    {
+        _count = 0;
+        _head = 0;
+        _runningSum = 0m;
+        Array.Clear(_buffer, 0, _buffer.Length);
+    }
+    
+    /// <summary>Seed with initial values (for warm-up from historical data).</summary>
+    public void Seed(IEnumerable<decimal> prices)
+    {
+        Clear();
+        foreach (var price in prices)
+        {
+            Add(price);
+        }
+    }
+}
+
+/// <summary>
+/// Pre-allocated order request wrapper to avoid GC allocations during hot path.
+/// Reuse this struct instead of creating new NewOrderRequest objects.
+/// </summary>
+struct PreallocatedOrder
+{
+    public string Symbol;
+    public long Quantity;
+    public OrderSide Side;
+    public OrderType Type;
+    public TimeInForce TimeInForce;
+    public decimal? LimitPrice;
+    
+    public NewOrderRequest ToOrderRequest(string clientOrderId)
+    {
+        var req = new NewOrderRequest(
+            Symbol,
+            OrderQuantity.FromInt64(Quantity),
+            Side,
+            Type,
+            TimeInForce
+        )
+        {
+            ClientOrderId = clientOrderId
+        };
+        
+        if (LimitPrice.HasValue && Type == OrderType.Limit)
+        {
+            req.LimitPrice = LimitPrice.Value;
+        }
+        
+        return req;
+    }
+}
+
+/// <summary>
+/// Trade price message for the high-performance channel pipeline.
+/// Struct to avoid heap allocation.
+/// </summary>
+struct TradeTick
+{
+    public decimal Price;
+    public DateTime Timestamp;
+    public bool IsBenchmark; // true = benchmark (QQQ), false = BTC
 }
 
 // Marker class for user secrets
