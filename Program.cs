@@ -1424,6 +1424,8 @@ async Task<bool> LiquidatePositionAsync(
     bool sellSucceeded = false;
     bool positionNotFound = false;
     
+    Guid? sellOrderId = null;
+    
     try
     {
         var sellOrder = new NewOrderRequest(
@@ -1439,6 +1441,7 @@ async Task<bool> LiquidatePositionAsync(
         
         var order = await tradingClient.PostOrderAsync(sellOrder);
         LogSuccess($"Sell order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
+        sellOrderId = order.OrderId;
         sellSucceeded = true;
     }
     catch (Exception ex)
@@ -1464,6 +1467,7 @@ async Task<bool> LiquidatePositionAsync(
     // Only update trading state if sell succeeded or position doesn't exist
     if (sellSucceeded || positionNotFound)
     {
+        // Use estimate immediately (non-blocking)
         tradingState.AvailableCash = sellSucceeded ? (saleProceeds + tradingState.AccumulatedLeftover) : tradingState.AccumulatedLeftover;
         tradingState.AccumulatedLeftover = 0m; 
         tradingState.CurrentPosition = null;
@@ -1475,8 +1479,66 @@ async Task<bool> LiquidatePositionAsync(
         var profitLoss = totalBalance - tradingState.StartingAmount;
         LogBalanceWithPL(totalBalance, profitLoss);
         
-        // Small delay to allow order to process
-        if (sellSucceeded) await Task.Delay(2000);
+        // Fire-and-forget: poll for actual fill price and apply correction
+        if (sellSucceeded && sellOrderId.HasValue)
+        {
+            var orderId = sellOrderId.Value;
+            var estimatedProceeds = saleProceeds;
+            var preSellPosition = symbol; // Capture for rollback
+            var preSellShares = shareCount;
+            var preSellLeftover = tradingState.AccumulatedLeftover; // Already zeroed, but was passed in
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    for (int i = 0; i < 20; i++) // Up to 10 seconds
+                    {
+                        await Task.Delay(500);
+                        var filledOrder = await tradingClient.GetOrderAsync(orderId);
+                        
+                        if (filledOrder.OrderStatus == OrderStatus.Filled && filledOrder.AverageFillPrice.HasValue)
+                        {
+                            var actualPrice = filledOrder.AverageFillPrice.Value;
+                            var actualQty = (long)filledOrder.FilledQuantity;
+                            var actualProceeds = actualQty * actualPrice;
+                            var slippage = actualProceeds - estimatedProceeds;
+                            
+                            if (Math.Abs(slippage) > 0.001m)
+                            {
+                                // Apply correction: if we got more, increase cash; if less, decrease it
+                                tradingState.AvailableCash += slippage;
+                                SaveTradingState(stateFilePath, tradingState);
+                                Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2})");
+                            }
+                            else
+                            {
+                                Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4}");
+                            }
+                            return;
+                        }
+                        else if (filledOrder.OrderStatus == OrderStatus.Canceled || 
+                                 filledOrder.OrderStatus == OrderStatus.Expired ||
+                                 filledOrder.OrderStatus == OrderStatus.Rejected)
+                        {
+                            // ROLLBACK: Restore state to pre-sell condition (still holding position)
+                            LogError($"[FILL] Sell order {filledOrder.OrderStatus} - rolling back state");
+                            tradingState.AvailableCash = 0m;
+                            tradingState.AccumulatedLeftover = preSellLeftover;
+                            tradingState.CurrentPosition = preSellPosition;
+                            tradingState.CurrentShares = preSellShares;
+                            SaveTradingState(stateFilePath, tradingState);
+                            LogError($"[FILL] State rolled back: holding {preSellShares} {preSellPosition}");
+                            return;
+                        }
+                    }
+                    Log($"[FILL] Sell fill confirmation timeout - using estimate");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[FILL] Error polling sell fill: {ex.Message}");
+                }
+            });
+        }
         
         return true;
     }
@@ -1517,9 +1579,7 @@ async Task BuyPositionAsync(
 
     if (quantity > 0)
     {
-        Log($"[BUY] {symbol} x {quantity} @ ~${price:N2}");
-        Log($"       Total cost: ${totalCost:N2}");
-        Log($"       Leftover cash: ${leftover:N2}");
+        Log($"[BUY] {symbol} x {quantity} @ ~${price:N2} (estimated)");
         
         var orderRequest = new NewOrderRequest(
             symbol,
@@ -1535,7 +1595,9 @@ async Task BuyPositionAsync(
         var order = await tradingClient.PostOrderAsync(orderRequest);
         LogSuccess($"Order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
         
-        // Update trading state
+        // Update state immediately with estimate (non-blocking)
+        Log($"       Estimated: {quantity} shares @ ${price:N2} = ${totalCost:N2}");
+        
         tradingState.AvailableCash = 0m; 
         tradingState.AccumulatedLeftover = leftover; 
         tradingState.CurrentPosition = symbol;
@@ -1543,7 +1605,62 @@ async Task BuyPositionAsync(
         tradingState.LastTradeTimestamp = DateTime.UtcNow.ToString("o");
         SaveTradingState(stateFilePath, tradingState);
         
-        Log($"       State saved. Accumulated leftover: ${tradingState.AccumulatedLeftover:N2}");
+        // Fire-and-forget: poll for actual fill price and apply correction
+        var orderId = order.OrderId;
+        var estimatedCost = totalCost;
+        var preBuyCash = availableForPurchase; // Capture for rollback
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                for (int i = 0; i < 20; i++) // Up to 10 seconds
+                {
+                    await Task.Delay(500);
+                    var filledOrder = await tradingClient.GetOrderAsync(orderId);
+                    
+                    if (filledOrder.OrderStatus == OrderStatus.Filled && filledOrder.AverageFillPrice.HasValue)
+                    {
+                        var actualPrice = filledOrder.AverageFillPrice.Value;
+                        var actualQty = (long)filledOrder.FilledQuantity;
+                        var actualCost = actualQty * actualPrice;
+                        var slippage = actualCost - estimatedCost;
+                        
+                        if (Math.Abs(slippage) > 0.001m)
+                        {
+                            // Apply correction: if we paid more, reduce leftover; if less, increase it
+                            tradingState.AccumulatedLeftover -= slippage;
+                            tradingState.CurrentShares = actualQty;
+                            SaveTradingState(stateFilePath, tradingState);
+                            Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2})");
+                        }
+                        else
+                        {
+                            Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4}");
+                        }
+                        return;
+                    }
+                    else if (filledOrder.OrderStatus == OrderStatus.Canceled || 
+                             filledOrder.OrderStatus == OrderStatus.Expired ||
+                             filledOrder.OrderStatus == OrderStatus.Rejected)
+                    {
+                        // ROLLBACK: Restore state to pre-buy condition
+                        LogError($"[FILL] Buy order {filledOrder.OrderStatus} - rolling back state");
+                        tradingState.AvailableCash = preBuyCash;
+                        tradingState.AccumulatedLeftover = 0m;
+                        tradingState.CurrentPosition = null;
+                        tradingState.CurrentShares = 0;
+                        SaveTradingState(stateFilePath, tradingState);
+                        LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
+                        return;
+                    }
+                }
+                Log($"[FILL] Buy fill confirmation timeout - using estimate");
+            }
+            catch (Exception ex)
+            {
+                Log($"[FILL] Error polling fill: {ex.Message}");
+            }
+        });
     }
     else
     {
