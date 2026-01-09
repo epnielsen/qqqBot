@@ -101,6 +101,10 @@ CommandLineOverrides? ParseCommandLineOverrides(string[] args)
                 return null;
             }
         }
+        else if (arg.StartsWith("-botid=", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.BotIdOverride = arg.Substring("-botid=".Length).Trim();
+        }
     }
     
     // Validation: -bear may not be specified without -bull
@@ -252,22 +256,27 @@ async Task RunReportAsync(string[] args)
             "This bot is designed for PAPER TRADING ONLY.");
     }
 
-    // Parse optional -bull and -bear overrides from args
+    // Parse optional -bull, -bear, and -botid overrides from args
     string? bullOverride = null;
     string? bearOverride = null;
+    string? botIdOverride = null;
     foreach (var arg in args)
     {
         if (arg.StartsWith("-bull=", StringComparison.OrdinalIgnoreCase))
             bullOverride = arg.Substring("-bull=".Length).Trim().ToUpperInvariant();
         else if (arg.StartsWith("-bear=", StringComparison.OrdinalIgnoreCase))
             bearOverride = arg.Substring("-bear=".Length).Trim().ToUpperInvariant();
+        else if (arg.StartsWith("-botid=", StringComparison.OrdinalIgnoreCase))
+            botIdOverride = arg.Substring("-botid=".Length).Trim();
     }
 
-    // Load symbols from config (with optional overrides)
+    // Load symbols and BotId from config (with optional overrides)
     var bullSymbol = bullOverride ?? configuration["TradingBot:BullSymbol"] ?? "TQQQ";
     var bearSymbol = bearOverride ?? configuration["TradingBot:BearSymbol"] ?? "SQQQ";
+    var botId = botIdOverride ?? configuration["TradingBot:BotId"] ?? "main";
+    var clientOrderPrefix = $"qqqBot-{botId}-";
 
-    Log($"Generating report for: {bullSymbol} / {bearSymbol}");
+    Log($"Generating report for: {bullSymbol} / {bearSymbol} (BotId: {botId})");
 
     // Initialize Alpaca client
     var secretKey = new SecretKey(apiKey, apiSecret);
@@ -278,36 +287,96 @@ async Task RunReportAsync(string[] args)
     var easternNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, easternZone);
     var todayEastern = easternNow.Date;
     
-    // Market open (9:30 AM ET) to now
-    var startOfDayUtc = TimeZoneInfo.ConvertTimeToUtc(todayEastern.AddHours(9).AddMinutes(30), easternZone);
+    // Midnight ET to now (includes pre-market orders)
+    var startOfDayUtc = TimeZoneInfo.ConvertTimeToUtc(todayEastern, easternZone);
     var endOfDayUtc = DateTime.UtcNow;
 
     Log($"Fetching orders from {startOfDayUtc:yyyy-MM-dd HH:mm:ss} UTC to {endOfDayUtc:yyyy-MM-dd HH:mm:ss} UTC...\n");
 
-    // Fetch all filled orders for today
-    var ordersRequest = new ListOrdersRequest
-    {
-        OrderStatusFilter = OrderStatusFilter.Closed,
-        RollUpNestedOrders = false,
-        LimitOrderNumber = 500
-    };
-
-    var allOrders = await tradingClient.ListOrdersAsync(ordersRequest);
+    // Fetch all closed orders for today, paginating if necessary
+    var allOrders = new List<IOrder>();
+    DateTime? lastOrderTime = null;
+    int pageCount = 0;
+    // Track seen order IDs to avoid duplicates from pagination edge cases
+    var seenOrderIds = new HashSet<Guid>();
     
-    // Filter to our symbols and today's date
+    while (true)
+    {
+        pageCount++;
+        var ordersRequest = new ListOrdersRequest
+        {
+            OrderStatusFilter = OrderStatusFilter.Closed,
+            RollUpNestedOrders = false,
+            LimitOrderNumber = 500,
+            OrderListSorting = SortDirection.Ascending
+        }.WithInterval(new Interval<DateTime>(lastOrderTime ?? startOfDayUtc, endOfDayUtc));
+
+        var pageOrders = await tradingClient.ListOrdersAsync(ordersRequest);
+        
+        if (pageOrders.Count == 0)
+            break;
+            
+        // Filter out duplicates by OrderId (handles edge case where orders share CreatedAtUtc)
+        var newOrders = pageOrders
+            .Where(o => !seenOrderIds.Contains(o.OrderId))
+            .ToList();
+        
+        if (newOrders.Count == 0)
+            break;
+        
+        foreach (var order in newOrders)
+            seenOrderIds.Add(order.OrderId);
+            
+        allOrders.AddRange(newOrders);
+        lastOrderTime = pageOrders.Max(o => o.CreatedAtUtc);
+        
+        Log($"  Page {pageCount}: Retrieved {pageOrders.Count} orders, {newOrders.Count} new (total: {allOrders.Count})");
+        
+        // If we got fewer than 500, we've reached the end
+        if (pageOrders.Count < 500)
+            break;
+    }
+    
+    Log($"Retrieved {allOrders.Count} total closed orders from API.");
+    
+    // Filter to our symbols AND today's fills AND this bot's orders (by ClientOrderId prefix)
     var relevantOrders = allOrders
         .Where(o => (o.Symbol.Equals(bullSymbol, StringComparison.OrdinalIgnoreCase) ||
                      o.Symbol.Equals(bearSymbol, StringComparison.OrdinalIgnoreCase)) &&
                     o.FilledAtUtc != null &&
-                    o.FilledAtUtc >= startOfDayUtc)
+                    o.FilledAtUtc >= startOfDayUtc &&
+                    o.FilledAtUtc <= endOfDayUtc &&
+                    (o.ClientOrderId?.StartsWith(clientOrderPrefix, StringComparison.OrdinalIgnoreCase) ?? false))
         .OrderBy(o => o.FilledAtUtc)
         .ToList();
-
+    
+    Log($"Filtered to {relevantOrders.Count} orders for {bullSymbol}/{bearSymbol} with BotId '{botId}' filled today.");
+    
+    // If no orders match this bot, show orders without ClientOrderId filter for comparison
     if (relevantOrders.Count == 0)
     {
-        Log("No trades found for today.");
+        var allSymbolOrders = allOrders
+            .Where(o => (o.Symbol.Equals(bullSymbol, StringComparison.OrdinalIgnoreCase) ||
+                         o.Symbol.Equals(bearSymbol, StringComparison.OrdinalIgnoreCase)) &&
+                        o.FilledAtUtc != null &&
+                        o.FilledAtUtc >= startOfDayUtc &&
+                        o.FilledAtUtc <= endOfDayUtc)
+            .ToList();
+        
+        if (allSymbolOrders.Count > 0)
+        {
+            Log($"Note: Found {allSymbolOrders.Count} orders for {bullSymbol}/{bearSymbol} without BotId filter.");
+            Log("These may be from before BotId tagging was implemented, or from other bot instances.");
+        }
+        
+        Log("No trades found for today with this BotId.");
         return;
     }
+    
+    // Show date range of included orders for verification
+    var firstFill = relevantOrders.First().FilledAtUtc;
+    var lastFill = relevantOrders.Last().FilledAtUtc;
+    Log($"Order range: {firstFill:yyyy-MM-dd HH:mm:ss} UTC to {lastFill:yyyy-MM-dd HH:mm:ss} UTC");
 
     // Build trade records for CSV
     var records = new List<TradeRecord>();
@@ -352,14 +421,22 @@ async Task RunReportAsync(string[] args)
     var fileName = $"qqqBot-report-{bullSymbol}-{bearSymbol}-{dateStr}.csv";
     var filePath = Path.Combine(Directory.GetCurrentDirectory(), fileName);
 
-    // Write CSV
-    using (var writer = new StreamWriter(filePath))
-    using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+    // Write CSV (with graceful handling if file is locked)
+    try
     {
-        csv.WriteRecords(records);
+        using (var writer = new StreamWriter(filePath))
+        using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+        {
+            csv.WriteRecords(records);
+        }
+        LogSuccess($"Report saved to: {filePath}");
     }
-
-    LogSuccess($"Report saved to: {filePath}");
+    catch (IOException ex) when (ex.Message.Contains("being used by another process"))
+    {
+        LogError($"Cannot write to {fileName} - file is open in another program (Excel?).");
+        LogError("Close the file and run the report again, or the report will only display to console.");
+    }
+    
     Log("");
 
     // Load trading state for P/L calculations
@@ -380,15 +457,34 @@ async Task RunReportAsync(string[] args)
     var dayStartBalance = tradingState.DayStartBalance > 0 ? tradingState.DayStartBalance : startingAmount;
     var dailyPL = currentBalance - dayStartBalance;
     var dailyPLPercent = dayStartBalance > 0 ? (dailyPL / dayStartBalance) * 100 : 0;
+    
+    // P/L verification from fills
+    // For a balanced day (start in cash, end in cash), Net from Fills should equal Daily P/L
+    var fillBasedPL = totalSellValue - totalBuyValue;
+    var discrepancy = dailyPL - fillBasedPL;
 
     // Print summary
     Log("=== Summary ===");
     Log($"Total Transactions: {records.Count} ({buyCount} buys, {sellCount} sells)");
     Log($"Total Buy Value:    ${totalBuyValue:N2}");
     Log($"Total Sell Value:   ${totalSellValue:N2}");
+    Log($"Net from Fills:     ${fillBasedPL:N2}");
     Log("");
     Log($"Day Start Balance:  ${dayStartBalance:N2}");
     Log($"Current Balance:    ${currentBalance:N2}");
+    Log("");
+    
+    // Show first and last trades for context
+    var firstOrder = relevantOrders.First();
+    var lastOrder = relevantOrders.Last();
+    Log($"First trade: {firstOrder.OrderSide} {firstOrder.Symbol} @ {firstOrder.FilledAtUtc:HH:mm:ss} UTC");
+    Log($"Last trade:  {lastOrder.OrderSide} {lastOrder.Symbol} @ {lastOrder.FilledAtUtc:HH:mm:ss} UTC");
+    
+    // Check for imbalance
+    if (buyCount != sellCount)
+    {
+        Log($"⚠️  Buy/Sell imbalance: {Math.Abs(buyCount - sellCount)} unmatched {(buyCount > sellCount ? "buy(s)" : "sell(s)")}");
+    }
     Log("");
     
     // Daily P/L
@@ -399,6 +495,13 @@ async Task RunReportAsync(string[] args)
     else
     {
         LogError($"Daily P/L:          -${Math.Abs(dailyPL):N2} ({dailyPLPercent:N2}%)");
+    }
+    
+    // Show discrepancy if any
+    if (Math.Abs(discrepancy) > 0.01m)
+    {
+        Log($"  Net from Fills:   ${fillBasedPL:N2}");
+        Log($"  Discrepancy:      ${discrepancy:N2} (orders from other bot instances or before BotId tagging)");
     }
     
     // Total P/L
@@ -449,6 +552,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     // Load trading settings from config file
     var configSettings = new TradingSettings
     {
+        BotId = configuration["TradingBot:BotId"] ?? "main",
         PollingIntervalSeconds = configuration.GetValue("TradingBot:PollingIntervalSeconds", 5),
         BullSymbol = configuration["TradingBot:BullSymbol"] ?? "TQQQ",
         BearSymbol = configuration["TradingBot:BearSymbol"] ?? "SQQQ",
@@ -468,6 +572,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     
     var settings = new TradingSettings
     {
+        BotId = cmdOverrides.BotIdOverride ?? configSettings.BotId,
         PollingIntervalSeconds = configSettings.PollingIntervalSeconds,
         BullSymbol = cmdOverrides.BullTicker ?? configSettings.BullSymbol,
         BearSymbol = cmdOverrides.BullOnlyMode ? null : (cmdOverrides.BearTicker ?? configSettings.BearSymbol),
@@ -593,6 +698,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     }
 
     Log($"Configuration loaded:");
+    Log($"  Bot ID: {settings.BotId}");
     Log($"  Benchmark: {settings.BenchmarkSymbol}");
     if (settings.UseBtcEarlyTrading)
     {
@@ -992,7 +1098,8 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 tradingState, 
                 tradingClient, 
                 dataClient, 
-                stateFilePath);
+                stateFilePath,
+                settings);
             
             if (liquidated)
             {
@@ -1082,7 +1189,7 @@ async Task LiquidateConfiguredPositionsAsync(
     if (ownedPosition != null || tradingState.CurrentShares > 0)
     {
         Log($"Liquidating locally-owned position: {ownedSymbol} ({tradingState.CurrentShares} shares)");
-        await LiquidatePositionAsync(ownedSymbol, ownedPosition, tradingState, tradingClient, dataClient, stateFilePath);
+        await LiquidatePositionAsync(ownedSymbol, ownedPosition, tradingState, tradingClient, dataClient, stateFilePath, configSettings);
     }
 }
 
@@ -1217,14 +1324,14 @@ async Task EnsurePositionAsync(
     if (!string.IsNullOrEmpty(oppositeSymbol) && (oppositePosition != null || localHoldsOpposite))
     {
         Log($"Current signal targets {targetSymbol}, but holding {oppositeSymbol}. Liquidating...");
-        await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath);
+        await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath, settings);
     }
 
     // 2. Buy Target if not held
     var alreadyHoldsTarget = targetPosition != null || localHoldsTarget;
     if (!alreadyHoldsTarget)
     {
-        await BuyPositionAsync(targetSymbol, tradingState, tradingClient, dataClient, stateFilePath);
+        await BuyPositionAsync(targetSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
     }
     else
     {
@@ -1253,7 +1360,7 @@ async Task EnsureNeutralAsync(
     if (bullPosition != null || localHoldsBull)
     {
         Log($"Signal is {reason}. Liquidating {settings.BullSymbol} to Cash.");
-        await LiquidatePositionAsync(settings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath);
+        await LiquidatePositionAsync(settings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath, settings);
     }
 
     // Check for Bear Symbol (only if BearSymbol is configured)
@@ -1265,7 +1372,7 @@ async Task EnsureNeutralAsync(
         if (bearPosition != null || localHoldsBear)
         {
              Log($"Signal is {reason}. Liquidating {settings.BearSymbol} to Cash.");
-             await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath);
+             await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath, settings);
         }
     }
 
@@ -1284,7 +1391,8 @@ async Task<bool> LiquidatePositionAsync(
     TradingState tradingState, 
     IAlpacaTradingClient tradingClient, 
     IAlpacaDataClient dataClient, 
-    string stateFilePath)
+    string stateFilePath,
+    TradingSettings settings)
 {
     // Calculate expected sale proceeds before liquidating
     var quoteRequest = new LatestMarketDataRequest(symbol)
@@ -1324,10 +1432,13 @@ async Task<bool> LiquidatePositionAsync(
             OrderSide.Sell,
             OrderType.Market,
             TimeInForce.Day
-        );
+        )
+        {
+            ClientOrderId = settings.GenerateClientOrderId()
+        };
         
         var order = await tradingClient.PostOrderAsync(sellOrder);
-        LogSuccess($"Sell order submitted: {order.OrderId}");
+        LogSuccess($"Sell order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
         sellSucceeded = true;
     }
     catch (Exception ex)
@@ -1379,7 +1490,8 @@ async Task BuyPositionAsync(
     TradingState tradingState, 
     IAlpacaTradingClient tradingClient, 
     IAlpacaDataClient dataClient, 
-    string stateFilePath)
+    string stateFilePath,
+    TradingSettings settings)
 {
      // Use our tracked available cash
     var availableForPurchase = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
@@ -1415,10 +1527,13 @@ async Task BuyPositionAsync(
             OrderSide.Buy,
             OrderType.Market,
             TimeInForce.Day
-        );
+        )
+        {
+            ClientOrderId = settings.GenerateClientOrderId()
+        };
 
         var order = await tradingClient.PostOrderAsync(orderRequest);
-        LogSuccess($"Order submitted: {order.OrderId}");
+        LogSuccess($"Order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
         
         // Update trading state
         tradingState.AvailableCash = 0m; 
@@ -1557,6 +1672,7 @@ void SaveTradingState(string filePath, TradingState state)
 // ============================================================================
 class TradingSettings
 {
+    public string BotId { get; set; } = "main"; // Unique identifier for this bot instance
     public int PollingIntervalSeconds { get; set; } = 5;
     public string BullSymbol { get; set; } = "TQQQ";
     public string? BearSymbol { get; set; } = "SQQQ";
@@ -1570,6 +1686,9 @@ class TradingSettings
     public bool BullOnlyMode { get; set; } = false;
     public bool UseBtcEarlyTrading { get; set; } = true; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
+    
+    // Generate a client order ID with bot prefix for order tracking
+    public string GenerateClientOrderId() => $"qqqBot-{BotId}-{Guid.NewGuid():N}";
 }
 
 class TradingState
@@ -1604,6 +1723,7 @@ class CommandLineOverrides
     public int? NeutralWaitSecondsOverride { get; set; }
     public decimal? MinChopAbsoluteOverride { get; set; }
     public bool WatchBtc { get; set; }
+    public string? BotIdOverride { get; set; }
 }
 
 // CSV record for report export
