@@ -109,6 +109,20 @@ CommandLineOverrides? ParseCommandLineOverrides(string[] args)
         {
             overrides.MonitorSlippage = true;
         }
+        else if (arg.StartsWith("-trail=", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = arg.Substring("-trail=".Length).Trim();
+            if (decimal.TryParse(value, out var pct) && pct >= 0)
+            {
+                // Convert user input (e.g., 0.2 for 0.2%) to decimal (0.002)
+                overrides.TrailingStopPercentOverride = pct / 100m;
+            }
+            else
+            {
+                LogError($"-trail must be a non-negative number (percent). Got: {value}");
+                return null;
+            }
+        }
     }
     
     // Validation: -bear may not be specified without -bull
@@ -568,6 +582,8 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
         WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
         MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
+        TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
+        StopLossCooldownSeconds = configuration.GetValue("TradingBot:StopLossCooldownSeconds", 10),
         StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m)
     };
     
@@ -591,7 +607,9 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         BullOnlyMode = cmdOverrides.BullOnlyMode,
         UseBtcEarlyTrading = useBtcEarlyTrading,
         WatchBtc = cmdOverrides.WatchBtc || configSettings.WatchBtc,
-        MonitorSlippage = cmdOverrides.MonitorSlippage || configSettings.MonitorSlippage
+        MonitorSlippage = cmdOverrides.MonitorSlippage || configSettings.MonitorSlippage,
+        TrailingStopPercent = cmdOverrides.TrailingStopPercentOverride ?? configSettings.TrailingStopPercent,
+        StopLossCooldownSeconds = configSettings.StopLossCooldownSeconds
     };
 
     // Initialize Alpaca clients (Paper Trading) - needed for ticker validation
@@ -971,6 +989,13 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     // Track neutral state duration
     DateTime? neutralDetectionTime = null;
     
+    // Virtual trailing stop state (for protecting profits during intra-trend pullbacks)
+    decimal _highWaterMark = 0m;     // Highest benchmark price since entry
+    decimal _virtualStopPrice = 0m;  // Stop trigger level (highWaterMark * (1 - trailPct))
+    bool _isStoppedOut = false;       // Washout latch engaged
+    decimal _washoutLevel = 0m;      // Price required to re-enter after stop-out
+    DateTime? _stopoutTime = null;   // Time of stop-out (for cooldown)
+    
     // Logging state
     DateTime lastLogTime = DateTime.MinValue;
     string lastSignal = string.Empty;
@@ -1253,20 +1278,137 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             
             lastSignal = finalSignal;
 
+            // ====================================================================
+            // VIRTUAL TRAILING STOP LOGIC
+            // ====================================================================
+            // Priority: SMA Flip > Trailing Stop > Normal Strategy
+            // When holding BULL: track high water mark, calc stop, trigger on breach
+            // After stop-out: latch prevents re-entry until cooldown expires
+            
+            bool trailingStopTriggered = false;
+            bool latchBlocksEntry = false;
+            
+            if (settings.TrailingStopPercent > 0)
+            {
+                bool holdingBull = tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0;
+                
+                if (holdingBull)
+                {
+                    // Update high water mark if price has risen
+                    if (currentPrice > _highWaterMark || _highWaterMark == 0m)
+                    {
+                        _highWaterMark = currentPrice;
+                        _virtualStopPrice = _highWaterMark * (1m - settings.TrailingStopPercent);
+                    }
+                    
+                    // Check if trailing stop is breached
+                    if (currentPrice <= _virtualStopPrice)
+                    {
+                        trailingStopTriggered = true;
+                        _isStoppedOut = true;
+                        _washoutLevel = _highWaterMark; // Must recover to peak to re-enter
+                        _stopoutTime = DateTime.UtcNow;
+                        
+                        if (shouldLog)
+                        {
+                            LogWarning($"[TRAILING STOP] Price ${currentPrice:N2} breached stop ${_virtualStopPrice:N2} (HWM: ${_highWaterMark:N2})");
+                            Log($"    Engaging washout latch - will block re-entry for {settings.StopLossCooldownSeconds}s");
+                        }
+                    }
+                }
+                else
+                {
+                    // Not holding BULL - check if washout latch is blocking re-entry
+                    if (_isStoppedOut && _stopoutTime.HasValue)
+                    {
+                        var timeSinceStopout = (DateTime.UtcNow - _stopoutTime.Value).TotalSeconds;
+                        
+                        // Latch clears when: (1) cooldown expires AND (2) price recovers to washout level
+                        if (timeSinceStopout >= settings.StopLossCooldownSeconds && currentPrice >= _washoutLevel)
+                        {
+                            _isStoppedOut = false;
+                            _highWaterMark = 0m;
+                            _virtualStopPrice = 0m;
+                            _washoutLevel = 0m;
+                            _stopoutTime = null;
+                            
+                            if (shouldLog) Log($"    [LATCH CLEARED] Price recovered to ${currentPrice:N2} after cooldown");
+                        }
+                        else
+                        {
+                            // Latch still active - block BULL entry
+                            if (finalSignal == "BULL")
+                            {
+                                latchBlocksEntry = true;
+                                if (shouldLog)
+                                {
+                                    var remaining = Math.Max(0, settings.StopLossCooldownSeconds - timeSinceStopout);
+                                    Log($"    [LATCH ACTIVE] Blocking BULL entry (cooldown: {remaining:F1}s, need: ${_washoutLevel:N2}, have: ${currentPrice:N2})");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // On successful entry to BULL, reset trailing stop state
+            void ResetTrailingStopOnEntry()
+            {
+                if (settings.TrailingStopPercent > 0)
+                {
+                    _highWaterMark = currentPrice;
+                    _virtualStopPrice = _highWaterMark * (1m - settings.TrailingStopPercent);
+                    _isStoppedOut = false;
+                    _washoutLevel = 0m;
+                    _stopoutTime = null;
+                }
+            }
+
             // Execute Strategy based on finalSignal
-            if (finalSignal == "MARKET_CLOSE")
+            // Priority: SMA Flip always wins > Trailing Stop > Latch Block > Normal Wait
+            
+            // TRAILING STOP TRIGGER: Immediate liquidation (overrides signal)
+            if (trailingStopTriggered)
+            {
+                neutralDetectionTime = null;
+                await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "TRAILING STOP HIT", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
+            }
+            else if (finalSignal == "MARKET_CLOSE")
             {
                 neutralDetectionTime = null; // Reset neutral timer
                 await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "MARKET CLOSE", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
             }
             else if (finalSignal == "BULL")
             {
-                neutralDetectionTime = null; // Reset neutral timer
-                await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile);
+                // Check if washout latch blocks re-entry
+                if (latchBlocksEntry)
+                {
+                    // Latch active - hold current position (or stay neutral)
+                    // Don't reset neutral timer - we're waiting for latch to clear
+                }
+                else
+                {
+                    neutralDetectionTime = null; // Reset neutral timer
+                    var wasBull = tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0;
+                    await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile);
+                    
+                    // If we just entered BULL position, reset trailing stop tracking
+                    if (!wasBull && tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0)
+                    {
+                        ResetTrailingStopOnEntry();
+                    }
+                }
             }
             else if (finalSignal == "BEAR")
             {
                 neutralDetectionTime = null; // Reset neutral timer
+                // Clear trailing stop state on BEAR signal (SMA flip overrides)
+                _isStoppedOut = false;
+                _highWaterMark = 0m;
+                _virtualStopPrice = 0m;
+                _washoutLevel = 0m;
+                _stopoutTime = null;
+                
                 // In bull-only mode, BEAR signal dumps to cash
                 if (settings.BullOnlyMode)
                 {
@@ -2056,6 +2198,13 @@ void LogError(string message)
     Console.ResetColor();
 }
 
+void LogWarning(string message)
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] WARNING: {message}");
+    Console.ResetColor();
+}
+
 void LogSuccess(string message)
 {
     Console.ForegroundColor = ConsoleColor.Green;
@@ -2154,6 +2303,8 @@ class TradingSettings
     public bool UseBtcEarlyTrading { get; set; } = true; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
+    public decimal TrailingStopPercent { get; set; } = 0.0m; // 0 = disabled, e.g. 0.002 = 0.2%
+    public int StopLossCooldownSeconds { get; set; } = 10; // Washout latch duration
     
     // Derived: Calculate queue size dynamically from window and interval
     public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
@@ -2196,6 +2347,7 @@ class CommandLineOverrides
     public bool WatchBtc { get; set; }
     public string? BotIdOverride { get; set; }
     public bool MonitorSlippage { get; set; }
+    public decimal? TrailingStopPercentOverride { get; set; }
 }
 
 // CSV record for report export
