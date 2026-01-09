@@ -588,8 +588,9 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     };
     
     // Create effective settings (may be modified by command line overrides)
-    // BTC/USD early trading is enabled by default, but disabled for CLI overrides unless -usebtc is specified
-    var useBtcEarlyTrading = !cmdOverrides.HasOverrides || cmdOverrides.UseBtcEarlyTrading;
+    // Determine whether to use BTC/USD for early trading.
+    // Use the config setting by default, but allow CLI to override when provided.
+    var useBtcEarlyTrading = cmdOverrides.HasOverrides ? cmdOverrides.UseBtcEarlyTrading : configSettings.UseBtcEarlyTrading;
     
     var settings = new TradingSettings
     {
@@ -862,12 +863,23 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     // Reconnection state
     bool _stockStreamReconnecting = false;
     bool _cryptoStreamReconnecting = false;
+    DateTime _lastStockReconnectAttempt = DateTime.MinValue;
+    DateTime _lastCryptoReconnectAttempt = DateTime.MinValue;
+    const int RECONNECT_COOLDOWN_SECONDS = 30; // Don't retry reconnection more than once per 30s
     
     // Helper: Connect/reconnect stock stream
     async Task ConnectStockStreamAsync()
     {
         if (_stockStreamReconnecting) return;
+        
+        // Cooldown check - don't spam reconnections
+        if (DateTime.UtcNow - _lastStockReconnectAttempt < TimeSpan.FromSeconds(RECONNECT_COOLDOWN_SECONDS))
+        {
+            return;
+        }
+        
         _stockStreamReconnecting = true;
+        _lastStockReconnectAttempt = DateTime.UtcNow;
         
         try
         {
@@ -899,6 +911,13 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             
             await stockStreamClient.ConnectAndAuthenticateAsync();
             await stockStreamClient.SubscribeAsync(benchmarkSubscription);
+            
+            // Reset the staleness timer to give new connection time to receive data
+            lock (streamLock)
+            {
+                _lastBenchmarkUpdate = DateTime.UtcNow;
+            }
+            
             Log($"  ✓ Stock stream connected: {settings.BenchmarkSymbol}");
         }
         catch (Exception ex)
@@ -915,7 +934,15 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     async Task ConnectCryptoStreamAsync()
     {
         if (_cryptoStreamReconnecting) return;
+        
+        // Cooldown check - don't spam reconnections
+        if (DateTime.UtcNow - _lastCryptoReconnectAttempt < TimeSpan.FromSeconds(RECONNECT_COOLDOWN_SECONDS))
+        {
+            return;
+        }
+        
         _cryptoStreamReconnecting = true;
+        _lastCryptoReconnectAttempt = DateTime.UtcNow;
         
         try
         {
@@ -946,6 +973,13 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             
             await cryptoStreamClient.ConnectAndAuthenticateAsync();
             await cryptoStreamClient.SubscribeAsync(btcSubscription);
+            
+            // Reset the staleness timer to give new connection time to receive data
+            lock (streamLock)
+            {
+                _lastBtcUpdate = DateTime.UtcNow;
+            }
+            
             Log($"  ✓ Crypto stream connected: {settings.CryptoBenchmarkSymbol}");
         }
         catch (Exception ex)
@@ -992,9 +1026,12 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     DateTime? neutralDetectionTime = null;
     
     // Virtual trailing stop state (for protecting profits during intra-trend pullbacks)
-    decimal _highWaterMark = 0m;     // Highest benchmark price since entry
-    decimal _virtualStopPrice = 0m;  // Stop trigger level (highWaterMark * (1 - trailPct))
+    // Works for both BULL (tracks high water mark) and BEAR (tracks low water mark)
+    decimal _highWaterMark = 0m;     // Highest benchmark price since BULL entry
+    decimal _lowWaterMark = 0m;      // Lowest benchmark price since BEAR entry
+    decimal _virtualStopPrice = 0m;  // Stop trigger level
     bool _isStoppedOut = false;       // Washout latch engaged
+    string _stoppedOutDirection = ""; // "BULL" or "BEAR" - which direction was stopped out
     decimal _washoutLevel = 0m;      // Price required to re-enter after stop-out
     DateTime? _stopoutTime = null;   // Time of stop-out (for cooldown)
     
@@ -1108,19 +1145,27 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 }
                 
                 // Staleness check - if no update in 15 seconds, stream may be disconnected
+                // Only log and attempt reconnection if we're not in cooldown period
                 if (currentPrice > 0 && DateTime.UtcNow - lastUpdate > TimeSpan.FromSeconds(15))
                 {
-                    var staleSec = (DateTime.UtcNow - lastUpdate).TotalSeconds;
-                    Log($"[WARN] Data stream stale ({staleSec:F1}s). Triggering reconnection...");
+                    var cooldownActive = usesCrypto 
+                        ? DateTime.UtcNow - _lastCryptoReconnectAttempt < TimeSpan.FromSeconds(RECONNECT_COOLDOWN_SECONDS)
+                        : DateTime.UtcNow - _lastStockReconnectAttempt < TimeSpan.FromSeconds(RECONNECT_COOLDOWN_SECONDS);
                     
-                    // Trigger reconnection in background (don't await - non-blocking)
-                    if (usesCrypto)
+                    if (!cooldownActive)
                     {
-                        _ = ConnectCryptoStreamAsync();
-                    }
-                    else
-                    {
-                        _ = ConnectStockStreamAsync();
+                        var staleSec = (DateTime.UtcNow - lastUpdate).TotalSeconds;
+                        Log($"[WARN] Data stream stale ({staleSec:F1}s). Triggering reconnection...");
+                        
+                        // Trigger reconnection in background (don't await - non-blocking)
+                        if (usesCrypto)
+                        {
+                            _ = ConnectCryptoStreamAsync();
+                        }
+                        else
+                        {
+                            _ = ConnectStockStreamAsync();
+                        }
                     }
                     
                     currentPrice = 0m; // Force HTTP fallback for this iteration
@@ -1321,43 +1366,97 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             if (settings.TrailingStopPercent > 0)
             {
                 bool holdingBull = tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0;
+                bool holdingBear = tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0;
                 
                 if (holdingBull)
                 {
-                    // Update high water mark if price has risen
+                    // BULL: Track HIGH water mark, stop triggers when price DROPS below threshold
                     if (currentPrice > _highWaterMark || _highWaterMark == 0m)
                     {
+                        var oldHwm = _highWaterMark;
                         _highWaterMark = currentPrice;
                         _virtualStopPrice = _highWaterMark * (1m - settings.TrailingStopPercent);
+                        
+                        if (shouldLog && oldHwm > 0m)
+                        {
+                            Log($"    [TRAILING STOP] HWM updated: ${oldHwm:N2} -> ${_highWaterMark:N2}, Stop: ${_virtualStopPrice:N2} (trail: {settings.TrailingStopPercent:P2})");
+                        }
+                        else if (shouldLog)
+                        {
+                            Log($"    [TRAILING STOP] Initialized: HWM=${_highWaterMark:N2}, Stop=${_virtualStopPrice:N2} (trail: {settings.TrailingStopPercent:P2})");
+                        }
                     }
                     
-                    // Check if trailing stop is breached
+                    // Check if trailing stop is breached (price dropped below stop)
                     if (currentPrice <= _virtualStopPrice)
                     {
                         trailingStopTriggered = true;
                         _isStoppedOut = true;
-                        _washoutLevel = _highWaterMark; // Must recover to peak to re-enter
+                        _stoppedOutDirection = "BULL";
+                        _washoutLevel = _highWaterMark; // Must recover to peak to re-enter BULL
                         _stopoutTime = DateTime.UtcNow;
                         
                         if (shouldLog)
                         {
-                            LogWarning($"[TRAILING STOP] Price ${currentPrice:N2} breached stop ${_virtualStopPrice:N2} (HWM: ${_highWaterMark:N2})");
-                            Log($"    Engaging washout latch - will block re-entry for {settings.StopLossCooldownSeconds}s");
+                            LogWarning($"[TRAILING STOP] BULL: Price ${currentPrice:N2} breached stop ${_virtualStopPrice:N2} (HWM: ${_highWaterMark:N2})");
+                            Log($"    Engaging washout latch - will block BULL re-entry for {settings.StopLossCooldownSeconds}s");
+                        }
+                    }
+                }
+                else if (holdingBear)
+                {
+                    // BEAR: Track LOW water mark, stop triggers when price RISES above threshold
+                    if (currentPrice < _lowWaterMark || _lowWaterMark == 0m)
+                    {
+                        var oldLwm = _lowWaterMark;
+                        _lowWaterMark = currentPrice;
+                        _virtualStopPrice = _lowWaterMark * (1m + settings.TrailingStopPercent);
+                        
+                        if (shouldLog && oldLwm > 0m)
+                        {
+                            Log($"    [TRAILING STOP] LWM updated: ${oldLwm:N2} -> ${_lowWaterMark:N2}, Stop: ${_virtualStopPrice:N2} (trail: {settings.TrailingStopPercent:P2})");
+                        }
+                        else if (shouldLog)
+                        {
+                            Log($"    [TRAILING STOP] Initialized: LWM=${_lowWaterMark:N2}, Stop=${_virtualStopPrice:N2} (trail: {settings.TrailingStopPercent:P2})");
+                        }
+                    }
+                    
+                    // Check if trailing stop is breached (price rose above stop)
+                    if (currentPrice >= _virtualStopPrice)
+                    {
+                        trailingStopTriggered = true;
+                        _isStoppedOut = true;
+                        _stoppedOutDirection = "BEAR";
+                        _washoutLevel = _lowWaterMark; // Must drop to trough to re-enter BEAR
+                        _stopoutTime = DateTime.UtcNow;
+                        
+                        if (shouldLog)
+                        {
+                            LogWarning($"[TRAILING STOP] BEAR: Price ${currentPrice:N2} breached stop ${_virtualStopPrice:N2} (LWM: ${_lowWaterMark:N2})");
+                            Log($"    Engaging washout latch - will block BEAR re-entry for {settings.StopLossCooldownSeconds}s");
                         }
                     }
                 }
                 else
                 {
-                    // Not holding BULL - check if washout latch is blocking re-entry
+                    // Not holding any position - check if washout latch is blocking re-entry
                     if (_isStoppedOut && _stopoutTime.HasValue)
                     {
                         var timeSinceStopout = (DateTime.UtcNow - _stopoutTime.Value).TotalSeconds;
+                        bool cooldownExpired = timeSinceStopout >= settings.StopLossCooldownSeconds;
                         
-                        // Latch clears when: (1) cooldown expires AND (2) price recovers to washout level
-                        if (timeSinceStopout >= settings.StopLossCooldownSeconds && currentPrice >= _washoutLevel)
+                        // Latch clear conditions depend on which direction was stopped out
+                        bool priceRecovered = _stoppedOutDirection == "BULL" 
+                            ? currentPrice >= _washoutLevel  // BULL: price must recover to HWM
+                            : currentPrice <= _washoutLevel; // BEAR: price must drop to LWM
+                        
+                        if (cooldownExpired && priceRecovered)
                         {
                             _isStoppedOut = false;
+                            _stoppedOutDirection = "";
                             _highWaterMark = 0m;
+                            _lowWaterMark = 0m;
                             _virtualStopPrice = 0m;
                             _washoutLevel = 0m;
                             _stopoutTime = null;
@@ -1366,14 +1465,15 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                         }
                         else
                         {
-                            // Latch still active - block BULL entry
-                            if (finalSignal == "BULL")
+                            // Latch still active - block entry in the stopped-out direction
+                            if (finalSignal == _stoppedOutDirection)
                             {
                                 latchBlocksEntry = true;
                                 if (shouldLog)
                                 {
                                     var remaining = Math.Max(0, settings.StopLossCooldownSeconds - timeSinceStopout);
-                                    Log($"    [LATCH ACTIVE] Blocking BULL entry (cooldown: {remaining:F1}s, need: ${_washoutLevel:N2}, have: ${currentPrice:N2})");
+                                    var needDir = _stoppedOutDirection == "BULL" ? "above" : "below";
+                                    Log($"    [LATCH ACTIVE] Blocking {_stoppedOutDirection} entry (cooldown: {remaining:F1}s, need: {needDir} ${_washoutLevel:N2}, have: ${currentPrice:N2})");
                                 }
                             }
                         }
@@ -1381,14 +1481,30 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 }
             }
             
-            // On successful entry to BULL, reset trailing stop state
-            void ResetTrailingStopOnEntry()
+            // On successful entry, reset trailing stop state for that direction
+            void ResetTrailingStopOnBullEntry()
             {
                 if (settings.TrailingStopPercent > 0)
                 {
                     _highWaterMark = currentPrice;
+                    _lowWaterMark = 0m;
                     _virtualStopPrice = _highWaterMark * (1m - settings.TrailingStopPercent);
                     _isStoppedOut = false;
+                    _stoppedOutDirection = "";
+                    _washoutLevel = 0m;
+                    _stopoutTime = null;
+                }
+            }
+            
+            void ResetTrailingStopOnBearEntry()
+            {
+                if (settings.TrailingStopPercent > 0)
+                {
+                    _highWaterMark = 0m;
+                    _lowWaterMark = currentPrice;
+                    _virtualStopPrice = _lowWaterMark * (1m + settings.TrailingStopPercent);
+                    _isStoppedOut = false;
+                    _stoppedOutDirection = "";
                     _washoutLevel = 0m;
                     _stopoutTime = null;
                 }
@@ -1437,33 +1553,45 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 {
                     neutralDetectionTime = null; // Reset neutral timer
                     var wasBull = tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0;
-                    await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile);
+                    var bullHoldInfo = (currentPrice, lowerBand, upperBand, settings.TrailingStopPercent > 0 && _virtualStopPrice > 0 && _highWaterMark > 0 ? _virtualStopPrice : (decimal?)null);
+                    await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, bullHoldInfo);
                     
                     // If we just entered BULL position, reset trailing stop tracking
                     if (!wasBull && tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0)
                     {
-                        ResetTrailingStopOnEntry();
+                        ResetTrailingStopOnBullEntry();
                     }
                 }
             }
             else if (finalSignal == "BEAR")
             {
-                neutralDetectionTime = null; // Reset neutral timer
-                // Clear trailing stop state on BEAR signal (SMA flip overrides)
-                _isStoppedOut = false;
-                _highWaterMark = 0m;
-                _virtualStopPrice = 0m;
-                _washoutLevel = 0m;
-                _stopoutTime = null;
-                
-                // In bull-only mode, BEAR signal dumps to cash
-                if (settings.BullOnlyMode)
+                // Check if washout latch blocks re-entry to BEAR
+                if (latchBlocksEntry)
                 {
-                    await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "BEAR (bull-only mode)", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
+                    // Latch active - hold current position (or stay neutral)
+                    // Don't reset neutral timer - we're waiting for latch to clear
                 }
                 else
                 {
-                    await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile);
+                    neutralDetectionTime = null; // Reset neutral timer
+                    
+                    // In bull-only mode, BEAR signal dumps to cash
+                    if (settings.BullOnlyMode)
+                    {
+                        await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "BEAR (bull-only mode)", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
+                    }
+                    else
+                    {
+                        var wasBear = tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0;
+                        var bearHoldInfo = (currentPrice, lowerBand, upperBand, settings.TrailingStopPercent > 0 && _virtualStopPrice > 0 && _lowWaterMark > 0 ? _virtualStopPrice : (decimal?)null);
+                        await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, bearHoldInfo);
+                        
+                        // If we just entered BEAR position, reset trailing stop tracking
+                        if (!wasBear && tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0)
+                        {
+                            ResetTrailingStopOnBearEntry();
+                        }
+                    }
                 }
             }
             else // NEUTRAL (true chop - BTC didn't nudge or WatchBtc is off)
@@ -1777,7 +1905,8 @@ async Task EnsurePositionAsync(
     TradingSettings settings,
     object? slippageLock = null,
     Action<decimal>? updateSlippage = null,
-    string? slippageLogFile = null)
+    string? slippageLogFile = null,
+    (decimal quote, decimal lowerBand, decimal upperBand, decimal? stopPrice)? holdDisplayInfo = null)
 {
     // Get current positions from Alpaca
     var positions = await tradingClient.ListPositionsAsync();
@@ -1792,14 +1921,36 @@ async Task EnsurePositionAsync(
         (tradingState.CurrentPosition?.Equals(oppositeSymbol, StringComparison.OrdinalIgnoreCase) ?? false);
 
     // 1. Liquidate Opposite if held (only if we have an opposite symbol)
+    // LiquidatePositionAsync now WAITS for fill before returning, preventing race conditions
     if (!string.IsNullOrEmpty(oppositeSymbol) && (oppositePosition != null || localHoldsOpposite))
     {
         Log($"Current signal targets {targetSymbol}, but holding {oppositeSymbol}. Liquidating...");
-        await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
+        var liquidated = await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
+        
+        if (!liquidated)
+        {
+            LogError($"[ERROR] Failed to liquidate {oppositeSymbol}. Aborting position switch.");
+            return; // Don't proceed to buy if liquidation failed
+        }
     }
 
-    // 2. Buy Target if not held
-    var alreadyHoldsTarget = targetPosition != null || localHoldsTarget;
+    // 2. SAFEGUARD: Re-check Alpaca positions before buying to prevent dual holdings
+    // This catches edge cases where external orders or race conditions left positions open
+    positions = await tradingClient.ListPositionsAsync();
+    oppositePosition = !string.IsNullOrEmpty(oppositeSymbol) 
+        ? positions.FirstOrDefault(p => p.Symbol.Equals(oppositeSymbol, StringComparison.OrdinalIgnoreCase))
+        : null;
+    
+    if (oppositePosition != null && oppositePosition.Quantity > 0)
+    {
+        LogError($"[SAFEGUARD] Opposite position {oppositeSymbol} still exists ({oppositePosition.Quantity} shares). Aborting buy to prevent dual holdings.");
+        return;
+    }
+
+    // 3. Buy Target if not held
+    targetPosition = positions.FirstOrDefault(p => p.Symbol.Equals(targetSymbol, StringComparison.OrdinalIgnoreCase));
+    var alreadyHoldsTarget = targetPosition != null || (tradingState.CurrentPosition?.Equals(targetSymbol, StringComparison.OrdinalIgnoreCase) ?? false);
+    
     if (!alreadyHoldsTarget)
     {
         await BuyPositionAsync(targetSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
@@ -1807,7 +1958,16 @@ async Task EnsurePositionAsync(
     else
     {
         var heldShares = targetPosition?.Quantity ?? tradingState.CurrentShares;
-        Log($"[HOLD] Staying Long {targetSymbol} ({heldShares} shares).");
+        if (holdDisplayInfo.HasValue)
+        {
+            var (quote, lower, upper, stop) = holdDisplayInfo.Value;
+            var stopStr = stop.HasValue ? $"${stop.Value:N2}" : "N/A";
+            Log($"[HOLD] Staying Long {targetSymbol} ({heldShares} shares) - Band: [${lower:N2}-${upper:N2}] - Quote: ${quote:N2} - Stop: {stopStr}");
+        }
+        else
+        {
+            Log($"[HOLD] Staying Long {targetSymbol} ({heldShares} shares).");
+        }
     }
 }
 
@@ -1859,6 +2019,8 @@ async Task EnsureNeutralAsync(
 
 // Helper: Liquidate Position
 // Returns true if liquidation succeeded, false if it failed
+// IMPORTANT: This method now WAITS for the sell order to fill before returning
+// to prevent race conditions where a buy order is placed before the sell completes.
 async Task<bool> LiquidatePositionAsync(
     string symbol, 
     IPosition? position, 
@@ -1877,7 +2039,7 @@ async Task<bool> LiquidatePositionAsync(
         Feed = MarketDataFeed.Iex
     };
     var trade = await dataClient.GetLatestTradeAsync(quoteRequest);
-    var price = trade.Price;
+    var quotePrice = trade.Price;
     
     // Use LOCAL state share count (not Alpaca position) to support multi-instance scenarios
     // This ensures we only sell shares this bot instance "owns", not shares from other instances
@@ -1892,14 +2054,11 @@ async Task<bool> LiquidatePositionAsync(
         return true; // Nothing to sell, state is clean
     }
     
-    var saleProceeds = shareCount * price;
+    var estimatedProceeds = shareCount * quotePrice;
     
     // Liquidate using a market sell order for specific share count (not DeletePositionAsync)
-    Log($"[SELL] Liquidating {shareCount} shares of {symbol} @ ~${price:N2}");
-    Log($"       Expected proceeds: ${saleProceeds:N2}");
-    
-    bool sellSucceeded = false;
-    bool positionNotFound = false;
+    Log($"[SELL] Liquidating {shareCount} shares of {symbol} @ ~${quotePrice:N2}");
+    Log($"       Expected proceeds: ${estimatedProceeds:N2}");
     
     Guid? sellOrderId = null;
     
@@ -1919,7 +2078,6 @@ async Task<bool> LiquidatePositionAsync(
         var order = await tradingClient.PostOrderAsync(sellOrder);
         LogSuccess($"Sell order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
         sellOrderId = order.OrderId;
-        sellSucceeded = true;
     }
     catch (Exception ex)
     {
@@ -1927,7 +2085,10 @@ async Task<bool> LiquidatePositionAsync(
         if (ex.Message.Contains("insufficient") || ex.Message.Contains("not found"))
         {
             Log($"[WARN] Could not sell shares ({ex.Message}). Position may not exist.");
-            positionNotFound = true;
+            tradingState.CurrentPosition = null;
+            tradingState.CurrentShares = 0;
+            SaveTradingState(stateFilePath, tradingState);
+            return true; // Position doesn't exist, state is clean
         }
         else if (ex.Message.Contains("market") || ex.Message.Contains("closed") || ex.Message.Contains("outside"))
         {
@@ -1941,107 +2102,99 @@ async Task<bool> LiquidatePositionAsync(
         }
     }
     
-    // Only update trading state if sell succeeded or position doesn't exist
-    if (sellSucceeded || positionNotFound)
+    // CRITICAL: Wait for the sell order to fill before updating state and returning
+    // This prevents race conditions where buy orders are placed before sells complete
+    decimal actualProceeds = estimatedProceeds; // Default to estimate if polling fails
+    long actualQty = shareCount;
+    decimal actualPrice = quotePrice;
+    bool fillConfirmed = false;
+    
+    for (int i = 0; i < 20; i++) // Up to 10 seconds (20 x 500ms)
     {
-        // Use estimate immediately (non-blocking)
-        tradingState.AvailableCash = sellSucceeded ? (saleProceeds + tradingState.AccumulatedLeftover) : tradingState.AccumulatedLeftover;
-        tradingState.AccumulatedLeftover = 0m; 
-        tradingState.CurrentPosition = null;
-        tradingState.CurrentShares = 0;
-        SaveTradingState(stateFilePath, tradingState);
-        
-        // Display balance and P/L after sale
-        var totalBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
-        var profitLoss = totalBalance - tradingState.StartingAmount;
-        LogBalanceWithPL(totalBalance, profitLoss);
-        
-        // Fire-and-forget: poll for actual fill price and apply correction
-        if (sellSucceeded && sellOrderId.HasValue)
+        await Task.Delay(500);
+        try
         {
-            var orderId = sellOrderId.Value;
-            var estimatedProceeds = saleProceeds;
-            var quotePrice = price; // Capture quote price for slippage calculation
-            var preSellPosition = symbol; // Capture for rollback
-            var preSellShares = shareCount;
-            var preSellLeftover = tradingState.AccumulatedLeftover; // Already zeroed, but was passed in
-            _ = Task.Run(async () =>
+            var filledOrder = await tradingClient.GetOrderAsync(sellOrderId!.Value);
+            
+            if (filledOrder.OrderStatus == OrderStatus.Filled && filledOrder.AverageFillPrice.HasValue)
             {
-                try
+                actualPrice = filledOrder.AverageFillPrice.Value;
+                actualQty = (long)filledOrder.FilledQuantity;
+                actualProceeds = actualQty * actualPrice;
+                fillConfirmed = true;
+                
+                var slippage = actualProceeds - estimatedProceeds;
+                if (Math.Abs(slippage) > 0.001m)
                 {
-                    for (int i = 0; i < 20; i++) // Up to 10 seconds
+                    // For SELL: positive slippage = got more than expected = favorable
+                    var slipLabel = slippage >= 0 ? "favorable" : "unfavorable";
+                    Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
+                }
+                else
+                {
+                    Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4}");
+                }
+                
+                // Track slippage if monitoring enabled
+                // For SELL: positive slippage = got more than quoted (good)
+                if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
+                {
+                    var tradeSlippage = (actualPrice - quotePrice) * actualQty;
+                    lock (slippageLock)
                     {
-                        await Task.Delay(500);
-                        var filledOrder = await tradingClient.GetOrderAsync(orderId);
-                        
-                        if (filledOrder.OrderStatus == OrderStatus.Filled && filledOrder.AverageFillPrice.HasValue)
-                        {
-                            var actualPrice = filledOrder.AverageFillPrice.Value;
-                            var actualQty = (long)filledOrder.FilledQuantity;
-                            var actualProceeds = actualQty * actualPrice;
-                            var slippage = actualProceeds - estimatedProceeds;
-                            
-                            if (Math.Abs(slippage) > 0.001m)
-                            {
-                                // Apply correction: if we got more, increase cash; if less, decrease it
-                                tradingState.AvailableCash += slippage;
-                                SaveTradingState(stateFilePath, tradingState);
-                                Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2})");
-                            }
-                            else
-                            {
-                                Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4}");
-                            }
-                            
-                            // Track slippage if monitoring enabled
-                            // For SELL: positive slippage = got more than quoted (good)
-                            // tradeSlippage = (fillPrice - quotePrice) * qty → positive = good
-                            if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
-                            {
-                                var tradeSlippage = (actualPrice - quotePrice) * actualQty;
-                                lock (slippageLock)
-                                {
-                                    updateSlippage(tradeSlippage);
-                                }
-                                
-                                // Log to CSV (fire-and-forget)
-                                if (slippageLogFile != null)
-                                {
-                                    var favor = Math.Sign(tradeSlippage);
-                                    var csvLine = $"{DateTime.UtcNow:s},{symbol},Sell,{actualQty},{quotePrice:F4},{actualPrice:F4},{tradeSlippage:F2},{favor}";
-                                    _ = File.AppendAllTextAsync(slippageLogFile, csvLine + Environment.NewLine);
-                                }
-                            }
-                            return;
-                        }
-                        else if (filledOrder.OrderStatus == OrderStatus.Canceled || 
-                                 filledOrder.OrderStatus == OrderStatus.Expired ||
-                                 filledOrder.OrderStatus == OrderStatus.Rejected)
-                        {
-                            // ROLLBACK: Restore state to pre-sell condition (still holding position)
-                            LogError($"[FILL] Sell order {filledOrder.OrderStatus} - rolling back state");
-                            tradingState.AvailableCash = 0m;
-                            tradingState.AccumulatedLeftover = preSellLeftover;
-                            tradingState.CurrentPosition = preSellPosition;
-                            tradingState.CurrentShares = preSellShares;
-                            SaveTradingState(stateFilePath, tradingState);
-                            LogError($"[FILL] State rolled back: holding {preSellShares} {preSellPosition}");
-                            return;
-                        }
+                        updateSlippage(tradeSlippage);
                     }
-                    Log($"[FILL] Sell fill confirmation timeout - using estimate");
+                    
+                    // Log to CSV
+                    if (slippageLogFile != null)
+                    {
+                        var favor = Math.Sign(tradeSlippage);
+                        var csvLine = $"{DateTime.UtcNow:s},{symbol},Sell,{actualQty},{quotePrice:F4},{actualPrice:F4},{tradeSlippage:F2},{favor}";
+                        try { await File.AppendAllTextAsync(slippageLogFile, csvLine + Environment.NewLine); } catch { }
+                    }
                 }
-                catch (Exception ex)
-                {
-                    Log($"[FILL] Error polling sell fill: {ex.Message}");
-                }
-            });
+                break;
+            }
+            else if (filledOrder.OrderStatus == OrderStatus.Canceled || 
+                     filledOrder.OrderStatus == OrderStatus.Expired ||
+                     filledOrder.OrderStatus == OrderStatus.Rejected)
+            {
+                // Order failed - don't update state, position still exists
+                LogError($"[FILL] Sell order {filledOrder.OrderStatus} - position still held");
+                return false;
+            }
+            else if (filledOrder.OrderStatus == OrderStatus.PartiallyFilled)
+            {
+                // Partially filled - keep waiting for full fill
+                var partialQty = (long)filledOrder.FilledQuantity;
+                Log($"[FILL] Partial fill: {partialQty}/{shareCount} shares...");
+            }
+            // else: still pending, keep waiting
         }
-        
-        return true;
+        catch (Exception ex)
+        {
+            Log($"[FILL] Error polling sell status: {ex.Message}");
+        }
     }
     
-    return false;
+    if (!fillConfirmed)
+    {
+        Log($"[FILL] Sell fill confirmation timeout - using estimate (${estimatedProceeds:N2})");
+    }
+    
+    // NOW update trading state after sell is confirmed (or timed out with estimate)
+    tradingState.AvailableCash = actualProceeds + tradingState.AccumulatedLeftover;
+    tradingState.AccumulatedLeftover = 0m; 
+    tradingState.CurrentPosition = null;
+    tradingState.CurrentShares = 0;
+    SaveTradingState(stateFilePath, tradingState);
+    
+    // Display balance and P/L after sale
+    var totalBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
+    var profitLoss = totalBalance - tradingState.StartingAmount;
+    LogBalanceWithPL(totalBalance, profitLoss);
+    
+    return true;
 }
 
 // Helper: Buy Position
@@ -2133,7 +2286,9 @@ async Task BuyPositionAsync(
                             tradingState.AccumulatedLeftover -= slippage;
                             tradingState.CurrentShares = actualQty;
                             SaveTradingState(stateFilePath, tradingState);
-                            Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2})");
+                            // For BUY: positive slippage = paid more than expected = unfavorable
+                            var slipLabel = slippage <= 0 ? "favorable" : "unfavorable";
+                            Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
                         }
                         else
                         {
@@ -2347,7 +2502,7 @@ class TradingSettings
     public int NeutralWaitSeconds { get; set; } = 30;
     public decimal StartingAmount { get; set; } = 10000m;
     public bool BullOnlyMode { get; set; } = false;
-    public bool UseBtcEarlyTrading { get; set; } = true; // Use BTC/USD as early trading weathervane
+    public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
     public decimal TrailingStopPercent { get; set; } = 0.0m; // 0 = disabled, e.g. 0.002 = 0.2%
