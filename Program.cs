@@ -123,6 +123,24 @@ CommandLineOverrides? ParseCommandLineOverrides(string[] args)
                 return null;
             }
         }
+        else if (arg.Equals("-limit", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.UseMarketableLimits = true;
+        }
+        else if (arg.StartsWith("-maxslip=", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = arg.Substring("-maxslip=".Length).Trim();
+            if (decimal.TryParse(value, out var pct) && pct >= 0)
+            {
+                // Convert user input (e.g., 0.2 for 0.2%) to decimal (0.002)
+                overrides.MaxSlippagePercentOverride = pct / 100m;
+            }
+            else
+            {
+                LogError($"-maxslip must be a non-negative number (percent). Got: {value}");
+                return null;
+            }
+        }
     }
     
     // Validation: -bear may not be specified without -bull
@@ -584,7 +602,10 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
         TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
         StopLossCooldownSeconds = configuration.GetValue("TradingBot:StopLossCooldownSeconds", 10),
-        StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m)
+        StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m),
+        UseMarketableLimits = configuration.GetValue("TradingBot:UseMarketableLimits", false),
+        MaxSlippagePercent = configuration.GetValue("TradingBot:MaxSlippagePercent", 0.002m),
+        MaxChaseDeviationPercent = configuration.GetValue("TradingBot:MaxChaseDeviationPercent", 0.003m)
     };
     
     // Create effective settings (may be modified by command line overrides)
@@ -610,7 +631,10 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         WatchBtc = cmdOverrides.WatchBtc || configSettings.WatchBtc,
         MonitorSlippage = cmdOverrides.MonitorSlippage || configSettings.MonitorSlippage,
         TrailingStopPercent = cmdOverrides.TrailingStopPercentOverride ?? configSettings.TrailingStopPercent,
-        StopLossCooldownSeconds = configSettings.StopLossCooldownSeconds
+        StopLossCooldownSeconds = configSettings.StopLossCooldownSeconds,
+        UseMarketableLimits = cmdOverrides.UseMarketableLimits || configSettings.UseMarketableLimits,
+        MaxSlippagePercent = cmdOverrides.MaxSlippagePercentOverride ?? configSettings.MaxSlippagePercent,
+        MaxChaseDeviationPercent = configSettings.MaxChaseDeviationPercent
     };
 
     // Initialize Alpaca clients (Paper Trading) - needed for ticker validation
@@ -1554,7 +1578,21 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     neutralDetectionTime = null; // Reset neutral timer
                     var wasBull = tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0;
                     var bullHoldInfo = (currentPrice, lowerBand, upperBand, settings.TrailingStopPercent > 0 && _virtualStopPrice > 0 && _highWaterMark > 0 ? _virtualStopPrice : (decimal?)null);
-                    await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, bullHoldInfo);
+                    
+                    // Create price getter for smart chaser logic (reads from stream)
+                    Func<decimal> priceGetter = () => {
+                        lock (streamLock) { return _latestBenchmarkPrice > 0 ? _latestBenchmarkPrice : currentPrice; }
+                    };
+                    
+                    // Create signal checker for smart exit chaser (V-shaped reversal detection)
+                    // Captures current bands to re-evaluate signal at any price
+                    Func<decimal, string> signalChecker = (price) => {
+                        if (price > upperBand) return "BULL";
+                        if (price < lowerBand) return "BEAR";
+                        return "NEUTRAL";
+                    };
+                    
+                    await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, bullHoldInfo, priceGetter, signalChecker);
                     
                     // If we just entered BULL position, reset trailing stop tracking
                     if (!wasBull && tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0)
@@ -1578,13 +1616,32 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     // In bull-only mode, BEAR signal dumps to cash
                     if (settings.BullOnlyMode)
                     {
-                        await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "BEAR (bull-only mode)", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
+                        // Create signal checker for smart exit chaser
+                        Func<decimal, string> signalChecker = (price) => {
+                            if (price > upperBand) return "BULL";
+                            if (price < lowerBand) return "BEAR";
+                            return "NEUTRAL";
+                        };
+                        await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "BEAR (bull-only mode)", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile, getSignalAtPrice: signalChecker);
                     }
                     else
                     {
                         var wasBear = tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0;
                         var bearHoldInfo = (currentPrice, lowerBand, upperBand, settings.TrailingStopPercent > 0 && _virtualStopPrice > 0 && _lowWaterMark > 0 ? _virtualStopPrice : (decimal?)null);
-                        await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, bearHoldInfo);
+                        
+                        // Create price getter for smart chaser logic (reads from stream)
+                        Func<decimal> priceGetter = () => {
+                            lock (streamLock) { return _latestBenchmarkPrice > 0 ? _latestBenchmarkPrice : currentPrice; }
+                        };
+                        
+                        // Create signal checker for smart exit chaser (V-shaped reversal detection)
+                        Func<decimal, string> signalChecker = (price) => {
+                            if (price > upperBand) return "BULL";
+                            if (price < lowerBand) return "BEAR";
+                            return "NEUTRAL";
+                        };
+                        
+                        await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, bearHoldInfo, priceGetter, signalChecker);
                         
                         // If we just entered BEAR position, reset trailing stop tracking
                         if (!wasBear && tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0)
@@ -1605,7 +1662,13 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 var elapsed = (DateTime.UtcNow - neutralDetectionTime.Value).TotalSeconds;
                 if (elapsed >= settings.NeutralWaitSeconds)
                 {
-                        await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
+                        // Create signal checker for smart exit chaser
+                        Func<decimal, string> signalChecker = (price) => {
+                            if (price > upperBand) return "BULL";
+                            if (price < lowerBand) return "BEAR";
+                            return "NEUTRAL";
+                        };
+                        await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile, getSignalAtPrice: signalChecker);
                 }
                 else
                 {
@@ -1906,7 +1969,9 @@ async Task EnsurePositionAsync(
     object? slippageLock = null,
     Action<decimal>? updateSlippage = null,
     string? slippageLogFile = null,
-    (decimal quote, decimal lowerBand, decimal upperBand, decimal? stopPrice)? holdDisplayInfo = null)
+    (decimal quote, decimal lowerBand, decimal upperBand, decimal? stopPrice)? holdDisplayInfo = null,
+    Func<decimal>? getCurrentPrice = null,
+    Func<decimal, string>? getSignalAtPrice = null)
 {
     // Get current positions from Alpaca
     var positions = await tradingClient.ListPositionsAsync();
@@ -1925,7 +1990,7 @@ async Task EnsurePositionAsync(
     if (!string.IsNullOrEmpty(oppositeSymbol) && (oppositePosition != null || localHoldsOpposite))
     {
         Log($"Current signal targets {targetSymbol}, but holding {oppositeSymbol}. Liquidating...");
-        var liquidated = await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
+        var liquidated = await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
         
         if (!liquidated)
         {
@@ -1953,7 +2018,7 @@ async Task EnsurePositionAsync(
     
     if (!alreadyHoldsTarget)
     {
-        await BuyPositionAsync(targetSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
+        await BuyPositionAsync(targetSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getCurrentPrice);
     }
     else
     {
@@ -1982,7 +2047,8 @@ async Task EnsureNeutralAsync(
     bool showStatus = true,
     object? slippageLock = null,
     Action<decimal>? updateSlippage = null,
-    string? slippageLogFile = null)
+    string? slippageLogFile = null,
+    Func<decimal, string>? getSignalAtPrice = null)
 {
     // Get current positions from Alpaca
     var positions = await tradingClient.ListPositionsAsync();
@@ -1994,7 +2060,7 @@ async Task EnsureNeutralAsync(
     if (bullPosition != null || localHoldsBull)
     {
         Log($"Signal is {reason}. Liquidating {settings.BullSymbol} to Cash.");
-        await LiquidatePositionAsync(settings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
+        await LiquidatePositionAsync(settings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
     }
 
     // Check for Bear Symbol (only if BearSymbol is configured)
@@ -2006,7 +2072,7 @@ async Task EnsureNeutralAsync(
         if (bearPosition != null || localHoldsBear)
         {
              Log($"Signal is {reason}. Liquidating {settings.BearSymbol} to Cash.");
-             await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
+             await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
         }
     }
 
@@ -2031,7 +2097,8 @@ async Task<bool> LiquidatePositionAsync(
     TradingSettings settings,
     object? slippageLock = null,
     Action<decimal>? updateSlippage = null,
-    string? slippageLogFile = null)
+    string? slippageLogFile = null,
+    Func<decimal, string>? getSignalAtPrice = null) // Optional: for smart exit chaser
 {
     // Calculate expected sale proceeds before liquidating
     var quoteRequest = new LatestMarketDataRequest(symbol)
@@ -2056,24 +2123,42 @@ async Task<bool> LiquidatePositionAsync(
     
     var estimatedProceeds = shareCount * quotePrice;
     
-    // Liquidate using a market sell order for specific share count (not DeletePositionAsync)
-    Log($"[SELL] Liquidating {shareCount} shares of {symbol} @ ~${quotePrice:N2}");
+    // Calculate limit price if using marketable limits
+    // SELL: LimitPrice = BasePrice * (1.0 - MaxSlippagePercent)
+    var useLimit = settings.UseMarketableLimits;
+    var limitPrice = useLimit ? Math.Round(quotePrice * (1m - settings.MaxSlippagePercent), 2) : 0m;
+    
+    // Liquidate using market or limit sell order
+    var orderTypeStr = useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET";
+    Log($"[SELL] Liquidating {shareCount} shares of {symbol} @ ~${quotePrice:N2} ({orderTypeStr})");
     Log($"       Expected proceeds: ${estimatedProceeds:N2}");
     
     Guid? sellOrderId = null;
     
     try
     {
-        var sellOrder = new NewOrderRequest(
-            symbol,
-            OrderQuantity.FromInt64(shareCount),
-            OrderSide.Sell,
-            OrderType.Market,
-            TimeInForce.Day
-        )
-        {
-            ClientOrderId = settings.GenerateClientOrderId()
-        };
+        var sellOrder = useLimit
+            ? new NewOrderRequest(
+                symbol,
+                OrderQuantity.FromInt64(shareCount),
+                OrderSide.Sell,
+                OrderType.Limit,
+                TimeInForce.Day
+            )
+            {
+                ClientOrderId = settings.GenerateClientOrderId(),
+                LimitPrice = limitPrice
+            }
+            : new NewOrderRequest(
+                symbol,
+                OrderQuantity.FromInt64(shareCount),
+                OrderSide.Sell,
+                OrderType.Market,
+                TimeInForce.Day
+            )
+            {
+                ClientOrderId = settings.GenerateClientOrderId()
+            };
         
         var order = await tradingClient.PostOrderAsync(sellOrder);
         LogSuccess($"Sell order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
@@ -2108,6 +2193,10 @@ async Task<bool> LiquidatePositionAsync(
     long actualQty = shareCount;
     decimal actualPrice = quotePrice;
     bool fillConfirmed = false;
+    var startTime = DateTime.UtcNow;
+    var chaserTimeoutMs = 5000; // 5 second timeout for limit orders before chaser kicks in
+    bool chaserTriggered = false;
+    long filledQtySoFar = 0;
     
     for (int i = 0; i < 20; i++) // Up to 10 seconds (20 x 500ms)
     {
@@ -2168,8 +2257,130 @@ async Task<bool> LiquidatePositionAsync(
                 // Partially filled - keep waiting for full fill
                 var partialQty = (long)filledOrder.FilledQuantity;
                 Log($"[FILL] Partial fill: {partialQty}/{shareCount} shares...");
+                filledQtySoFar = partialQty;
             }
-            // else: still pending, keep waiting
+            
+            // EXIT CHASER LOGIC: Limit order hasn't filled in time
+            // SMART EXIT: Re-check signal before forcing market sell
+            // This catches "V-shaped" reversals where price recovers during timeout
+            if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
+            {
+                chaserTriggered = true;
+                filledQtySoFar = (long)filledOrder.FilledQuantity;
+                
+                // Cancel the limit order first
+                LogWarning($"[EXECUTION] Sell limit order timed out after {chaserTimeoutMs}ms. Evaluating exit...");
+                try
+                {
+                    await tradingClient.CancelOrderAsync(sellOrderId!.Value);
+                    Log($"    Limit order cancelled.");
+                }
+                catch (Exception cancelEx)
+                {
+                    // Order may have filled while we were trying to cancel
+                    if (cancelEx.Message.Contains("filled", StringComparison.OrdinalIgnoreCase) ||
+                        cancelEx.Message.Contains("cannot be cancelled", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log($"    Order already filled during cancel attempt.");
+                        continue; // Next iteration will pick up the fill
+                    }
+                    LogError($"    Cancel error: {cancelEx.Message}");
+                }
+                
+                // Wait for cancel confirmation
+                await Task.Delay(500);
+                var cancelledOrder = await tradingClient.GetOrderAsync(sellOrderId!.Value);
+                filledQtySoFar = (long)cancelledOrder.FilledQuantity;
+                
+                if (cancelledOrder.AverageFillPrice.HasValue && filledQtySoFar > 0)
+                {
+                    actualProceeds = filledQtySoFar * cancelledOrder.AverageFillPrice.Value;
+                }
+                
+                var remainingQty = shareCount - filledQtySoFar;
+                
+                if (remainingQty > 0)
+                {
+                    // SMART EXIT LOGIC: Re-check signal before forcing market sell
+                    // This catches "V-shaped" reversals where price recovers during timeout
+                    bool shouldForceExit = true;
+                    
+                    if (getSignalAtPrice != null)
+                    {
+                        // Get fresh price from API (stream price passed via signal checker)
+                        decimal currentPrice = quotePrice;
+                        try
+                        {
+                            var latestTrade = await dataClient.GetLatestTradeAsync(new LatestMarketDataRequest(symbol) { Feed = MarketDataFeed.Iex });
+                            currentPrice = latestTrade.Price;
+                        }
+                        catch { /* Use original quote price */ }
+                        
+                        var currentSignal = getSignalAtPrice(currentPrice);
+                        
+                        // Check if signal has recovered (false alarm)
+                        // Selling BULL (TQQQ) but signal is now BULL = false alarm, abort
+                        // Selling BEAR (SQQQ) but signal is now BEAR = false alarm, abort
+                        bool isBullSymbol = symbol.Equals(settings.BullSymbol, StringComparison.OrdinalIgnoreCase);
+                        bool isBearSymbol = !string.IsNullOrEmpty(settings.BearSymbol) && symbol.Equals(settings.BearSymbol, StringComparison.OrdinalIgnoreCase);
+                        
+                        bool isFalseAlarm = (isBullSymbol && currentSignal == "BULL") ||
+                                            (isBearSymbol && currentSignal == "BEAR");
+                        
+                        if (isFalseAlarm)
+                        {
+                            shouldForceExit = false;
+                            LogWarning($"[ABORT EXIT] Sell limit timed out, but price recovered to ${currentPrice:N2}.");
+                            Log($"    Signal is now {currentSignal}. Holding position (V-shaped reversal detected).");
+                            
+                            // Keep the shares we still have
+                            if (filledQtySoFar > 0)
+                            {
+                                // Partial fill happened - update state to reflect sold shares
+                                tradingState.CurrentShares = shareCount - filledQtySoFar;
+                                tradingState.AvailableCash += actualProceeds;
+                                SaveTradingState(stateFilePath, tradingState);
+                                Log($"    Kept {tradingState.CurrentShares} shares, sold {filledQtySoFar} (partial fill).");
+                            }
+                            
+                            return false; // Indicate we didn't fully liquidate
+                        }
+                        else
+                        {
+                            Log($"    Signal is {currentSignal} (still bad). Proceeding with forced exit.");
+                        }
+                    }
+                    
+                    if (shouldForceExit)
+                    {
+                        // Submit chaser market order for remaining shares
+                        LogWarning($"[EXECUTION] Forced MARKET sell order for remaining {remainingQty} shares.");
+                        
+                        var chaserOrder = new NewOrderRequest(
+                            symbol,
+                            OrderQuantity.FromInt64(remainingQty),
+                            OrderSide.Sell,
+                            OrderType.Market,
+                            TimeInForce.Day
+                        )
+                        {
+                            ClientOrderId = settings.GenerateClientOrderId()
+                        };
+                        
+                        var chaserResult = await tradingClient.PostOrderAsync(chaserOrder);
+                        sellOrderId = chaserResult.OrderId; // Track the chaser order now
+                        Log($"    Chaser sell order submitted: {chaserResult.OrderId}");
+                    }
+                }
+                else
+                {
+                    // All shares filled during cancel - we're done
+                    Log($"    All {filledQtySoFar} shares filled during cancel.");
+                    actualQty = filledQtySoFar;
+                    fillConfirmed = true;
+                    break;
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -2207,9 +2418,10 @@ async Task BuyPositionAsync(
     TradingSettings settings,
     object? slippageLock = null,
     Action<decimal>? updateSlippage = null,
-    string? slippageLogFile = null)
+    string? slippageLogFile = null,
+    Func<decimal>? getCurrentPrice = null) // Optional: for smart chaser logic
 {
-     // Use our tracked available cash
+    // Use our tracked available cash
     var availableForPurchase = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
     
     if (availableForPurchase <= 0)
@@ -2224,33 +2436,52 @@ async Task BuyPositionAsync(
         Feed = MarketDataFeed.Iex
     };
     var trade = await dataClient.GetLatestTradeAsync(quoteRequest);
-    var price = trade.Price;
+    var basePrice = trade.Price;
 
-    // Calculate max shares
-    var quantity = (long)(availableForPurchase / price);
-    var totalCost = quantity * price;
-    var leftover = availableForPurchase - totalCost;
+    // Calculate limit price if using marketable limits
+    // BUY: LimitPrice = BasePrice * (1.0 + MaxSlippagePercent)
+    var useLimit = settings.UseMarketableLimits;
+    var limitPrice = useLimit ? Math.Round(basePrice * (1m + settings.MaxSlippagePercent), 2) : 0m;
+
+    // Calculate max shares (use limit price if applicable to ensure we can afford at max slippage)
+    var effectivePrice = useLimit ? limitPrice : basePrice;
+    var quantity = (long)(availableForPurchase / effectivePrice);
+    var totalCost = quantity * basePrice; // Estimate at base price
+    var leftover = availableForPurchase - (quantity * effectivePrice);
 
     if (quantity > 0)
     {
-        Log($"[BUY] {symbol} x {quantity} @ ~${price:N2} (estimated)");
+        var orderTypeStr = useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET";
+        Log($"[BUY] {symbol} x {quantity} @ ~${basePrice:N2} ({orderTypeStr})");
         
-        var orderRequest = new NewOrderRequest(
-            symbol,
-            OrderQuantity.FromInt64(quantity),
-            OrderSide.Buy,
-            OrderType.Market,
-            TimeInForce.Day
-        )
-        {
-            ClientOrderId = settings.GenerateClientOrderId()
-        };
+        var orderRequest = useLimit 
+            ? new NewOrderRequest(
+                symbol,
+                OrderQuantity.FromInt64(quantity),
+                OrderSide.Buy,
+                OrderType.Limit,
+                TimeInForce.Day
+            )
+            {
+                ClientOrderId = settings.GenerateClientOrderId(),
+                LimitPrice = limitPrice
+            }
+            : new NewOrderRequest(
+                symbol,
+                OrderQuantity.FromInt64(quantity),
+                OrderSide.Buy,
+                OrderType.Market,
+                TimeInForce.Day
+            )
+            {
+                ClientOrderId = settings.GenerateClientOrderId()
+            };
 
         var order = await tradingClient.PostOrderAsync(orderRequest);
         LogSuccess($"Order submitted: {order.OrderId} (ClientId: {order.ClientOrderId})");
         
         // Update state immediately with estimate (non-blocking)
-        Log($"       Estimated: {quantity} shares @ ${price:N2} = ${totalCost:N2}");
+        Log($"       Estimated: {quantity} shares @ ${basePrice:N2} = ${totalCost:N2}");
         
         tradingState.AvailableCash = 0m; 
         tradingState.AccumulatedLeftover = leftover; 
@@ -2259,16 +2490,23 @@ async Task BuyPositionAsync(
         tradingState.LastTradeTimestamp = DateTime.UtcNow.ToString("o");
         SaveTradingState(stateFilePath, tradingState);
         
-        // Fire-and-forget: poll for actual fill price and apply correction
+        // Poll for fill with optional chaser logic for limit orders
         var orderId = order.OrderId;
         var estimatedCost = totalCost;
-        var quotePrice = price; // Capture quote price for slippage calculation
+        var quotePrice = basePrice; // Capture quote price for slippage calculation
         var preBuyCash = availableForPurchase; // Capture for rollback
+        var chaserTimeoutMs = 5000; // 5 second timeout for limit orders before chaser kicks in
+        
         _ = Task.Run(async () =>
         {
             try
             {
-                for (int i = 0; i < 20; i++) // Up to 10 seconds
+                var startTime = DateTime.UtcNow;
+                long filledQty = 0;
+                decimal totalFillCost = 0m;
+                bool chaserTriggered = false;
+                
+                for (int i = 0; i < 20; i++) // Up to 10 seconds total
                 {
                     await Task.Delay(500);
                     var filledOrder = await tradingClient.GetOrderAsync(orderId);
@@ -2282,11 +2520,9 @@ async Task BuyPositionAsync(
                         
                         if (Math.Abs(slippage) > 0.001m)
                         {
-                            // Apply correction: if we paid more, reduce leftover; if less, increase it
                             tradingState.AccumulatedLeftover -= slippage;
                             tradingState.CurrentShares = actualQty;
                             SaveTradingState(stateFilePath, tradingState);
-                            // For BUY: positive slippage = paid more than expected = unfavorable
                             var slipLabel = slippage <= 0 ? "favorable" : "unfavorable";
                             Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
                         }
@@ -2296,8 +2532,6 @@ async Task BuyPositionAsync(
                         }
                         
                         // Track slippage if monitoring enabled
-                        // For BUY: negative slippage = paid more than quoted (bad)
-                        // tradeSlippage = (quotePrice - fillPrice) * qty → positive = good
                         if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
                         {
                             var tradeSlippage = (quotePrice - actualPrice) * actualQty;
@@ -2306,7 +2540,6 @@ async Task BuyPositionAsync(
                                 updateSlippage(tradeSlippage);
                             }
                             
-                            // Log to CSV (fire-and-forget)
                             if (slippageLogFile != null)
                             {
                                 var favor = Math.Sign(tradeSlippage);
@@ -2320,7 +2553,6 @@ async Task BuyPositionAsync(
                              filledOrder.OrderStatus == OrderStatus.Expired ||
                              filledOrder.OrderStatus == OrderStatus.Rejected)
                     {
-                        // ROLLBACK: Restore state to pre-buy condition
                         LogError($"[FILL] Buy order {filledOrder.OrderStatus} - rolling back state");
                         tradingState.AvailableCash = preBuyCash;
                         tradingState.AccumulatedLeftover = 0m;
@@ -2329,6 +2561,117 @@ async Task BuyPositionAsync(
                         SaveTradingState(stateFilePath, tradingState);
                         LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
                         return;
+                    }
+                    else if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
+                    {
+                        // SMART CHASER LOGIC FOR ENTRIES
+                        // Priority: VALUE / SIGNAL VALIDITY
+                        // If price runs away, don't blindly chase - re-evaluate first
+                        chaserTriggered = true;
+                        filledQty = (long)filledOrder.FilledQuantity;
+                        
+                        // Cancel the limit order first
+                        LogWarning($"[EXECUTION] Buy limit order timed out after {chaserTimeoutMs}ms. Evaluating chase...");
+                        try
+                        {
+                            await tradingClient.CancelOrderAsync(orderId);
+                            Log($"    Limit order cancelled.");
+                        }
+                        catch (Exception cancelEx)
+                        {
+                            // Order may have filled while we were trying to cancel
+                            if (cancelEx.Message.Contains("filled", StringComparison.OrdinalIgnoreCase) ||
+                                cancelEx.Message.Contains("cannot be cancelled", StringComparison.OrdinalIgnoreCase))
+                            {
+                                Log($"    Order already filled during cancel attempt.");
+                                continue; // Next iteration will pick up the fill
+                            }
+                            LogError($"    Cancel error: {cancelEx.Message}");
+                        }
+                        
+                        // Wait for cancel confirmation
+                        await Task.Delay(500);
+                        var cancelledOrder = await tradingClient.GetOrderAsync(orderId);
+                        filledQty = (long)cancelledOrder.FilledQuantity;
+                        
+                        if (cancelledOrder.AverageFillPrice.HasValue && filledQty > 0)
+                        {
+                            totalFillCost = filledQty * cancelledOrder.AverageFillPrice.Value;
+                        }
+                        
+                        var remainingQty = quantity - filledQty;
+                        
+                        if (remainingQty > 0)
+                        {
+                            // SMART ENTRY LOGIC: Check if price has moved too far
+                            decimal currentPrice = getCurrentPrice?.Invoke() ?? 0m;
+                            
+                            // Fallback to API if stream price unavailable
+                            if (currentPrice <= 0m)
+                            {
+                                try
+                                {
+                                    var latestTrade = await dataClient.GetLatestTradeAsync(new LatestMarketDataRequest(symbol) { Feed = MarketDataFeed.Iex });
+                                    currentPrice = latestTrade.Price;
+                                }
+                                catch { currentPrice = quotePrice; } // Use original if API fails
+                            }
+                            
+                            var percentMove = Math.Abs((currentPrice - quotePrice) / quotePrice);
+                            
+                            if (percentMove < settings.MaxChaseDeviationPercent)
+                            {
+                                // Price is stable - chase with market order
+                                LogWarning($"[EXECUTION] Price moved {percentMove:P2} (< {settings.MaxChaseDeviationPercent:P2}). CHASING with Market Order.");
+                                
+                                var chaserOrder = new NewOrderRequest(
+                                    symbol,
+                                    OrderQuantity.FromInt64(remainingQty),
+                                    OrderSide.Buy,
+                                    OrderType.Market,
+                                    TimeInForce.Day
+                                )
+                                {
+                                    ClientOrderId = settings.GenerateClientOrderId()
+                                };
+                                
+                                var chaserResult = await tradingClient.PostOrderAsync(chaserOrder);
+                                orderId = chaserResult.OrderId; // Track the chaser order now
+                                Log($"    Chaser order submitted: {chaserResult.OrderId}");
+                            }
+                            else
+                            {
+                                // Price moved too much - ABORT entry, stay in cash (safety)
+                                LogWarning($"[ABORT] Price moved {percentMove:P2} (> {settings.MaxChaseDeviationPercent:P2}). Entry aborted - staying in CASH.");
+                                Log($"    Original: ${quotePrice:N2} -> Current: ${currentPrice:N2}");
+                                
+                                // Rollback state - we're staying in cash
+                                if (filledQty > 0)
+                                {
+                                    // Partial fill - keep those shares but adjust state
+                                    tradingState.CurrentShares = filledQty;
+                                    tradingState.AccumulatedLeftover = preBuyCash - totalFillCost;
+                                    SaveTradingState(stateFilePath, tradingState);
+                                    Log($"    Keeping {filledQty} shares from partial fill.");
+                                }
+                                else
+                                {
+                                    // No fill at all - full rollback to cash
+                                    tradingState.AvailableCash = preBuyCash;
+                                    tradingState.AccumulatedLeftover = 0m;
+                                    tradingState.CurrentPosition = null;
+                                    tradingState.CurrentShares = 0;
+                                    SaveTradingState(stateFilePath, tradingState);
+                                    Log($"    Full rollback: ${preBuyCash:N2} cash restored.");
+                                }
+                                return; // Exit - don't chase
+                            }
+                        }
+                        else
+                        {
+                            // All shares filled during cancel - we're done
+                            Log($"    All {filledQty} shares filled during cancel.");
+                        }
                     }
                 }
                 Log($"[FILL] Buy fill confirmation timeout - using estimate");
@@ -2344,7 +2687,7 @@ async Task BuyPositionAsync(
         // STUCK: Cannot afford any shares - report and quit
         LogError("=== BOT STUCK - INSUFFICIENT FUNDS ===");
         LogError($"Cannot afford even 1 share of {symbol}");
-        LogError($"Share price: ${price:N2}");
+        LogError($"Share price: ${basePrice:N2}");
         LogError($"Available funds: ${availableForPurchase:N2}");
         
         var finalBalance = availableForPurchase;
@@ -2507,6 +2850,9 @@ class TradingSettings
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
     public decimal TrailingStopPercent { get; set; } = 0.0m; // 0 = disabled, e.g. 0.002 = 0.2%
     public int StopLossCooldownSeconds { get; set; } = 10; // Washout latch duration
+    public bool UseMarketableLimits { get; set; } = false; // Use limit orders instead of market orders
+    public decimal MaxSlippagePercent { get; set; } = 0.002m; // 0.2% max slippage for limit orders
+    public decimal MaxChaseDeviationPercent { get; set; } = 0.003m; // 0.3% max price move before aborting entry chase
     
     // Derived: Calculate queue size dynamically from window and interval
     public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
@@ -2550,6 +2896,8 @@ class CommandLineOverrides
     public string? BotIdOverride { get; set; }
     public bool MonitorSlippage { get; set; }
     public decimal? TrailingStopPercentOverride { get; set; }
+    public bool UseMarketableLimits { get; set; }
+    public decimal? MaxSlippagePercentOverride { get; set; }
 }
 
 // CSV record for report export
