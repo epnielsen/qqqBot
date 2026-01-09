@@ -105,6 +105,10 @@ CommandLineOverrides? ParseCommandLineOverrides(string[] args)
         {
             overrides.BotIdOverride = arg.Substring("-botid=".Length).Trim();
         }
+        else if (arg.Equals("-monitor", StringComparison.OrdinalIgnoreCase))
+        {
+            overrides.MonitorSlippage = true;
+        }
     }
     
     // Validation: -bear may not be specified without -bull
@@ -563,6 +567,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
         NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
         WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
+        MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
         StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m)
     };
     
@@ -585,7 +590,8 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         StartingAmount = configSettings.StartingAmount,
         BullOnlyMode = cmdOverrides.BullOnlyMode,
         UseBtcEarlyTrading = useBtcEarlyTrading,
-        WatchBtc = cmdOverrides.WatchBtc || configSettings.WatchBtc
+        WatchBtc = cmdOverrides.WatchBtc || configSettings.WatchBtc,
+        MonitorSlippage = cmdOverrides.MonitorSlippage || configSettings.MonitorSlippage
     };
 
     // Initialize Alpaca clients (Paper Trading) - needed for ticker validation
@@ -606,6 +612,26 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     DateTime _lastBenchmarkUpdate = DateTime.MinValue;
     DateTime _lastBtcUpdate = DateTime.MinValue;
     bool _streamConnected = false;
+    
+    // Slippage monitoring state (thread-safe)
+    var slippageLock = new object();
+    decimal _cumulativeSlippage = 0m;
+    string? _slippageLogFile = null;
+    
+    // Initialize slippage log file if monitoring enabled
+    if (settings.MonitorSlippage)
+    {
+        var bearSymbol = settings.BearSymbol ?? "CASH";
+        _slippageLogFile = Path.Combine(AppContext.BaseDirectory, 
+            $"qqqBot-slippage-log-{settings.BullSymbol}-{bearSymbol}-{DateTime.UtcNow:yyyyMMdd}.csv");
+        
+        // Write header if file doesn't exist
+        if (!File.Exists(_slippageLogFile))
+        {
+            File.WriteAllText(_slippageLogFile, "Timestamp,Symbol,Side,Quantity,QuotePrice,FillPrice,Slippage,Favor" + Environment.NewLine);
+        }
+        Log($"  Slippage Monitoring: Enabled → {Path.GetFileName(_slippageLogFile)}");
+    }
 
     // Validate command line override tickers before any trades
     if (cmdOverrides.HasOverrides)
@@ -948,6 +974,11 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     // Logging state
     DateTime lastLogTime = DateTime.MinValue;
     string lastSignal = string.Empty;
+    
+    // Slippage callback for passing to helper functions
+    Action<decimal>? slippageCallback = settings.MonitorSlippage 
+        ? (delta) => { _cumulativeSlippage += delta; }
+        : null;
 
     // Main trading loop
     while (!cancellationToken.IsCancellationRequested)
@@ -1201,7 +1232,17 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     }
                 }
 
-                LogBalanceWithPL(currentBalance, currentBalance - settings.StartingAmount);
+                // Get cumulative slippage if monitoring enabled
+                decimal? slippage = null;
+                if (settings.MonitorSlippage)
+                {
+                    lock (slippageLock)
+                    {
+                        slippage = _cumulativeSlippage;
+                    }
+                }
+                
+                LogBalanceWithPL(currentBalance, currentBalance - settings.StartingAmount, slippage);
 
                 Log($"--- {easternNow:HH:mm:ss} ET | {benchmarkSymbol}: ${currentPrice:N2} | SMA: ${currentSma:N2} ---");
                 Log($"    Bands: [${lowerBand:N2} - ${upperBand:N2}]");
@@ -1216,12 +1257,12 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             if (finalSignal == "MARKET_CLOSE")
             {
                 neutralDetectionTime = null; // Reset neutral timer
-                await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "MARKET CLOSE", showStatus: shouldLog);
+                await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "MARKET CLOSE", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
             }
             else if (finalSignal == "BULL")
             {
                 neutralDetectionTime = null; // Reset neutral timer
-                await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
+                await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile);
             }
             else if (finalSignal == "BEAR")
             {
@@ -1229,11 +1270,11 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 // In bull-only mode, BEAR signal dumps to cash
                 if (settings.BullOnlyMode)
                 {
-                    await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "BEAR (bull-only mode)", showStatus: shouldLog);
+                    await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "BEAR (bull-only mode)", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
                 }
                 else
                 {
-                    await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
+                    await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile);
                 }
             }
             else // NEUTRAL (true chop - BTC didn't nudge or WatchBtc is off)
@@ -1247,7 +1288,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 var elapsed = (DateTime.UtcNow - neutralDetectionTime.Value).TotalSeconds;
                 if (elapsed >= settings.NeutralWaitSeconds)
                 {
-                        await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, showStatus: shouldLog);
+                        await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
                 }
                 else
                 {
@@ -1305,7 +1346,10 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                 tradingClient, 
                 dataClient, 
                 stateFilePath,
-                settings);
+                settings,
+                slippageLock,
+                slippageCallback,
+                _slippageLogFile);
             
             if (liquidated)
             {
@@ -1541,7 +1585,10 @@ async Task EnsurePositionAsync(
     IAlpacaTradingClient tradingClient, 
     IAlpacaDataClient dataClient, 
     string stateFilePath,
-    TradingSettings settings)
+    TradingSettings settings,
+    object? slippageLock = null,
+    Action<decimal>? updateSlippage = null,
+    string? slippageLogFile = null)
 {
     // Get current positions from Alpaca
     var positions = await tradingClient.ListPositionsAsync();
@@ -1559,14 +1606,14 @@ async Task EnsurePositionAsync(
     if (!string.IsNullOrEmpty(oppositeSymbol) && (oppositePosition != null || localHoldsOpposite))
     {
         Log($"Current signal targets {targetSymbol}, but holding {oppositeSymbol}. Liquidating...");
-        await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath, settings);
+        await LiquidatePositionAsync(oppositeSymbol, oppositePosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
     }
 
     // 2. Buy Target if not held
     var alreadyHoldsTarget = targetPosition != null || localHoldsTarget;
     if (!alreadyHoldsTarget)
     {
-        await BuyPositionAsync(targetSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings);
+        await BuyPositionAsync(targetSymbol, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
     }
     else
     {
@@ -1583,7 +1630,10 @@ async Task EnsureNeutralAsync(
     string stateFilePath,
     TradingSettings settings,
     string reason = "NEUTRAL",
-    bool showStatus = true)
+    bool showStatus = true,
+    object? slippageLock = null,
+    Action<decimal>? updateSlippage = null,
+    string? slippageLogFile = null)
 {
     // Get current positions from Alpaca
     var positions = await tradingClient.ListPositionsAsync();
@@ -1595,7 +1645,7 @@ async Task EnsureNeutralAsync(
     if (bullPosition != null || localHoldsBull)
     {
         Log($"Signal is {reason}. Liquidating {settings.BullSymbol} to Cash.");
-        await LiquidatePositionAsync(settings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath, settings);
+        await LiquidatePositionAsync(settings.BullSymbol, bullPosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
     }
 
     // Check for Bear Symbol (only if BearSymbol is configured)
@@ -1607,7 +1657,7 @@ async Task EnsureNeutralAsync(
         if (bearPosition != null || localHoldsBear)
         {
              Log($"Signal is {reason}. Liquidating {settings.BearSymbol} to Cash.");
-             await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath, settings);
+             await LiquidatePositionAsync(settings.BearSymbol, bearPosition, tradingState, tradingClient, dataClient, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile);
         }
     }
 
@@ -1627,7 +1677,10 @@ async Task<bool> LiquidatePositionAsync(
     IAlpacaTradingClient tradingClient, 
     IAlpacaDataClient dataClient, 
     string stateFilePath,
-    TradingSettings settings)
+    TradingSettings settings,
+    object? slippageLock = null,
+    Action<decimal>? updateSlippage = null,
+    string? slippageLogFile = null)
 {
     // Calculate expected sale proceeds before liquidating
     var quoteRequest = new LatestMarketDataRequest(symbol)
@@ -1719,6 +1772,7 @@ async Task<bool> LiquidatePositionAsync(
         {
             var orderId = sellOrderId.Value;
             var estimatedProceeds = saleProceeds;
+            var quotePrice = price; // Capture quote price for slippage calculation
             var preSellPosition = symbol; // Capture for rollback
             var preSellShares = shareCount;
             var preSellLeftover = tradingState.AccumulatedLeftover; // Already zeroed, but was passed in
@@ -1748,6 +1802,26 @@ async Task<bool> LiquidatePositionAsync(
                             else
                             {
                                 Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4}");
+                            }
+                            
+                            // Track slippage if monitoring enabled
+                            // For SELL: positive slippage = got more than quoted (good)
+                            // tradeSlippage = (fillPrice - quotePrice) * qty → positive = good
+                            if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
+                            {
+                                var tradeSlippage = (actualPrice - quotePrice) * actualQty;
+                                lock (slippageLock)
+                                {
+                                    updateSlippage(tradeSlippage);
+                                }
+                                
+                                // Log to CSV (fire-and-forget)
+                                if (slippageLogFile != null)
+                                {
+                                    var favor = Math.Sign(tradeSlippage);
+                                    var csvLine = $"{DateTime.UtcNow:s},{symbol},Sell,{actualQty},{quotePrice:F4},{actualPrice:F4},{tradeSlippage:F2},{favor}";
+                                    _ = File.AppendAllTextAsync(slippageLogFile, csvLine + Environment.NewLine);
+                                }
                             }
                             return;
                         }
@@ -1788,7 +1862,10 @@ async Task BuyPositionAsync(
     IAlpacaTradingClient tradingClient, 
     IAlpacaDataClient dataClient, 
     string stateFilePath,
-    TradingSettings settings)
+    TradingSettings settings,
+    object? slippageLock = null,
+    Action<decimal>? updateSlippage = null,
+    string? slippageLogFile = null)
 {
      // Use our tracked available cash
     var availableForPurchase = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
@@ -1843,6 +1920,7 @@ async Task BuyPositionAsync(
         // Fire-and-forget: poll for actual fill price and apply correction
         var orderId = order.OrderId;
         var estimatedCost = totalCost;
+        var quotePrice = price; // Capture quote price for slippage calculation
         var preBuyCash = availableForPurchase; // Capture for rollback
         _ = Task.Run(async () =>
         {
@@ -1871,6 +1949,26 @@ async Task BuyPositionAsync(
                         else
                         {
                             Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4}");
+                        }
+                        
+                        // Track slippage if monitoring enabled
+                        // For BUY: negative slippage = paid more than quoted (bad)
+                        // tradeSlippage = (quotePrice - fillPrice) * qty → positive = good
+                        if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
+                        {
+                            var tradeSlippage = (quotePrice - actualPrice) * actualQty;
+                            lock (slippageLock)
+                            {
+                                updateSlippage(tradeSlippage);
+                            }
+                            
+                            // Log to CSV (fire-and-forget)
+                            if (slippageLogFile != null)
+                            {
+                                var favor = Math.Sign(tradeSlippage);
+                                var csvLine = $"{DateTime.UtcNow:s},{symbol},Buy,{actualQty},{quotePrice:F4},{actualPrice:F4},{tradeSlippage:F2},{favor}";
+                                _ = File.AppendAllTextAsync(slippageLogFile, csvLine + Environment.NewLine);
+                            }
                         }
                         return;
                     }
@@ -1965,7 +2063,7 @@ void LogSuccess(string message)
     Console.ResetColor();
 }
 
-void LogBalanceWithPL(decimal balance, decimal profitLoss)
+void LogBalanceWithPL(decimal balance, decimal profitLoss, decimal? slippage = null)
 {
     var timestamp = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}]";
     var balanceText = $"Balance: ${balance:N2}";
@@ -1981,8 +2079,25 @@ void LogBalanceWithPL(decimal balance, decimal profitLoss)
     else
         Console.ForegroundColor = ConsoleColor.Yellow;
     
-    Console.WriteLine(plText);
+    Console.Write(plText);
     Console.ResetColor();
+    
+    // Display cumulative slippage if provided
+    if (slippage.HasValue)
+    {
+        var slipSign = slippage.Value >= 0 ? "+" : "";
+        Console.Write(" | Slip: ");
+        
+        if (slippage.Value > 0)
+            Console.ForegroundColor = ConsoleColor.Green;
+        else if (slippage.Value < 0)
+            Console.ForegroundColor = ConsoleColor.Red;
+        
+        Console.Write($"{slipSign}${slippage.Value:N2}");
+        Console.ResetColor();
+    }
+    
+    Console.WriteLine();
 }
 
 // ============================================================================
@@ -2038,6 +2153,7 @@ class TradingSettings
     public bool BullOnlyMode { get; set; } = false;
     public bool UseBtcEarlyTrading { get; set; } = true; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
+    public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
     
     // Derived: Calculate queue size dynamically from window and interval
     public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
@@ -2079,6 +2195,7 @@ class CommandLineOverrides
     public decimal? MinChopAbsoluteOverride { get; set; }
     public bool WatchBtc { get; set; }
     public string? BotIdOverride { get; set; }
+    public bool MonitorSlippage { get; set; }
 }
 
 // CSV record for report export
