@@ -1,6 +1,8 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Alpaca.Markets;
+using CsvHelper;
 using Microsoft.Extensions.Configuration;
 
 // ============================================================================
@@ -14,6 +16,13 @@ const string PAPER_KEY_PREFIX = "PK";
 if (args.Length > 0 && args[0].Equals("--setup", StringComparison.OrdinalIgnoreCase))
 {
     await RunSetupAsync();
+    return;
+}
+
+// Check for report mode
+if (args.Any(a => a.Equals("-report", StringComparison.OrdinalIgnoreCase)))
+{
+    await RunReportAsync(args);
     return;
 }
 
@@ -208,6 +217,198 @@ async Task<bool> RunDotnetCommandAsync(string arguments)
     catch
     {
         return false;
+    }
+}
+
+// ============================================================================
+// REPORT GENERATION
+// ============================================================================
+async Task RunReportAsync(string[] args)
+{
+    Log("=== QQQ Trading Bot - Daily Report ===\n");
+
+    // Load configuration
+    var configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false)
+        .AddUserSecrets<Program>()
+        .Build();
+
+    // Load API credentials
+    var apiKey = configuration["Alpaca:ApiKey"];
+    var apiSecret = configuration["Alpaca:ApiSecret"];
+
+    if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+    {
+        LogError("API credentials not found. Please run with --setup flag first.");
+        return;
+    }
+
+    // CRITICAL: Runtime safety check
+    if (!apiKey.StartsWith(PAPER_KEY_PREFIX, StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "SAFETY VIOLATION: Live trading keys detected! " +
+            "This bot is designed for PAPER TRADING ONLY.");
+    }
+
+    // Parse optional -bull and -bear overrides from args
+    string? bullOverride = null;
+    string? bearOverride = null;
+    foreach (var arg in args)
+    {
+        if (arg.StartsWith("-bull=", StringComparison.OrdinalIgnoreCase))
+            bullOverride = arg.Substring("-bull=".Length).Trim().ToUpperInvariant();
+        else if (arg.StartsWith("-bear=", StringComparison.OrdinalIgnoreCase))
+            bearOverride = arg.Substring("-bear=".Length).Trim().ToUpperInvariant();
+    }
+
+    // Load symbols from config (with optional overrides)
+    var bullSymbol = bullOverride ?? configuration["TradingBot:BullSymbol"] ?? "TQQQ";
+    var bearSymbol = bearOverride ?? configuration["TradingBot:BearSymbol"] ?? "SQQQ";
+
+    Log($"Generating report for: {bullSymbol} / {bearSymbol}");
+
+    // Initialize Alpaca client
+    var secretKey = new SecretKey(apiKey, apiSecret);
+    using var tradingClient = Environments.Paper.GetAlpacaTradingClient(secretKey);
+
+    // Get today's date range in UTC
+    var easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+    var easternNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, easternZone);
+    var todayEastern = easternNow.Date;
+    
+    // Market open (9:30 AM ET) to now
+    var startOfDayUtc = TimeZoneInfo.ConvertTimeToUtc(todayEastern.AddHours(9).AddMinutes(30), easternZone);
+    var endOfDayUtc = DateTime.UtcNow;
+
+    Log($"Fetching orders from {startOfDayUtc:yyyy-MM-dd HH:mm:ss} UTC to {endOfDayUtc:yyyy-MM-dd HH:mm:ss} UTC...\n");
+
+    // Fetch all filled orders for today
+    var ordersRequest = new ListOrdersRequest
+    {
+        OrderStatusFilter = OrderStatusFilter.Closed,
+        RollUpNestedOrders = false,
+        LimitOrderNumber = 500
+    };
+
+    var allOrders = await tradingClient.ListOrdersAsync(ordersRequest);
+    
+    // Filter to our symbols and today's date
+    var relevantOrders = allOrders
+        .Where(o => (o.Symbol.Equals(bullSymbol, StringComparison.OrdinalIgnoreCase) ||
+                     o.Symbol.Equals(bearSymbol, StringComparison.OrdinalIgnoreCase)) &&
+                    o.FilledAtUtc != null &&
+                    o.FilledAtUtc >= startOfDayUtc)
+        .OrderBy(o => o.FilledAtUtc)
+        .ToList();
+
+    if (relevantOrders.Count == 0)
+    {
+        Log("No trades found for today.");
+        return;
+    }
+
+    // Build trade records for CSV
+    var records = new List<TradeRecord>();
+    decimal totalBuyValue = 0m;
+    decimal totalSellValue = 0m;
+    int buyCount = 0;
+    int sellCount = 0;
+
+    foreach (var order in relevantOrders)
+    {
+        var filledQty = order.FilledQuantity;
+        var avgPrice = order.AverageFillPrice;
+        var filledValue = filledQty * (avgPrice ?? 0m);
+
+        var record = new TradeRecord
+        {
+            Timestamp = order.FilledAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+            Symbol = order.Symbol,
+            Side = order.OrderSide.ToString(),
+            Quantity = filledQty,
+            FilledPrice = avgPrice,
+            FilledValue = filledValue,
+            OrderId = order.OrderId.ToString(),
+            Status = order.OrderStatus.ToString()
+        };
+        records.Add(record);
+
+        if (order.OrderSide == OrderSide.Buy)
+        {
+            totalBuyValue += filledValue;
+            buyCount++;
+        }
+        else
+        {
+            totalSellValue += filledValue;
+            sellCount++;
+        }
+    }
+
+    // Generate filename: qqqBot-report-BULL-BEAR-YYYYMMDD.csv
+    var dateStr = todayEastern.ToString("yyyyMMdd");
+    var fileName = $"qqqBot-report-{bullSymbol}-{bearSymbol}-{dateStr}.csv";
+    var filePath = Path.Combine(Directory.GetCurrentDirectory(), fileName);
+
+    // Write CSV
+    using (var writer = new StreamWriter(filePath))
+    using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+    {
+        csv.WriteRecords(records);
+    }
+
+    LogSuccess($"Report saved to: {filePath}");
+    Log("");
+
+    // Load trading state for P/L calculations
+    var stateFilePath = Path.Combine(AppContext.BaseDirectory, "trading_state.json");
+    var tradingState = LoadTradingState(stateFilePath);
+    
+    // Calculate current balance
+    var currentBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
+    
+    // Get StartingAmount from config (the original capital)
+    var startingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m);
+    
+    // Total P/L (from original starting amount)
+    var totalPL = currentBalance - startingAmount;
+    var totalPLPercent = startingAmount > 0 ? (totalPL / startingAmount) * 100 : 0;
+    
+    // Daily P/L (from day start balance)
+    var dayStartBalance = tradingState.DayStartBalance > 0 ? tradingState.DayStartBalance : startingAmount;
+    var dailyPL = currentBalance - dayStartBalance;
+    var dailyPLPercent = dayStartBalance > 0 ? (dailyPL / dayStartBalance) * 100 : 0;
+
+    // Print summary
+    Log("=== Summary ===");
+    Log($"Total Transactions: {records.Count} ({buyCount} buys, {sellCount} sells)");
+    Log($"Total Buy Value:    ${totalBuyValue:N2}");
+    Log($"Total Sell Value:   ${totalSellValue:N2}");
+    Log("");
+    Log($"Day Start Balance:  ${dayStartBalance:N2}");
+    Log($"Current Balance:    ${currentBalance:N2}");
+    Log("");
+    
+    // Daily P/L
+    if (dailyPL >= 0)
+    {
+        LogSuccess($"Daily P/L:          +${dailyPL:N2} (+{dailyPLPercent:N2}%)");
+    }
+    else
+    {
+        LogError($"Daily P/L:          -${Math.Abs(dailyPL):N2} ({dailyPLPercent:N2}%)");
+    }
+    
+    // Total P/L
+    if (totalPL >= 0)
+    {
+        LogSuccess($"Total P/L:          +${totalPL:N2} (+{totalPLPercent:N2}%)");
+    }
+    else
+    {
+        LogError($"Total P/L:          -${Math.Abs(totalPL):N2} ({totalPLPercent:N2}%)");
     }
 }
 
@@ -492,10 +693,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
 
     // Initialize Rolling SMA Engine
     var priceQueue = new Queue<decimal>();
-    
-    // Seed the Rolling SMA Queue
-    await SeedRollingSmaAsync(settings, dataClient, cryptoDataClient, priceQueue, easternZone);
-    Log($"Rolling SMA Engine Initialized with {priceQueue.Count} data points.");
+    var smaSeeded = false;
 
     // BTC Correlation Queue (for -watchbtc mode)
     var btcQueue = new Queue<decimal>();
@@ -536,6 +734,25 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             
             // Reset the closed log tracker when market opens
             lastMarketClosedLog = null;
+            
+            // Seed the Rolling SMA Queue once when market opens
+            if (!smaSeeded)
+            {
+                await SeedRollingSmaAsync(settings, dataClient, cryptoDataClient, priceQueue, btcQueue, easternZone);
+                Log($"Rolling SMA Engine Initialized with {priceQueue.Count} data points.");
+                smaSeeded = true;
+            }
+            
+            // Track day start balance for daily P/L calculation
+            var todayDateStr = easternNow.ToString("yyyy-MM-dd");
+            if (tradingState.DayStartDate != todayDateStr)
+            {
+                var currentBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
+                tradingState.DayStartBalance = currentBalance;
+                tradingState.DayStartDate = todayDateStr;
+                SaveTradingState(stateFilePath, tradingState);
+                Log($"New trading day detected. Day start balance: ${currentBalance:N2}");
+            }
             
             // Determine which benchmark to use based on time
             // Use BTC/USD from 9:30-9:55 AM (before QQQ has enough bars for SMA)
@@ -870,7 +1087,7 @@ async Task LiquidateConfiguredPositionsAsync(
 }
 
 // Data Seeding Logic
-async Task SeedRollingSmaAsync(TradingSettings settings, IAlpacaDataClient dataClient, IAlpacaCryptoDataClient cryptoDataClient, Queue<decimal> priceQueue, TimeZoneInfo easternZone)
+async Task SeedRollingSmaAsync(TradingSettings settings, IAlpacaDataClient dataClient, IAlpacaCryptoDataClient cryptoDataClient, Queue<decimal> priceQueue, Queue<decimal> btcQueue, TimeZoneInfo easternZone)
 {
     Log("Seeding Rolling SMA Queue...");
     var utcNow = DateTime.UtcNow;
@@ -940,6 +1157,37 @@ async Task SeedRollingSmaAsync(TradingSettings settings, IAlpacaDataClient dataC
     for (int i = 0; i < settings.SMALength; i++)
     {
         priceQueue.Enqueue(seedPrice);
+    }
+    
+    // Seed BTC queue if WatchBtc is enabled
+    if (settings.WatchBtc)
+    {
+        Log("Seeding BTC Correlation Queue...");
+        var btcBarsRequest = new HistoricalCryptoBarsRequest(
+            settings.CryptoBenchmarkSymbol,
+            startTimeUtc,
+            endTimeUtc,
+            BarTimeFrame.Minute
+        );
+        var btcBarsResponse = await cryptoDataClient.ListHistoricalBarsAsync(btcBarsRequest);
+        var btcLastBar = btcBarsResponse.Items.LastOrDefault();
+        
+        decimal btcSeedPrice;
+        if (btcLastBar == null)
+        {
+            var btcLatestTrades = await cryptoDataClient.ListLatestTradesAsync(new LatestDataListRequest([settings.CryptoBenchmarkSymbol]));
+            btcSeedPrice = btcLatestTrades[settings.CryptoBenchmarkSymbol].Price;
+        }
+        else
+        {
+            btcSeedPrice = btcLastBar.Close;
+        }
+        
+        Log($"Seeding BTC with price: ${btcSeedPrice:N2} (x{settings.SMALength})");
+        for (int i = 0; i < settings.SMALength; i++)
+        {
+            btcQueue.Enqueue(btcSeedPrice);
+        }
     }
 }
 
@@ -1333,6 +1581,8 @@ class TradingState
     public string? CurrentPosition { get; set; }
     public long CurrentShares { get; set; }
     public decimal StartingAmount { get; set; } // Track original amount for P/L calculation
+    public decimal DayStartBalance { get; set; } // Balance at start of trading day (for daily P/L)
+    public string? DayStartDate { get; set; } // Date when DayStartBalance was recorded (yyyy-MM-dd)
     public TradingStateMetadata? Metadata { get; set; } // Track symbols used during session
 }
 
@@ -1354,6 +1604,19 @@ class CommandLineOverrides
     public int? NeutralWaitSecondsOverride { get; set; }
     public decimal? MinChopAbsoluteOverride { get; set; }
     public bool WatchBtc { get; set; }
+}
+
+// CSV record for report export
+class TradeRecord
+{
+    public string Timestamp { get; set; } = string.Empty;
+    public string Symbol { get; set; } = string.Empty;
+    public string Side { get; set; } = string.Empty;
+    public decimal Quantity { get; set; }
+    public decimal? FilledPrice { get; set; }
+    public decimal? FilledValue { get; set; }
+    public string OrderId { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
 }
 
 // Marker class for user secrets
