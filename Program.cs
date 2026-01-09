@@ -39,7 +39,7 @@ using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (sender, e) =>
 {
     e.Cancel = true; // Prevent immediate termination
-    Log("\n⚠️  Shutdown requested (Ctrl+C). Liquidating positions...");
+    Log("\n⚠️  Shutdown requested (Ctrl+C). Exiting gracefully...");
     cts.Cancel();
 };
 
@@ -958,20 +958,22 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         }
     }
     
-    // Initial connection
-    try
+    // Helper: Check if it's time to start streams (2 minutes before market open)
+    bool ShouldStartStreams(DateTime easternTime)
     {
-        await ConnectStockStreamAsync();
-        await ConnectCryptoStreamAsync();
-        _streamConnected = true;
-        Log("Real-time data streams ready.\n");
+        if (easternTime.DayOfWeek == DayOfWeek.Saturday || easternTime.DayOfWeek == DayOfWeek.Sunday)
+            return false;
+        
+        // Start streams at 9:28 AM ET (2 minutes before market open)
+        var streamStartTime = new TimeSpan(9, 28, 0);
+        var marketClose = new TimeSpan(16, 0, 0);
+        var currentTime = easternTime.TimeOfDay;
+        
+        return currentTime >= streamStartTime && currentTime < marketClose;
     }
-    catch (Exception ex)
-    {
-        LogError($"Failed to initialize streaming: {ex.Message}");
-        LogError("Falling back to polling mode...\n");
-        _streamConnected = false;
-    }
+    
+    // Track if streams have been started this session
+    bool _streamsStarted = false;
 
     Log("=== Trading Bot Active ===\n");
 
@@ -1013,6 +1015,27 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             var utcNow = DateTime.UtcNow;
             var easternNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, easternZone);
 
+            // Start streams 2 minutes before market open (9:28 AM ET)
+            if (!_streamsStarted && ShouldStartStreams(easternNow))
+            {
+                try
+                {
+                    Log("Starting real-time data streams (2 minutes before market open)...");
+                    await ConnectStockStreamAsync();
+                    await ConnectCryptoStreamAsync();
+                    _streamConnected = true;
+                    _streamsStarted = true;
+                    Log("Real-time data streams ready.\n");
+                }
+                catch (Exception ex)
+                {
+                    LogError($"Failed to initialize streaming: {ex.Message}");
+                    LogError("Falling back to polling mode...\n");
+                    _streamConnected = false;
+                    _streamsStarted = true; // Don't retry repeatedly
+                }
+            }
+
             // Check if market is open
             if (!IsMarketOpen(easternNow))
             {
@@ -1024,7 +1047,14 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     lastMarketClosedLog = DateTime.Now;
                 }
                 
-                await Task.Delay(TimeSpan.FromMinutes(1));
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break; // Exit loop on shutdown
+                }
                 continue;
             }
             
@@ -1377,6 +1407,23 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             {
                 neutralDetectionTime = null; // Reset neutral timer
                 await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, reason: "MARKET CLOSE", showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile);
+                
+                // Shut down streams after end-of-day liquidation
+                if (_streamConnected)
+                {
+                    Log("Shutting down streams for end of day...");
+                    if (stockStreamClient != null)
+                    {
+                        try { await stockStreamClient.DisconnectAsync(); stockStreamClient.Dispose(); stockStreamClient = null; } catch { }
+                    }
+                    if (cryptoStreamClient != null)
+                    {
+                        try { await cryptoStreamClient.DisconnectAsync(); cryptoStreamClient.Dispose(); cryptoStreamClient = null; } catch { }
+                    }
+                    _streamConnected = false;
+                    _streamsStarted = false; // Allow restart next trading day
+                    Log("Streams disconnected. Waiting for next trading day.\n");
+                }
             }
             else if (finalSignal == "BULL")
             {
