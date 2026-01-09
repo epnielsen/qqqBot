@@ -594,6 +594,18 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     using var tradingClient = Environments.Paper.GetAlpacaTradingClient(secretKey);
     using var dataClient = Environments.Paper.GetAlpacaDataClient(secretKey);
     using var cryptoDataClient = Environments.Paper.GetAlpacaCryptoDataClient(secretKey);
+    
+    // Streaming clients for real-time data (initialized later, after settings are loaded)
+    IAlpacaDataStreamingClient? stockStreamClient = null;
+    IAlpacaCryptoStreamingClient? cryptoStreamClient = null;
+    
+    // Shared streaming state (thread-safe access via lock)
+    var streamLock = new object();
+    decimal _latestBenchmarkPrice = 0m;
+    decimal _latestBtcPrice = 0m;
+    DateTime _lastBenchmarkUpdate = DateTime.MinValue;
+    DateTime _lastBtcUpdate = DateTime.MinValue;
+    bool _streamConnected = false;
 
     // Validate command line override tickers before any trades
     if (cmdOverrides.HasOverrides)
@@ -795,6 +807,129 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     // Eastern Time Zone
     var easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
 
+    // =========================================================================
+    // STREAMING DATA INITIALIZATION
+    // =========================================================================
+    Log("Initializing real-time data streams...");
+    
+    // Track subscriptions for reconnection
+    IAlpacaDataSubscription<ITrade>? benchmarkSubscription = null;
+    IAlpacaDataSubscription<ITrade>? btcSubscription = null;
+    
+    // Reconnection state
+    bool _stockStreamReconnecting = false;
+    bool _cryptoStreamReconnecting = false;
+    
+    // Helper: Connect/reconnect stock stream
+    async Task ConnectStockStreamAsync()
+    {
+        if (_stockStreamReconnecting) return;
+        _stockStreamReconnecting = true;
+        
+        try
+        {
+            // Dispose old client if exists
+            if (stockStreamClient != null)
+            {
+                try { await stockStreamClient.DisconnectAsync(); } catch { }
+                try { stockStreamClient.Dispose(); } catch { }
+            }
+            
+            stockStreamClient = Environments.Paper.GetAlpacaDataStreamingClient(secretKey);
+            
+            // Set up error/disconnect handler
+            stockStreamClient.OnError += (ex) =>
+            {
+                LogError($"[STREAM] Stock stream error: {ex.Message}");
+            };
+            
+            // Subscribe to trade updates for benchmark
+            benchmarkSubscription = stockStreamClient.GetTradeSubscription(settings.BenchmarkSymbol);
+            benchmarkSubscription.Received += (trade) =>
+            {
+                lock (streamLock)
+                {
+                    _latestBenchmarkPrice = trade.Price;
+                    _lastBenchmarkUpdate = DateTime.UtcNow;
+                }
+            };
+            
+            await stockStreamClient.ConnectAndAuthenticateAsync();
+            await stockStreamClient.SubscribeAsync(benchmarkSubscription);
+            Log($"  ✓ Stock stream connected: {settings.BenchmarkSymbol}");
+        }
+        catch (Exception ex)
+        {
+            LogError($"[STREAM] Failed to connect stock stream: {ex.Message}");
+        }
+        finally
+        {
+            _stockStreamReconnecting = false;
+        }
+    }
+    
+    // Helper: Connect/reconnect crypto stream
+    async Task ConnectCryptoStreamAsync()
+    {
+        if (_cryptoStreamReconnecting) return;
+        _cryptoStreamReconnecting = true;
+        
+        try
+        {
+            // Dispose old client if exists
+            if (cryptoStreamClient != null)
+            {
+                try { await cryptoStreamClient.DisconnectAsync(); } catch { }
+                try { cryptoStreamClient.Dispose(); } catch { }
+            }
+            
+            cryptoStreamClient = Environments.Paper.GetAlpacaCryptoStreamingClient(secretKey);
+            
+            // Set up error handler
+            cryptoStreamClient.OnError += (ex) =>
+            {
+                LogError($"[STREAM] Crypto stream error: {ex.Message}");
+            };
+            
+            btcSubscription = cryptoStreamClient.GetTradeSubscription(settings.CryptoBenchmarkSymbol);
+            btcSubscription.Received += (trade) =>
+            {
+                lock (streamLock)
+                {
+                    _latestBtcPrice = trade.Price;
+                    _lastBtcUpdate = DateTime.UtcNow;
+                }
+            };
+            
+            await cryptoStreamClient.ConnectAndAuthenticateAsync();
+            await cryptoStreamClient.SubscribeAsync(btcSubscription);
+            Log($"  ✓ Crypto stream connected: {settings.CryptoBenchmarkSymbol}");
+        }
+        catch (Exception ex)
+        {
+            LogError($"[STREAM] Failed to connect crypto stream: {ex.Message}");
+        }
+        finally
+        {
+            _cryptoStreamReconnecting = false;
+        }
+    }
+    
+    // Initial connection
+    try
+    {
+        await ConnectStockStreamAsync();
+        await ConnectCryptoStreamAsync();
+        _streamConnected = true;
+        Log("Real-time data streams ready.\n");
+    }
+    catch (Exception ex)
+    {
+        LogError($"Failed to initialize streaming: {ex.Message}");
+        LogError("Falling back to polling mode...\n");
+        _streamConnected = false;
+    }
+
     Log("=== Trading Bot Active ===\n");
 
     // Initialize Rolling SMA Engine
@@ -868,21 +1003,63 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             var benchmarkSymbol = usesCrypto ? settings.CryptoBenchmarkSymbol : settings.BenchmarkSymbol;
             
             decimal currentPrice = 0m;
-
-            if (usesCrypto)
+            DateTime lastUpdate;
+            
+            // Read from streaming data (zero-latency memory read)
+            if (_streamConnected)
             {
-                var latestTrades = await cryptoDataClient.ListLatestTradesAsync(
-                    new LatestDataListRequest([benchmarkSymbol]));
-                currentPrice = latestTrades[benchmarkSymbol].Price;
-            }
-            else
-            {
-                var quoteRequest = new LatestMarketDataRequest(benchmarkSymbol)
+                lock (streamLock)
                 {
-                    Feed = MarketDataFeed.Iex
-                };
-                var latestTrade = await dataClient.GetLatestTradeAsync(quoteRequest);
-                currentPrice = latestTrade.Price;
+                    if (usesCrypto)
+                    {
+                        currentPrice = _latestBtcPrice;
+                        lastUpdate = _lastBtcUpdate;
+                    }
+                    else
+                    {
+                        currentPrice = _latestBenchmarkPrice;
+                        lastUpdate = _lastBenchmarkUpdate;
+                    }
+                }
+                
+                // Staleness check - if no update in 15 seconds, stream may be disconnected
+                if (currentPrice > 0 && DateTime.UtcNow - lastUpdate > TimeSpan.FromSeconds(15))
+                {
+                    var staleSec = (DateTime.UtcNow - lastUpdate).TotalSeconds;
+                    Log($"[WARN] Data stream stale ({staleSec:F1}s). Triggering reconnection...");
+                    
+                    // Trigger reconnection in background (don't await - non-blocking)
+                    if (usesCrypto)
+                    {
+                        _ = ConnectCryptoStreamAsync();
+                    }
+                    else
+                    {
+                        _ = ConnectStockStreamAsync();
+                    }
+                    
+                    currentPrice = 0m; // Force HTTP fallback for this iteration
+                }
+            }
+            
+            // Fallback to HTTP polling if stream unavailable or stale
+            if (currentPrice == 0m)
+            {
+                if (usesCrypto)
+                {
+                    var latestTrades = await cryptoDataClient.ListLatestTradesAsync(
+                        new LatestDataListRequest([benchmarkSymbol]));
+                    currentPrice = latestTrades[benchmarkSymbol].Price;
+                }
+                else
+                {
+                    var quoteRequest = new LatestMarketDataRequest(benchmarkSymbol)
+                    {
+                        Feed = MarketDataFeed.Iex
+                    };
+                    var latestTrade = await dataClient.GetLatestTradeAsync(quoteRequest);
+                    currentPrice = latestTrade.Price;
+                }
             }
 
             // Update Rolling SMA Queue
@@ -929,10 +1106,40 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             
             if (settings.WatchBtc)
             {
-                // Fetch BTC price
-                var btcTrades = await cryptoDataClient.ListLatestTradesAsync(
-                    new LatestDataListRequest([settings.CryptoBenchmarkSymbol]));
-                var btcPrice = btcTrades[settings.CryptoBenchmarkSymbol].Price;
+                // Read BTC price from stream (zero-latency)
+                decimal btcPrice = 0m;
+                bool btcStreamStale = false;
+                if (_streamConnected)
+                {
+                    lock (streamLock)
+                    {
+                        if (_latestBtcPrice > 0)
+                        {
+                            if (DateTime.UtcNow - _lastBtcUpdate < TimeSpan.FromSeconds(15))
+                            {
+                                btcPrice = _latestBtcPrice;
+                            }
+                            else
+                            {
+                                btcStreamStale = true;
+                            }
+                        }
+                    }
+                }
+                
+                // Trigger reconnection if BTC stream is stale
+                if (btcStreamStale)
+                {
+                    _ = ConnectCryptoStreamAsync();
+                }
+                
+                // Fallback to HTTP if stream unavailable or stale
+                if (btcPrice == 0m)
+                {
+                    var btcTrades = await cryptoDataClient.ListLatestTradesAsync(
+                        new LatestDataListRequest([settings.CryptoBenchmarkSymbol]));
+                    btcPrice = btcTrades[settings.CryptoBenchmarkSymbol].Price;
+                }
                 
                 // Update BTC SMA Queue (same length as primary)
                 btcQueue.Enqueue(btcPrice);
@@ -1121,6 +1328,35 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     else
     {
         Log("No positions to liquidate. Already in cash.");
+    }
+    
+    // Dispose streaming clients
+    if (stockStreamClient != null)
+    {
+        try
+        {
+            await stockStreamClient.DisconnectAsync();
+            stockStreamClient.Dispose();
+            Log("Stock stream disconnected.");
+        }
+        catch (Exception ex)
+        {
+            Log($"Warning: Error disconnecting stock stream: {ex.Message}");
+        }
+    }
+    
+    if (cryptoStreamClient != null)
+    {
+        try
+        {
+            await cryptoStreamClient.DisconnectAsync();
+            cryptoStreamClient.Dispose();
+            Log("Crypto stream disconnected.");
+        }
+        catch (Exception ex)
+        {
+            Log($"Warning: Error disconnecting crypto stream: {ex.Message}");
+        }
     }
     
     Log("Bot shutdown complete. Final state saved.");
