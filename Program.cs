@@ -553,12 +553,12 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     var configSettings = new TradingSettings
     {
         BotId = configuration["TradingBot:BotId"] ?? "main",
-        PollingIntervalSeconds = configuration.GetValue("TradingBot:PollingIntervalSeconds", 5),
+        PollingIntervalSeconds = configuration.GetValue("TradingBot:PollingIntervalSeconds", 1),
         BullSymbol = configuration["TradingBot:BullSymbol"] ?? "TQQQ",
         BearSymbol = configuration["TradingBot:BearSymbol"] ?? "SQQQ",
         BenchmarkSymbol = configuration["TradingBot:BenchmarkSymbol"] ?? "QQQ",
         CryptoBenchmarkSymbol = configuration["TradingBot:CryptoBenchmarkSymbol"] ?? "BTC/USD",
-        SMALength = configuration.GetValue("TradingBot:SMALength", 12),
+        SMAWindowSeconds = configuration.GetValue("TradingBot:SMAWindowSeconds", 60),
         ChopThresholdPercent = configuration.GetValue("TradingBot:ChopThresholdPercent", 0.0015m),
         MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
         NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
@@ -578,7 +578,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         BearSymbol = cmdOverrides.BullOnlyMode ? null : (cmdOverrides.BearTicker ?? configSettings.BearSymbol),
         BenchmarkSymbol = cmdOverrides.BenchmarkTicker ?? configSettings.BenchmarkSymbol,
         CryptoBenchmarkSymbol = configSettings.CryptoBenchmarkSymbol,
-        SMALength = configSettings.SMALength,
+        SMAWindowSeconds = configSettings.SMAWindowSeconds,
         ChopThresholdPercent = configSettings.ChopThresholdPercent,
         MinChopAbsolute = cmdOverrides.MinChopAbsoluteOverride ?? configSettings.MinChopAbsolute,
         NeutralWaitSeconds = cmdOverrides.NeutralWaitSecondsOverride ?? configSettings.NeutralWaitSeconds,
@@ -730,12 +730,11 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     {
         Log($"  Bear ETF: {settings.BearSymbol}");
     }
-    Log($"  SMA Length: {settings.SMALength}");
+    Log($"  SMA Window: {settings.SMAWindowSeconds}s | Heartbeat: {settings.PollingIntervalSeconds}s | Queue Size: {settings.SMALength}");
     Log($"  Chop Threshold: {settings.ChopThresholdPercent * 100:N3}%");
     Log($"  Min Chop Absolute: ${settings.MinChopAbsolute:N4}");
     Log($"  Neutral Wait: {settings.NeutralWaitSeconds}s");
     Log($"  BTC Correlation (Neutral Nudge): {(settings.WatchBtc ? "Enabled" : "Disabled")}");
-    Log($"  Polling Interval: {settings.PollingIntervalSeconds}s");
     Log($"  Starting Amount: ${tradingState.StartingAmount:N2}");
     Log($"  Current Available Cash: ${tradingState.AvailableCash:N2}");
     Log($"  Accumulated Leftover: ${tradingState.AccumulatedLeftover:N2}");
@@ -2026,12 +2025,12 @@ void SaveTradingState(string filePath, TradingState state)
 class TradingSettings
 {
     public string BotId { get; set; } = "main"; // Unique identifier for this bot instance
-    public int PollingIntervalSeconds { get; set; } = 5;
+    public int PollingIntervalSeconds { get; set; } = 1;
     public string BullSymbol { get; set; } = "TQQQ";
     public string? BearSymbol { get; set; } = "SQQQ";
     public string BenchmarkSymbol { get; set; } = "QQQ";
     public string CryptoBenchmarkSymbol { get; set; } = "BTC/USD";
-    public int SMALength { get; set; } = 12;
+    public int SMAWindowSeconds { get; set; } = 60; // Total time window for rolling average
     public decimal ChopThresholdPercent { get; set; } = 0.0015m;
     public decimal MinChopAbsolute { get; set; } = 0.02m; // Absolute floor for hysteresis (tick-aware)
     public int NeutralWaitSeconds { get; set; } = 30;
@@ -2039,6 +2038,9 @@ class TradingSettings
     public bool BullOnlyMode { get; set; } = false;
     public bool UseBtcEarlyTrading { get; set; } = true; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
+    
+    // Derived: Calculate queue size dynamically from window and interval
+    public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
     
     // Generate a client order ID with bot prefix for order tracking
     public string GenerateClientOrderId() => $"qqqBot-{BotId}-{Guid.NewGuid():N}";
