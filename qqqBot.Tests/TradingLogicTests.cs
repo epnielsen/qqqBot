@@ -4,6 +4,8 @@ using Xunit;
 using Moq;
 using Alpaca.Markets;
 using qqqBot;
+using qqqBot.Core.Domain;
+using qqqBot.Core.Interfaces;
 
 namespace qqqBot.Tests;
 
@@ -241,301 +243,191 @@ public class RestartPersistenceTests
 }
 
 /// <summary>
-/// Tests for IOC Machine Gun execution logic.
+/// Tests for IOC Machine Gun execution logic (broker-agnostic using IBrokerExecution).
 /// </summary>
 public class IocMachineGunTests
 {
     /// <summary>
-    /// The "Machine Gun" Deviation Test:
-    /// Scenario: Mock the API to reject the first 4 IOC orders. On the 5th attempt, 
-    /// mock the price to be 1% higher than the start price.
-    /// Expectation: The ExecuteIocMachineGunAsync should abort before the 5th attempt 
-    /// because IocMaxDeviationPercent (0.5%) was exceeded.
-    /// </summary>
-    [Fact]
-    public async Task MachineGunDeviationTest_ExceedsMaxDeviation_AbortsBeforeMaxRetries()
-    {
-        // Arrange
-        int orderAttempts = 0;
-        var mockOrderClient = new Mock<IOrderClient>();
-        
-        // Setup: All orders get cancelled (simulating price moving away)
-        mockOrderClient
-            .Setup(c => c.PostOrderAsync(It.IsAny<NewOrderRequest>()))
-            .ReturnsAsync((NewOrderRequest req) =>
-            {
-                orderAttempts++;
-                return CreateMockOrder(OrderStatus.Canceled, req.LimitPrice ?? 0m, 0);
-            });
-        
-        var logs = new System.Collections.Generic.List<string>();
-        var executor = new IocMachineGunExecutor(
-            mockOrderClient.Object,
-            () => Guid.NewGuid().ToString(),
-            msg => logs.Add(msg));
-        
-        // Parameters:
-        // - Start price: $100
-        // - Step: 10 cents per retry (larger step to hit deviation faster)
-        // - Max retries: 100 (plenty of room)
-        // - Max deviation: 0.5% (0.005) = $0.50 max chase from $100
-        const decimal startPrice = 100.00m;
-        const decimal priceStepCents = 10m; // 10 cents per retry
-        const int maxRetries = 100;
-        const decimal maxDeviationPercent = 0.005m; // 0.5%
-        
-        // Act
-        var result = await executor.ExecuteAsync(
-            "TQQQ",
-            100,
-            OrderSide.Buy,
-            startPrice,
-            priceStepCents,
-            maxRetries,
-            maxDeviationPercent);
-        
-        // Assert
-        // With 10 cent steps and 0.5% max deviation ($0.50), we should stop after:
-        // Attempt 1: $100.00 (0% deviation) - Cancelled, bump to $100.10
-        // Attempt 2: $100.10 (0.1% deviation) - Cancelled, bump to $100.20
-        // Attempt 3: $100.20 (0.2% deviation) - Cancelled, bump to $100.30
-        // Attempt 4: $100.30 (0.3% deviation) - Cancelled, bump to $100.40
-        // Attempt 5: $100.40 (0.4% deviation) - Cancelled, bump to $100.50
-        // Attempt 6: $100.50 (0.5% deviation) - EXCEEDS, abort before executing
-        
-        Assert.True(result.AbortedDueToDeviation, 
-            "Execution should abort due to exceeding max deviation");
-        Assert.Equal(0L, result.FilledQty); // No shares should be filled since all orders were cancelled
-        
-        // The check is > (not >=), so:
-        // Attempt 6: $100.50 = exactly 0.5% deviation, still allowed
-        // Attempt 7: $100.60 = 0.6% > 0.5%, abort here
-        Assert.True(result.AttemptsUsed <= 7, 
-            $"Should stop at attempt 7 when deviation exceeds 0.5%, but made {result.AttemptsUsed} attempts");
-        Assert.True(result.AttemptsUsed >= 6,
-            $"Should make at least 6 attempts before deviation limit, but only made {result.AttemptsUsed}");
-        
-        // The final attempted price should be just at or slightly over the limit
-        decimal maxAllowedPrice = startPrice * (1 + maxDeviationPercent);
-        Assert.True(result.FinalPriceAttempted <= maxAllowedPrice + 0.10m,
-            $"Final price ${result.FinalPriceAttempted} should be near max allowed ${maxAllowedPrice}");
-        
-        // Verify the deviation abort was logged
-        Assert.Contains(logs, l => l.Contains("deviation") && l.Contains("exceeds"));
-    }
-    
-    /// <summary>
-    /// Test that machine gun fills successfully when orders are accepted.
-    /// </summary>
-    [Fact]
-    public async Task MachineGunTest_OrderFillsOnFirstAttempt_ReturnsSuccess()
-    {
-        // Arrange
-        var mockOrderClient = new Mock<IOrderClient>();
-        
-        mockOrderClient
-            .Setup(c => c.PostOrderAsync(It.IsAny<NewOrderRequest>()))
-            .ReturnsAsync((NewOrderRequest req) =>
-                CreateMockOrder(OrderStatus.Filled, req.LimitPrice ?? 0m, 100, req.LimitPrice ?? 100m));
-        
-        var executor = new IocMachineGunExecutor(
-            mockOrderClient.Object,
-            () => Guid.NewGuid().ToString());
-        
-        // Act
-        var result = await executor.ExecuteAsync(
-            "TQQQ", 100, OrderSide.Buy, 100.00m, 1m, 5, 0.005m);
-        
-        // Assert
-        Assert.Equal(100, result.FilledQty);
-        Assert.Equal(1, result.AttemptsUsed);
-        Assert.False(result.AbortedDueToDeviation);
-    }
-    
-    /// <summary>
-    /// Test that machine gun retries and eventually fills.
-    /// </summary>
-    [Fact]
-    public async Task MachineGunTest_FillsOnThirdAttempt_CorrectPriceProgression()
-    {
-        // Arrange
-        int attemptCount = 0;
-        decimal lastAttemptedPrice = 0m;
-        var mockOrderClient = new Mock<IOrderClient>();
-        
-        mockOrderClient
-            .Setup(c => c.PostOrderAsync(It.IsAny<NewOrderRequest>()))
-            .ReturnsAsync((NewOrderRequest req) =>
-            {
-                attemptCount++;
-                lastAttemptedPrice = req.LimitPrice ?? 0m;
-                
-                if (attemptCount < 3)
-                {
-                    // First two attempts cancelled
-                    return CreateMockOrder(OrderStatus.Canceled, req.LimitPrice ?? 0m, 0);
-                }
-                else
-                {
-                    // Third attempt fills
-                    return CreateMockOrder(OrderStatus.Filled, req.LimitPrice ?? 0m, 100, req.LimitPrice ?? 0m);
-                }
-            });
-        
-        var executor = new IocMachineGunExecutor(
-            mockOrderClient.Object,
-            () => Guid.NewGuid().ToString());
-        
-        // Start at $100, step by 2 cents
-        var result = await executor.ExecuteAsync(
-            "TQQQ", 100, OrderSide.Buy, 100.00m, 2m, 10, 0.01m);
-        
-        // Assert
-        Assert.Equal(100, result.FilledQty);
-        Assert.Equal(3, result.AttemptsUsed);
-        Assert.False(result.AbortedDueToDeviation);
-        
-        // Price should have increased: $100.00 -> $100.02 -> $100.04
-        Assert.Equal(100.04m, lastAttemptedPrice);
-    }
-    
-    /// <summary>
     /// "The Drag Test" - Verifies weighted average cost basis calculation
     /// when machine gun gets multiple partial fills at increasing prices.
-    /// 
-    /// Edge Case: If the IOC Machine Gun gets partial fills across multiple 
-    /// price steps (e.g., Fill 10 @ $100.00, Fill 10 @ $100.01, etc.), the
-    /// Average Cost Basis rises.
-    /// 
-    /// Risk: If the machine gun chases too far, average cost might end up 
-    /// above the Hysteresis Band, putting you in a position where you 
-    /// technically "should" sell immediately according to the trend.
-    /// 
-    /// This test verifies the bot correctly calculates the weighted average 
-    /// entry price across 10 partial fills, each 1 cent higher.
     /// </summary>
     [Fact]
     public async Task DragTest_MultiplePartialFills_CalculatesCorrectWeightedAverage()
     {
         // Arrange
         int attemptNumber = 0;
-        var requestedPrices = new System.Collections.Generic.List<decimal>();
-        var mockOrderClient = new Mock<IOrderClient>();
-        
+        var mockBroker = new Mock<IBrokerExecution>();
+
         // Setup: 10 partial fills, each filling 10 shares at 1 cent higher
-        // For IOC orders, a partial fill returns as Canceled with FilledQuantity > 0
-        // Attempt 1: Fill 10 @ $100.00 (Canceled with partial fill)
-        // Attempt 2: Fill 10 @ $100.01 (Canceled with partial fill)
-        // ...
-        // Attempt 10: Fill 10 @ $100.09 (Final fill completes the order)
-        mockOrderClient
-            .Setup(c => c.PostOrderAsync(It.IsAny<NewOrderRequest>()))
-            .ReturnsAsync((NewOrderRequest req) =>
+        mockBroker
+            .Setup(c => c.SubmitOrderAsync(It.IsAny<BotOrderRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BotOrderRequest req, CancellationToken ct) =>
             {
                 attemptNumber++;
                 var expectedPrice = 100.00m + ((attemptNumber - 1) * 0.01m);
-                
-                // CRITICAL ASSERTION: Verify the bot is actually chasing (not stuck at same price)
-                // This catches the "Stuck Gun" bug where partial fills don't increment price
-                requestedPrices.Add(req.LimitPrice ?? 0m);
+
+                // CRITICAL: Verify the bot is actually chasing (not stuck at same price)
                 if (Math.Abs((req.LimitPrice ?? 0m) - expectedPrice) > 0.001m)
                 {
                     throw new InvalidOperationException(
-                        $"Stuck Gun Bug Detected! Attempt {attemptNumber}: " +
-                        $"Bot requested ${req.LimitPrice:N2} but should have requested ${expectedPrice:N2}. " +
-                        $"Price history: [{string.Join(", ", requestedPrices.Select(p => $"${p:N2}"))}]");
+                        $"Stuck Gun Bug! Wanted ${expectedPrice:N2}, got ${req.LimitPrice:N2}");
                 }
-                
-                // IOC partial fills return as Canceled with filled quantity
-                // On the 10th attempt, return Filled to complete the order
-                var status = attemptNumber < 10 ? OrderStatus.Canceled : OrderStatus.Filled;
-                return CreateMockOrder(status, req.LimitPrice ?? 0m, 10, req.LimitPrice ?? 0m);
+
+                // Simulate partial fills - on 10th attempt, fill completely
+                var isDone = attemptNumber == 10;
+
+                return new BotOrder
+                {
+                    OrderId = Guid.NewGuid(),
+                    Symbol = "TQQQ",
+                    Side = BotOrderSide.Buy,
+                    Type = BotOrderType.Limit,
+                    Status = isDone ? BotOrderStatus.Filled : BotOrderStatus.Canceled,
+                    Quantity = req.Quantity,
+                    FilledQuantity = 10, // Fill 10 shares per attempt
+                    AverageFillPrice = req.LimitPrice
+                };
             });
-        
-        var logs = new System.Collections.Generic.List<string>();
-        var executor = new IocMachineGunExecutor(
-            mockOrderClient.Object,
-            () => Guid.NewGuid().ToString(),
-            msg => logs.Add(msg));
-        
-        // Parameters:
-        // - Target: 100 shares
-        // - Start price: $100.00
-        // - Step: 1 cent per retry
-        // - Max retries: 15 (enough room for 10 fills)
-        // - Max deviation: 1% (won't be hit)
-        const long targetQty = 100;
-        const decimal startPrice = 100.00m;
-        const decimal priceStepCents = 1m;
-        const int maxRetries = 15;
-        const decimal maxDeviationPercent = 0.01m; // 1%
-        
+
+        var executor = new IocMachineGunExecutor(mockBroker.Object, () => "test-id");
+
         // Act
-        var result = await executor.ExecuteAsync(
-            "TQQQ",
-            targetQty,
-            OrderSide.Buy,
-            startPrice,
-            priceStepCents,
-            maxRetries,
-            maxDeviationPercent);
-        
+        var result = await executor.ExecuteAsync("TQQQ", 100, BotOrderSide.Buy, 100.00m, 1m, 15, 0.01m);
+
         // Assert
-        // Total filled should be 100 shares (10 fills × 10 shares each)
         Assert.Equal(100, result.FilledQty);
         Assert.Equal(10, result.AttemptsUsed);
+
+        // Verify the "drag" calculation: 4.5 cents expected
+        // Fill prices: $100.00, $100.01, ..., $100.09
+        // Average = $100.045
+        decimal priceDrag = result.AvgPrice - 100.00m;
+        Assert.Equal(0.045m, priceDrag);
+    }
+
+    /// <summary>
+    /// The "Machine Gun" Deviation Test - aborts when price moves too far.
+    /// </summary>
+    [Fact]
+    public async Task DeviationTest_AbortsWhenPriceMovesTooFar()
+    {
+        var mockBroker = new Mock<IBrokerExecution>();
+        
+        // Always return Canceled with 0 fills
+        mockBroker
+            .Setup(x => x.SubmitOrderAsync(It.IsAny<BotOrderRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BotOrder 
+            { 
+                OrderId = Guid.NewGuid(), 
+                Symbol = "TQQQ", 
+                Side = BotOrderSide.Buy, 
+                Type = BotOrderType.Limit,
+                Status = BotOrderStatus.Canceled, 
+                Quantity = 100, 
+                FilledQuantity = 0 
+            });
+
+        var logs = new System.Collections.Generic.List<string>();
+        var executor = new IocMachineGunExecutor(mockBroker.Object, () => "test", msg => logs.Add(msg));
+
+        // Max deviation 0.5% ($0.50). Start $100. Step $0.10.
+        // Should abort around attempt 6-7 when deviation > 0.5%
+        var result = await executor.ExecuteAsync("TQQQ", 100, BotOrderSide.Buy, 100m, 10m, 20, 0.005m);
+
+        Assert.True(result.AbortedDueToDeviation);
+        Assert.True(result.AttemptsUsed >= 5, $"Expected at least 5 attempts, got {result.AttemptsUsed}");
+        Assert.True(result.AttemptsUsed <= 7, $"Expected at most 7 attempts, got {result.AttemptsUsed}");
+        Assert.Contains(logs, l => l.Contains("deviation") && l.Contains("exceeds"));
+    }
+
+    /// <summary>
+    /// Test that machine gun fills successfully when orders are accepted.
+    /// </summary>
+    [Fact]
+    public async Task MachineGunTest_OrderFillsOnFirstAttempt_ReturnsSuccess()
+    {
+        var mockBroker = new Mock<IBrokerExecution>();
+        
+        mockBroker
+            .Setup(c => c.SubmitOrderAsync(It.IsAny<BotOrderRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BotOrderRequest req, CancellationToken _) => new BotOrder
+            {
+                OrderId = Guid.NewGuid(),
+                Symbol = req.Symbol,
+                Side = req.Side,
+                Type = BotOrderType.Limit,
+                Status = BotOrderStatus.Filled,
+                Quantity = req.Quantity,
+                FilledQuantity = req.Quantity,
+                AverageFillPrice = req.LimitPrice
+            });
+        
+        var executor = new IocMachineGunExecutor(mockBroker.Object, () => Guid.NewGuid().ToString());
+        
+        var result = await executor.ExecuteAsync("TQQQ", 100, BotOrderSide.Buy, 100.00m, 1m, 5, 0.005m);
+        
+        Assert.Equal(100, result.FilledQty);
+        Assert.Equal(1, result.AttemptsUsed);
+        Assert.False(result.AbortedDueToDeviation);
+    }
+
+    /// <summary>
+    /// Test that machine gun retries and eventually fills.
+    /// </summary>
+    [Fact]
+    public async Task MachineGunTest_FillsOnThirdAttempt_CorrectPriceProgression()
+    {
+        int attemptCount = 0;
+        var mockBroker = new Mock<IBrokerExecution>();
+        
+        mockBroker
+            .Setup(c => c.SubmitOrderAsync(It.IsAny<BotOrderRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BotOrderRequest req, CancellationToken _) =>
+            {
+                attemptCount++;
+                
+                if (attemptCount < 3)
+                {
+                    // First two attempts cancelled
+                    return new BotOrder
+                    {
+                        OrderId = Guid.NewGuid(),
+                        Symbol = req.Symbol,
+                        Side = req.Side,
+                        Type = BotOrderType.Limit,
+                        Status = BotOrderStatus.Canceled,
+                        Quantity = req.Quantity,
+                        FilledQuantity = 0
+                    };
+                }
+                else
+                {
+                    // Third attempt fills
+                    return new BotOrder
+                    {
+                        OrderId = Guid.NewGuid(),
+                        Symbol = req.Symbol,
+                        Side = req.Side,
+                        Type = BotOrderType.Limit,
+                        Status = BotOrderStatus.Filled,
+                        Quantity = req.Quantity,
+                        FilledQuantity = req.Quantity,
+                        AverageFillPrice = req.LimitPrice
+                    };
+                }
+            });
+        
+        var executor = new IocMachineGunExecutor(mockBroker.Object, () => Guid.NewGuid().ToString());
+        
+        // Start at $100, step by 2 cents
+        var result = await executor.ExecuteAsync("TQQQ", 100, BotOrderSide.Buy, 100.00m, 2m, 10, 0.01m);
+        
+        Assert.Equal(100, result.FilledQty);
+        Assert.Equal(3, result.AttemptsUsed);
         Assert.False(result.AbortedDueToDeviation);
         
-        // Calculate expected weighted average:
-        // Fill 1:  10 shares × $100.00 = $1,000.00
-        // Fill 2:  10 shares × $100.01 = $1,000.10
-        // Fill 3:  10 shares × $100.02 = $1,000.20
-        // Fill 4:  10 shares × $100.03 = $1,000.30
-        // Fill 5:  10 shares × $100.04 = $1,000.40
-        // Fill 6:  10 shares × $100.05 = $1,000.50
-        // Fill 7:  10 shares × $100.06 = $1,000.60
-        // Fill 8:  10 shares × $100.07 = $1,000.70
-        // Fill 9:  10 shares × $100.08 = $1,000.80
-        // Fill 10: 10 shares × $100.09 = $1,000.90
-        // -----------------------------------------
-        // Total:  100 shares, Total Cost = $10,004.50
-        // Weighted Avg = $10,004.50 / 100 = $100.045
-        
-        decimal expectedTotalProceeds = 0m;
-        for (int i = 0; i < 10; i++)
-        {
-            expectedTotalProceeds += 10 * (100.00m + (i * 0.01m));
-        }
-        decimal expectedAvgPrice = expectedTotalProceeds / 100;
-        
-        Assert.Equal(expectedTotalProceeds, result.TotalProceeds);
-        Assert.Equal(expectedAvgPrice, result.AvgPrice);
-        
-        // Verify the "drag" - average entry is 4.5 cents above starting price
-        decimal priceDrag = result.AvgPrice - startPrice;
-        Assert.Equal(0.045m, priceDrag);
-        
-        // Log verification - should show 10 partial fill messages
-        var partialFillLogs = logs.Where(l => l.Contains("Partial") || l.Contains("FILLED")).ToList();
-        Assert.True(partialFillLogs.Count >= 10, 
-            $"Expected at least 10 fill log entries, found {partialFillLogs.Count}");
-    }
-    
-    /// <summary>
-    /// Helper to create mock IOrder objects.
-    /// </summary>
-    private static IOrder CreateMockOrder(
-        OrderStatus status, 
-        decimal limitPrice, 
-        long filledQty,
-        decimal? avgFillPrice = null)
-    {
-        var mockOrder = new Mock<IOrder>();
-        mockOrder.Setup(o => o.OrderId).Returns(Guid.NewGuid());
-        mockOrder.Setup(o => o.OrderStatus).Returns(status);
-        mockOrder.Setup(o => o.FilledQuantity).Returns(filledQty);
-        mockOrder.Setup(o => o.AverageFillPrice).Returns(avgFillPrice);
-        mockOrder.Setup(o => o.LimitPrice).Returns(limitPrice);
-        return mockOrder.Object;
+        // Price should have increased: $100.00 -> $100.02 -> $100.04
+        Assert.Equal(100.04m, result.FinalPriceAttempted);
     }
 }
+

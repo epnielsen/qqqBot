@@ -24,6 +24,8 @@
   <ItemGroup>
     <Compile Include="..\TrailingStopEngine.cs" Link="TrailingStopEngine.cs" />
     <Compile Include="..\IocMachineGunExecutor.cs" Link="IocMachineGunExecutor.cs" />
+    <Compile Include="..\Core\**\*.cs" Link="Core\%(RecursiveDir)%(FileName)%(Extension)" />
+    <Compile Include="..\Infrastructure\**\*.cs" Link="Infrastructure\%(RecursiveDir)%(FileName)%(Extension)" />
   </ItemGroup>
 
 </Project>

@@ -1,26 +1,9 @@
 using System;
 using System.Threading.Tasks;
-using Alpaca.Markets;
+using qqqBot.Core.Domain;
+using qqqBot.Core.Interfaces;
 
 namespace qqqBot;
-
-/// <summary>
-/// Interface for IOC order execution to enable testing with mocks.
-/// </summary>
-public interface IIocExecutor
-{
-    /// <summary>
-    /// Execute IOC orders with machine-gun retry logic.
-    /// </summary>
-    Task<IocExecutionResult> ExecuteAsync(
-        string symbol,
-        long targetQty,
-        OrderSide side,
-        decimal startPrice,
-        decimal priceStepCents,
-        int maxRetries,
-        decimal maxDeviationPercent);
-}
 
 /// <summary>
 /// Result of IOC machine-gun execution.
@@ -36,53 +19,42 @@ public class IocExecutionResult
 }
 
 /// <summary>
-/// Mock-friendly interface for trading client operations needed by IOC executor.
+/// IOC (Immediate-Or-Cancel) Machine Gun executor.
+/// Submits IOC limit orders with progressive price chasing until filled.
+/// Now uses broker-agnostic IBrokerExecution interface.
 /// </summary>
-public interface IOrderClient
+public class IocMachineGunExecutor
 {
-    Task<IOrder> PostOrderAsync(NewOrderRequest request);
-    Task<IOrder> GetOrderAsync(Guid orderId);
-}
-
-/// <summary>
-/// Wrapper around real Alpaca trading client for production use.
-/// </summary>
-public class AlpacaOrderClient : IOrderClient
-{
-    private readonly IAlpacaTradingClient _client;
-    
-    public AlpacaOrderClient(IAlpacaTradingClient client)
-    {
-        _client = client;
-    }
-    
-    public Task<IOrder> PostOrderAsync(NewOrderRequest request) => _client.PostOrderAsync(request);
-    public Task<IOrder> GetOrderAsync(Guid orderId) => _client.GetOrderAsync(orderId);
-}
-
-/// <summary>
-/// IOC Machine Gun executor - testable implementation.
-/// </summary>
-public class IocMachineGunExecutor : IIocExecutor
-{
-    private readonly IOrderClient _orderClient;
+    private readonly IBrokerExecution _broker;
     private readonly Func<string> _clientOrderIdGenerator;
     private readonly Action<string>? _logger;
     
     public IocMachineGunExecutor(
-        IOrderClient orderClient, 
+        IBrokerExecution broker, 
         Func<string> clientOrderIdGenerator,
         Action<string>? logger = null)
     {
-        _orderClient = orderClient;
+        _broker = broker;
         _clientOrderIdGenerator = clientOrderIdGenerator;
         _logger = logger;
     }
     
+    /// <summary>
+    /// Execute IOC orders with machine-gun retry logic.
+    /// Progressively chases price until target quantity is filled or deviation limit is hit.
+    /// </summary>
+    /// <param name="symbol">Symbol to trade.</param>
+    /// <param name="targetQty">Target quantity to fill.</param>
+    /// <param name="side">Buy or Sell.</param>
+    /// <param name="startPrice">Starting limit price.</param>
+    /// <param name="priceStepCents">Price increment per retry (in cents).</param>
+    /// <param name="maxRetries">Maximum number of order attempts.</param>
+    /// <param name="maxDeviationPercent">Maximum price deviation from start (e.g., 0.005 = 0.5%).</param>
+    /// <returns>Execution result with fill details.</returns>
     public async Task<IocExecutionResult> ExecuteAsync(
         string symbol,
         long targetQty,
-        OrderSide side,
+        BotOrderSide side,
         decimal startPrice,
         decimal priceStepCents,
         int maxRetries,
@@ -101,7 +73,7 @@ public class IocMachineGunExecutor : IIocExecutor
             
             var remainingQty = targetQty - totalFilled;
             
-            // Check price deviation limit BEFORE submitting order
+            // Check price deviation before submitting
             var deviation = Math.Abs((currentPrice - originalPrice) / originalPrice);
             if (deviation > maxDeviationPercent)
             {
@@ -110,78 +82,51 @@ public class IocMachineGunExecutor : IIocExecutor
                 break;
             }
             
-            // Submit IOC order
+            // Submit IOC order using broker-agnostic interface
             var limitPrice = Math.Round(currentPrice, 2);
-            var orderRequest = new NewOrderRequest(
-                symbol,
-                OrderQuantity.FromInt64(remainingQty),
-                side,
-                OrderType.Limit,
-                TimeInForce.Ioc
-            )
-            {
-                ClientOrderId = _clientOrderIdGenerator(),
-                LimitPrice = limitPrice
-            };
+            var request = side == BotOrderSide.Buy 
+                ? BotOrderRequest.IocLimitBuy(symbol, remainingQty, limitPrice, _clientOrderIdGenerator())
+                : BotOrderRequest.IocLimitSell(symbol, remainingQty, limitPrice, _clientOrderIdGenerator());
             
             try
             {
-                var order = await _orderClient.PostOrderAsync(orderRequest);
+                // The Adapter handles the optimization (returning filled state immediately if possible)
+                var order = await _broker.SubmitOrderAsync(request);
                 
-                // OPTIMIZATION: Check PostOrderAsync response FIRST before GetOrderAsync
-                IOrder filledOrder;
-                
-                if (order.OrderStatus == OrderStatus.Filled || 
-                    order.OrderStatus == OrderStatus.Canceled ||
-                    order.OrderStatus == OrderStatus.Expired)
+                // Check for fills (Full or Partial)
+                if (order.FilledQuantity > 0)
                 {
-                    filledOrder = order;
-                }
-                else
-                {
-                    filledOrder = await _orderClient.GetOrderAsync(order.OrderId);
-                }
-                
-                if (filledOrder.OrderStatus == OrderStatus.Filled || 
-                    (filledOrder.FilledQuantity > 0 && filledOrder.AverageFillPrice.HasValue))
-                {
-                    var filledQty = (long)filledOrder.FilledQuantity;
-                    var avgPrice = filledOrder.AverageFillPrice ?? limitPrice;
+                    var filledQty = order.FilledQuantity;
+                    var avgPrice = order.AverageFillPrice ?? limitPrice;
                     totalFilled += filledQty;
                     totalProceeds += filledQty * avgPrice;
                     
-                    if (filledOrder.OrderStatus == OrderStatus.Filled)
+                    if (order.Status == BotOrderStatus.Filled)
                     {
                         _logger?.Invoke($"[IOC] Attempt {attempt + 1}: FILLED {filledQty} @ ${avgPrice:N4}");
-                        break;
+                        break; // Done - fully filled
                     }
                     else
                     {
-                        // Partial fill - need to bump price for next attempt
+                        // Partial fill (BotOrderStatus.PartiallyFilled or Canceled with partial fills)
                         _logger?.Invoke($"[IOC] Attempt {attempt + 1}: Partial {filledQty}/{remainingQty} @ ${avgPrice:N4}");
-                        if (side == OrderSide.Buy)
-                        {
+                        
+                        // Chase price - increment for buys, decrement for sells
+                        if (side == BotOrderSide.Buy)
                             currentPrice += (priceStepCents / 100m);
-                        }
                         else
-                        {
                             currentPrice -= (priceStepCents / 100m);
-                        }
                     }
                 }
-                else if (filledOrder.OrderStatus == OrderStatus.Canceled ||
-                         filledOrder.OrderStatus == OrderStatus.Expired)
+                else
                 {
-                    // No fill - adjust price and retry immediately
-                    if (side == OrderSide.Buy)
-                    {
+                    // No fill - adjust price and retry
+                    if (side == BotOrderSide.Buy)
                         currentPrice += (priceStepCents / 100m);
-                    }
                     else
-                    {
                         currentPrice -= (priceStepCents / 100m);
-                    }
-                    _logger?.Invoke($"[IOC] Attempt {attempt + 1}: Cancelled. Retrying at ${currentPrice:N2}...");
+                    
+                    _logger?.Invoke($"[IOC] Attempt {attempt + 1}: No Fill. Retrying at ${currentPrice:N2}...");
                 }
             }
             catch (Exception ex)
