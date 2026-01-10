@@ -7,8 +7,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "qqqBot", "qqqBot.csproj", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "qqqBot.Tests", "qqqBot.Tests\qqqBot.Tests.csproj", "{5ADCD349-9A8E-4D64-8CCD-1A2745E3F14C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MarketBlocks", "MarketBlocks\MarketBlocks.csproj", "{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,18 +41,6 @@ Global
 		{5ADCD349-9A8E-4D64-8CCD-1A2745E3F14C}.Release|x64.Build.0 = Release|Any CPU
 		{5ADCD349-9A8E-4D64-8CCD-1A2745E3F14C}.Release|x86.ActiveCfg = Release|Any CPU
 		{5ADCD349-9A8E-4D64-8CCD-1A2745E3F14C}.Release|x86.Build.0 = Release|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Debug|x64.Build.0 = Debug|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Debug|x86.Build.0 = Debug|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Release|Any CPU.Build.0 = Release|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Release|x64.ActiveCfg = Release|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Release|x64.Build.0 = Release|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Release|x86.ActiveCfg = Release|Any CPU
-		{C2FC2E60-330B-4908-B0CF-9F81E2E20A45}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
