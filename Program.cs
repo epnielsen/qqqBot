@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Alpaca.Markets;
 using CsvHelper;
 using Microsoft.Extensions.Configuration;
+using qqqBot;
 
 // ============================================================================
 // QQQ Trading Bot - .NET 10 Alpaca Paper Trading Bot
@@ -619,6 +620,9 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
         UseIocOrders = configuration.GetValue("TradingBot:UseIocOrders", false),
         IocLimitOffsetCents = configuration.GetValue("TradingBot:IocLimitOffsetCents", 1m),
+        IocMaxRetries = configuration.GetValue("TradingBot:IocMaxRetries", 5),
+        IocRetryStepCents = configuration.GetValue("TradingBot:IocRetryStepCents", 1m),
+        IocMaxDeviationPercent = configuration.GetValue("TradingBot:IocMaxDeviationPercent", 0.005m),
         KeepAlivePingSeconds = configuration.GetValue("TradingBot:KeepAlivePingSeconds", 5),
         WarmUpIterations = configuration.GetValue("TradingBot:WarmUpIterations", 10000)
     };
@@ -654,6 +658,9 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         LowLatencyMode = cmdOverrides.LowLatencyMode || configSettings.LowLatencyMode,
         UseIocOrders = cmdOverrides.UseIocOrders || configSettings.UseIocOrders,
         IocLimitOffsetCents = configSettings.IocLimitOffsetCents,
+        IocMaxRetries = configSettings.IocMaxRetries,
+        IocRetryStepCents = configSettings.IocRetryStepCents,
+        IocMaxDeviationPercent = configSettings.IocMaxDeviationPercent,
         KeepAlivePingSeconds = configSettings.KeepAlivePingSeconds,
         WarmUpIterations = configSettings.WarmUpIterations
     };
@@ -897,6 +904,30 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     var easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
 
     // =========================================================================
+    // LOW-LATENCY MODE INFRASTRUCTURE (must be declared before stream handlers)
+    // =========================================================================
+    
+    // High-performance bounded channel for trade prices (DropOldest prevents lag)
+    var tradeChannel = Channel.CreateBounded<TradeTick>(new BoundedChannelOptions(100)
+    {
+        FullMode = BoundedChannelFullMode.DropOldest,
+        SingleReader = true,
+        SingleWriter = false // Multiple streams may write
+    });
+    
+    // Flag to signal when low-latency pipeline is active (enables channel writes in stream handlers)
+    // Use Volatile.Read/Write for thread-safe access from stream handler callbacks
+    bool _lowLatencyActive = false;
+    
+    // Disk I/O throttle for trailing stop persistence (avoid hot path blocking)
+    DateTime _lastTrailingStopDiskWrite = DateTime.MinValue;
+    const int TRAILING_STOP_DISK_WRITE_INTERVAL_SECONDS = 5;
+    
+    // O(1) SMA calculator for low-latency mode
+    var incrementalSma = new IncrementalSma(settings.SMALength);
+    var incrementalBtcSma = new IncrementalSma(settings.SMALength);
+
+    // =========================================================================
     // STREAMING DATA INITIALIZATION
     // =========================================================================
     Log("Initializing real-time data streams...");
@@ -947,10 +978,23 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             benchmarkSubscription = stockStreamClient.GetTradeSubscription(settings.BenchmarkSymbol);
             benchmarkSubscription.Received += (trade) =>
             {
+                // Always update the locked variable (for polling mode fallback)
                 lock (streamLock)
                 {
                     _latestBenchmarkPrice = trade.Price;
                     _lastBenchmarkUpdate = DateTime.UtcNow;
+                }
+                
+                // LOW-LATENCY MODE: Also write to channel for reactive pipeline
+                if (settings.LowLatencyMode && Volatile.Read(ref _lowLatencyActive))
+                {
+                    // TryWrite is non-blocking - if channel is full, DropOldest kicks in
+                    tradeChannel.Writer.TryWrite(new TradeTick 
+                    { 
+                        Price = trade.Price, 
+                        Timestamp = DateTime.UtcNow,
+                        IsBenchmark = true 
+                    });
                 }
             };
             
@@ -1009,10 +1053,22 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             btcSubscription = cryptoStreamClient.GetTradeSubscription(settings.CryptoBenchmarkSymbol);
             btcSubscription.Received += (trade) =>
             {
+                // Always update the locked variable (for polling mode fallback)
                 lock (streamLock)
                 {
                     _latestBtcPrice = trade.Price;
                     _lastBtcUpdate = DateTime.UtcNow;
+                }
+                
+                // LOW-LATENCY MODE: Also write to channel for reactive pipeline (if using BTC for early trading)
+                if (settings.LowLatencyMode && Volatile.Read(ref _lowLatencyActive) && settings.UseBtcEarlyTrading)
+                {
+                    tradeChannel.Writer.TryWrite(new TradeTick 
+                    { 
+                        Price = trade.Price, 
+                        Timestamp = DateTime.UtcNow,
+                        IsBenchmark = false  // BTC, not benchmark
+                    });
                 }
             };
             
@@ -1179,18 +1235,6 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         _keepAliveTask = null;
     }
     
-    // =========================================================================
-    // LOW-LATENCY MODE: Channel-Based Pipeline Infrastructure
-    // =========================================================================
-    
-    // High-performance bounded channel for trade prices (DropOldest prevents lag)
-    var tradeChannel = Channel.CreateBounded<TradeTick>(new BoundedChannelOptions(100)
-    {
-        FullMode = BoundedChannelFullMode.DropOldest,
-        SingleReader = true,
-        SingleWriter = false // Multiple streams may write
-    });
-    
     // Track if streams have been started this session
     bool _streamsStarted = false;
 
@@ -1229,6 +1273,388 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         ? (delta) => { _cumulativeSlippage += delta; }
         : null;
 
+    // =========================================================================
+    // LOW-LATENCY MODE: Reactive Pipeline Consumer
+    // =========================================================================
+    // This method runs instead of the polling loop when LowLatencyMode is enabled.
+    // It consumes trades from the channel and executes strategy with O(1) SMA.
+    async Task RunReactivePipelineAsync(CancellationToken ct)
+    {
+        Log("\n[LOW-LATENCY] Starting reactive pipeline consumer...");
+        Log("[LOW-LATENCY] Processing trades as they arrive (no polling delay).\n");
+        
+        // Local state for the pipeline
+        DateTime? pipelineNeutralDetectionTime = null;
+        DateTime pipelineLastLogTime = DateTime.MinValue;
+        string pipelineLastSignal = string.Empty;
+        
+        // RESTORE trailing stop state from disk (survives restarts)
+        decimal pipelineHwm = tradingState.HighWaterMark ?? 0m;
+        decimal pipelineLwm = tradingState.LowWaterMark ?? 0m;
+        decimal pipelineVirtualStop = tradingState.TrailingStopValue ?? 0m;
+        bool pipelineStoppedOut = tradingState.IsStoppedOut;
+        string pipelineStoppedOutDir = tradingState.StoppedOutDirection ?? string.Empty;
+        decimal pipelineWashoutLevel = tradingState.WashoutLevel ?? 0m;
+        DateTime? pipelineStopoutTime = string.IsNullOrEmpty(tradingState.StopoutTimestamp) 
+            ? null 
+            : DateTime.TryParse(tradingState.StopoutTimestamp, out var ts) ? ts : (DateTime?)null;
+        
+        // Log restored state if any
+        if (pipelineHwm > 0 || pipelineLwm > 0)
+        {
+            Log($"[LOW-LATENCY] Restored trailing stop state from disk:");
+            if (pipelineHwm > 0) Log($"    HighWaterMark: ${pipelineHwm:N2}, Stop: ${pipelineVirtualStop:N2}");
+            if (pipelineLwm > 0) Log($"    LowWaterMark: ${pipelineLwm:N2}, Stop: ${pipelineVirtualStop:N2}");
+            if (pipelineStoppedOut) Log($"    StoppedOut: {pipelineStoppedOutDir}, Washout: ${pipelineWashoutLevel:N2}");
+        }
+        
+        // Also sync to memory variables for other parts of code
+        _highWaterMark = pipelineHwm;
+        _lowWaterMark = pipelineLwm;
+        _virtualStopPrice = pipelineVirtualStop;
+        _isStoppedOut = pipelineStoppedOut;
+        _stoppedOutDirection = pipelineStoppedOutDir;
+        _washoutLevel = pipelineWashoutLevel;
+        _stopoutTime = pipelineStopoutTime;
+        
+        try
+        {
+            await foreach (var tick in tradeChannel.Reader.ReadAllAsync(ct))
+            {
+                try
+                {
+                    var easternNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, easternZone);
+                    
+                    // Skip if market closed (shouldn't happen but safety check)
+                    if (!IsMarketOpen(easternNow))
+                    {
+                        continue;
+                    }
+                    
+                    // For early trading, only process BTC ticks; otherwise only benchmark ticks
+                    var earlyTradingEnd = new TimeSpan(9, 55, 0);
+                    var usesCrypto = settings.UseBtcEarlyTrading && easternNow.TimeOfDay < earlyTradingEnd;
+                    
+                    if (usesCrypto && tick.IsBenchmark) continue;  // Skip QQQ during early trading
+                    if (!usesCrypto && !tick.IsBenchmark) continue; // Skip BTC during normal trading
+                    
+                    var currentPrice = tick.Price;
+                    
+                    // O(1) SMA calculation - the key optimization!
+                    decimal currentSma;
+                    if (tick.IsBenchmark)
+                    {
+                        currentSma = incrementalSma.Add(currentPrice);
+                    }
+                    else
+                    {
+                        currentSma = incrementalBtcSma.Add(currentPrice);
+                    }
+                    
+                    // Calculate Hysteresis Bands
+                    decimal percentageWidth = currentSma * settings.ChopThresholdPercent;
+                    decimal effectiveWidth = Math.Max(percentageWidth, settings.MinChopAbsolute);
+                    var upperBand = currentSma + effectiveWidth;
+                    var lowerBand = currentSma - effectiveWidth;
+                    
+                    // Determine signal
+                    string signal;
+                    var timeOfDay = easternNow.TimeOfDay;
+                    var marketCloseCutoff = new TimeSpan(15, 58, 0);
+                    
+                    if (timeOfDay >= marketCloseCutoff)
+                    {
+                        signal = "MARKET_CLOSE";
+                    }
+                    else if (currentPrice > upperBand)
+                    {
+                        signal = "BULL";
+                    }
+                    else if (currentPrice < lowerBand)
+                    {
+                        signal = "BEAR";
+                    }
+                    else
+                    {
+                        signal = "NEUTRAL";
+                    }
+                    
+                    // Apply BTC nudge if in neutral and WatchBtc is enabled
+                    string finalSignal = signal;
+                    if (settings.WatchBtc && signal == "NEUTRAL" && incrementalBtcSma.IsFull)
+                    {
+                        var btcSma = incrementalBtcSma.CurrentAverage;
+                        var btcUpperBand = btcSma * (1 + settings.ChopThresholdPercent);
+                        var btcLowerBand = btcSma * (1 - settings.ChopThresholdPercent);
+                        
+                        decimal btcPrice;
+                        lock (streamLock) { btcPrice = _latestBtcPrice; }
+                        
+                        if (btcPrice > btcUpperBand)
+                            finalSignal = "BULL";
+                        else if (btcPrice < btcLowerBand)
+                            finalSignal = "BEAR";
+                    }
+                    
+                    // Trailing stop logic (update water marks)
+                    if (settings.TrailingStopPercent > 0)
+                    {
+                        if (tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0)
+                        {
+                            if (currentPrice > pipelineHwm || pipelineHwm == 0m)
+                            {
+                                pipelineHwm = currentPrice;
+                                pipelineVirtualStop = pipelineHwm * (1 - settings.TrailingStopPercent);
+                            }
+                            
+                            // Check for stop trigger
+                            if (pipelineVirtualStop > 0 && currentPrice <= pipelineVirtualStop && !pipelineStoppedOut)
+                            {
+                                pipelineStoppedOut = true;
+                                pipelineStoppedOutDir = "BULL";
+                                pipelineStopoutTime = DateTime.UtcNow;
+                                pipelineWashoutLevel = upperBand;
+                                Log($"[TRAILING STOP] BULL stop triggered @ ${currentPrice:N2} (stop was ${pipelineVirtualStop:N2})");
+                                finalSignal = "NEUTRAL"; // Force exit
+                            }
+                        }
+                        else if (!string.IsNullOrEmpty(settings.BearSymbol) && 
+                                 tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0)
+                        {
+                            if (currentPrice < pipelineLwm || pipelineLwm == 0m)
+                            {
+                                pipelineLwm = currentPrice;
+                                pipelineVirtualStop = pipelineLwm * (1 + settings.TrailingStopPercent);
+                            }
+                            
+                            // Check for stop trigger (price rising)
+                            if (pipelineVirtualStop > 0 && currentPrice >= pipelineVirtualStop && !pipelineStoppedOut)
+                            {
+                                pipelineStoppedOut = true;
+                                pipelineStoppedOutDir = "BEAR";
+                                pipelineStopoutTime = DateTime.UtcNow;
+                                pipelineWashoutLevel = lowerBand;
+                                Log($"[TRAILING STOP] BEAR stop triggered @ ${currentPrice:N2} (stop was ${pipelineVirtualStop:N2})");
+                                finalSignal = "NEUTRAL"; // Force exit
+                            }
+                        }
+                    }
+                    
+                    // Check washout latch
+                    bool latchBlocksEntry = false;
+                    if (pipelineStoppedOut && pipelineStopoutTime.HasValue)
+                    {
+                        var elapsed = (DateTime.UtcNow - pipelineStopoutTime.Value).TotalSeconds;
+                        if (elapsed < settings.StopLossCooldownSeconds)
+                        {
+                            latchBlocksEntry = true;
+                        }
+                        else if ((pipelineStoppedOutDir == "BULL" && currentPrice > pipelineWashoutLevel) ||
+                                 (pipelineStoppedOutDir == "BEAR" && currentPrice < pipelineWashoutLevel))
+                        {
+                            // Price recovered above washout level - clear latch
+                            pipelineStoppedOut = false;
+                            pipelineHwm = 0m;
+                            pipelineLwm = 0m;
+                            pipelineVirtualStop = 0m;
+                            Log($"[LATCH CLEAR] Price recovered to ${currentPrice:N2}. Re-entry allowed.");
+                        }
+                        else
+                        {
+                            latchBlocksEntry = true;
+                        }
+                    }
+                    
+                    // Throttle logging (once per second)
+                    var shouldLog = (DateTime.Now - pipelineLastLogTime).TotalSeconds >= 1;
+                    if (shouldLog)
+                    {
+                        var signalChanged = finalSignal != pipelineLastSignal;
+                        pipelineLastLogTime = DateTime.Now;
+                        pipelineLastSignal = finalSignal;
+                        
+                        if (signalChanged || (DateTime.Now - pipelineLastLogTime).TotalSeconds >= 5)
+                        {
+                            var benchLabel = tick.IsBenchmark ? settings.BenchmarkSymbol : settings.CryptoBenchmarkSymbol;
+                            Log($"[{easternNow:HH:mm:ss}] {benchLabel}: ${currentPrice:N2} | SMA: ${currentSma:N2} | Band: [${lowerBand:N2}-${upperBand:N2}] | Signal: {finalSignal}");
+                        }
+                    }
+                    
+                    // Create signal checker for smart exit chaser
+                    Func<decimal, string> signalChecker = (price) => {
+                        if (price > upperBand) return "BULL";
+                        if (price < lowerBand) return "BEAR";
+                        return "NEUTRAL";
+                    };
+                    
+                    // Create price getter
+                    Func<decimal> priceGetter = () => {
+                        lock (streamLock) { return _latestBenchmarkPrice > 0 ? _latestBenchmarkPrice : currentPrice; }
+                    };
+                    
+                    // Execute trading logic based on signal
+                    // STATE-AWARE GUARDS: Only call expensive async methods if action is needed
+                    // This prevents API spam (60+ ListPositionsAsync calls per minute)
+                    if (finalSignal == "MARKET_CLOSE")
+                    {
+                        // Only liquidate if we actually have a position
+                        if (tradingState.CurrentPosition != null && tradingState.CurrentShares > 0)
+                        {
+                            await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, 
+                                reason: "MARKET_CLOSE", showStatus: shouldLog, slippageLock: slippageLock, 
+                                updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile, getSignalAtPrice: signalChecker);
+                        }
+                        else if (shouldLog)
+                        {
+                            Log($"[{easternNow:HH:mm:ss}] MARKET_CLOSE - Already flat, no action needed.");
+                        }
+                    }
+                    else if (finalSignal == "BULL" && !latchBlocksEntry)
+                    {
+                        pipelineNeutralDetectionTime = null;
+                        
+                        // STATE CHECK: Only call async method if we're NOT already in BULL
+                        bool alreadyInBull = tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0;
+                        
+                        if (!alreadyInBull)
+                        {
+                            var holdInfo = (currentPrice, lowerBand, upperBand, pipelineVirtualStop > 0 ? pipelineVirtualStop : (decimal?)null);
+                            await EnsurePositionAsync(settings.BullSymbol, settings.BearSymbol, tradingState, tradingClient, 
+                                dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, 
+                                holdInfo, priceGetter, signalChecker);
+                            
+                            // Reset trailing stop if we just entered
+                            if (tradingState.CurrentPosition == settings.BullSymbol)
+                            {
+                                pipelineHwm = currentPrice;
+                                pipelineVirtualStop = pipelineHwm * (1 - settings.TrailingStopPercent);
+                                // Persist to state
+                                tradingState.HighWaterMark = pipelineHwm;
+                                tradingState.TrailingStopValue = pipelineVirtualStop;
+                                tradingState.LowWaterMark = null;
+                                SaveTradingState(stateFilePath, tradingState);
+                            }
+                        }
+                        // else: Already in BULL - no API call needed, just hold
+                    }
+                    else if (finalSignal == "BEAR" && !latchBlocksEntry)
+                    {
+                        pipelineNeutralDetectionTime = null;
+                        
+                        if (settings.BullOnlyMode)
+                        {
+                            // Only liquidate if we have a position
+                            if (tradingState.CurrentPosition != null && tradingState.CurrentShares > 0)
+                            {
+                                await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, 
+                                    reason: "BEAR (bull-only)", showStatus: shouldLog, slippageLock: slippageLock, 
+                                    updateSlippage: slippageCallback, slippageLogFile: _slippageLogFile, getSignalAtPrice: signalChecker);
+                            }
+                        }
+                        else
+                        {
+                            // STATE CHECK: Only call async method if we're NOT already in BEAR
+                            bool alreadyInBear = tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0;
+                            
+                            if (!alreadyInBear)
+                            {
+                                var holdInfo = (currentPrice, lowerBand, upperBand, pipelineVirtualStop > 0 ? pipelineVirtualStop : (decimal?)null);
+                                await EnsurePositionAsync(settings.BearSymbol!, settings.BullSymbol, tradingState, tradingClient, 
+                                    dataClient, stateFilePath, settings, slippageLock, slippageCallback, _slippageLogFile, 
+                                    holdInfo, priceGetter, signalChecker);
+                                
+                                // Reset trailing stop if we just entered
+                                if (tradingState.CurrentPosition == settings.BearSymbol)
+                                {
+                                    pipelineLwm = currentPrice;
+                                    pipelineVirtualStop = pipelineLwm * (1 + settings.TrailingStopPercent);
+                                    // Persist to state
+                                    tradingState.LowWaterMark = pipelineLwm;
+                                    tradingState.TrailingStopValue = pipelineVirtualStop;
+                                    tradingState.HighWaterMark = null;
+                                    SaveTradingState(stateFilePath, tradingState);
+                                }
+                            }
+                            // else: Already in BEAR - no API call needed, just hold
+                        }
+                    }
+                    else if (finalSignal == "NEUTRAL")
+                    {
+                        if (pipelineNeutralDetectionTime == null)
+                        {
+                            pipelineNeutralDetectionTime = DateTime.UtcNow;
+                        }
+                        
+                        var elapsed = (DateTime.UtcNow - pipelineNeutralDetectionTime.Value).TotalSeconds;
+                        if (elapsed >= settings.NeutralWaitSeconds)
+                        {
+                            // Only liquidate if we have a position
+                            if (tradingState.CurrentPosition != null && tradingState.CurrentShares > 0)
+                            {
+                                await EnsureNeutralAsync(tradingState, tradingClient, dataClient, stateFilePath, settings, 
+                                    showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, 
+                                    slippageLogFile: _slippageLogFile, getSignalAtPrice: signalChecker);
+                            }
+                        }
+                    }
+                    
+                    // Persist trailing stop state with DEBOUNCE to avoid disk I/O blocking hot path
+                    // Rule: Save immediately on CRITICAL events (IsStoppedOut change), otherwise max once per 5 seconds
+                    if (settings.TrailingStopPercent > 0 && (pipelineHwm > 0 || pipelineLwm > 0))
+                    {
+                        bool stoppedOutChanged = tradingState.IsStoppedOut != pipelineStoppedOut;
+                        bool watermarkChanged = tradingState.HighWaterMark != pipelineHwm ||
+                                               tradingState.LowWaterMark != pipelineLwm ||
+                                               tradingState.TrailingStopValue != pipelineVirtualStop;
+                        
+                        // Always update in-memory state immediately
+                        tradingState.HighWaterMark = pipelineHwm > 0 ? pipelineHwm : null;
+                        tradingState.LowWaterMark = pipelineLwm > 0 ? pipelineLwm : null;
+                        tradingState.TrailingStopValue = pipelineVirtualStop > 0 ? pipelineVirtualStop : null;
+                        tradingState.IsStoppedOut = pipelineStoppedOut;
+                        tradingState.StoppedOutDirection = pipelineStoppedOut ? pipelineStoppedOutDir : null;
+                        tradingState.WashoutLevel = pipelineStoppedOut ? pipelineWashoutLevel : null;
+                        tradingState.StopoutTimestamp = pipelineStopoutTime?.ToString("o");
+                        
+                        // CRITICAL: Save immediately if stop-out state changed (can't lose this)
+                        // DEBOUNCE: Otherwise, only save if 5+ seconds since last disk write
+                        bool shouldWriteToDisk = stoppedOutChanged || 
+                            (watermarkChanged && (DateTime.UtcNow - _lastTrailingStopDiskWrite).TotalSeconds >= TRAILING_STOP_DISK_WRITE_INTERVAL_SECONDS);
+                        
+                        if (shouldWriteToDisk)
+                        {
+                            SaveTradingState(stateFilePath, tradingState);
+                            _lastTrailingStopDiskWrite = DateTime.UtcNow;
+                        }
+                    }
+                    
+                    // Sync back to outer scope (for graceful shutdown)
+                    _highWaterMark = pipelineHwm;
+                    _lowWaterMark = pipelineLwm;
+                    _virtualStopPrice = pipelineVirtualStop;
+                    _isStoppedOut = pipelineStoppedOut;
+                    _stoppedOutDirection = pipelineStoppedOutDir;
+                    _washoutLevel = pipelineWashoutLevel;
+                    _stopoutTime = pipelineStopoutTime;
+                }
+                catch (Exception ex)
+                {
+                    LogError($"[LOW-LATENCY] Error processing tick: {ex.Message}");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log("[LOW-LATENCY] Pipeline shutdown requested.");
+        }
+        catch (Exception ex)
+        {
+            LogError($"[LOW-LATENCY] Pipeline error: {ex.Message}");
+        }
+        
+        Log("[LOW-LATENCY] Reactive pipeline stopped.");
+    }
+
     // Main trading loop
     while (!cancellationToken.IsCancellationRequested)
     {
@@ -1265,6 +1691,24 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                         
                         _warmedUp = true;
                         Log("[LOW-LATENCY MODE] Warm-up complete. Ready for market open.\n");
+                        
+                        // 4. Seed the IncrementalSma with historical data
+                        Log("[LOW-LATENCY] Seeding IncrementalSma with historical data...");
+                        await SeedIncrementalSmaAsync(settings, dataClient, cryptoDataClient, incrementalSma, incrementalBtcSma, easternZone);
+                        Log($"[LOW-LATENCY] IncrementalSma initialized with {incrementalSma.Count} data points.\n");
+                    }
+                    
+                    // LOW-LATENCY MODE: Switch to reactive pipeline
+                    if (settings.LowLatencyMode && _warmedUp)
+                    {
+                        Log("[LOW-LATENCY] Switching to reactive pipeline mode...");
+                        Volatile.Write(ref _lowLatencyActive, true); // Enable channel writes in stream handlers (thread-safe)
+                        
+                        // Run the reactive pipeline (blocks until cancelled)
+                        await RunReactivePipelineAsync(cancellationToken);
+                        
+                        // If we get here, pipeline was cancelled - exit the main loop
+                        break;
                     }
                 }
                 catch (Exception ex)
@@ -2139,6 +2583,98 @@ async Task SeedRollingSmaAsync(TradingSettings settings, IAlpacaDataClient dataC
     }
 }
 
+// Data Seeding Logic for IncrementalSma (Low-Latency Mode)
+async Task SeedIncrementalSmaAsync(TradingSettings settings, IAlpacaDataClient dataClient, IAlpacaCryptoDataClient cryptoDataClient, IncrementalSma sma, IncrementalSma btcSma, TimeZoneInfo easternZone)
+{
+    var utcNow = DateTime.UtcNow;
+    var easternNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, easternZone);
+    
+    // Fetch historical bars to seed the SMA with actual price history
+    var endTimeUtc = DateTime.UtcNow;
+    var startTimeUtc = endTimeUtc.AddMinutes(-Math.Max(settings.SMAWindowSeconds / 60 + 5, 15)); 
+
+    try
+    {
+        // Seed benchmark SMA with historical minute bars
+        var stockBarsRequest = new HistoricalBarsRequest(
+            settings.BenchmarkSymbol,
+            startTimeUtc,
+            endTimeUtc,
+            BarTimeFrame.Minute
+        )
+        {
+            Feed = MarketDataFeed.Iex
+        };
+
+        var stockBarsResponse = await dataClient.ListHistoricalBarsAsync(stockBarsRequest);
+        var bars = stockBarsResponse.Items.TakeLast(settings.SMALength).ToList();
+        
+        if (bars.Count > 0)
+        {
+            foreach (var bar in bars)
+            {
+                sma.Add(bar.Close);
+            }
+            Log($"  ✓ Benchmark SMA seeded with {bars.Count} historical bars");
+        }
+        else
+        {
+            // Fallback: seed with current price
+            var quoteRequest = new LatestMarketDataRequest(settings.BenchmarkSymbol) { Feed = MarketDataFeed.Iex };
+            var trade = await dataClient.GetLatestTradeAsync(quoteRequest);
+            for (int i = 0; i < settings.SMALength; i++)
+            {
+                sma.Add(trade.Price);
+            }
+            Log($"  ✓ Benchmark SMA seeded with current price: ${trade.Price:N2} (x{settings.SMALength})");
+        }
+    }
+    catch (Exception ex)
+    {
+        LogError($"  Failed to seed benchmark SMA: {ex.Message}");
+    }
+    
+    // Seed BTC SMA if WatchBtc is enabled or UseBtcEarlyTrading
+    if (settings.WatchBtc || settings.UseBtcEarlyTrading)
+    {
+        try
+        {
+            var cryptoBarsRequest = new HistoricalCryptoBarsRequest(
+                settings.CryptoBenchmarkSymbol,
+                startTimeUtc,
+                endTimeUtc,
+                BarTimeFrame.Minute
+            );
+            var cryptoBarsResponse = await cryptoDataClient.ListHistoricalBarsAsync(cryptoBarsRequest);
+            var btcBars = cryptoBarsResponse.Items.TakeLast(settings.SMALength).ToList();
+            
+            if (btcBars.Count > 0)
+            {
+                foreach (var bar in btcBars)
+                {
+                    btcSma.Add(bar.Close);
+                }
+                Log($"  ✓ BTC SMA seeded with {btcBars.Count} historical bars");
+            }
+            else
+            {
+                // Fallback
+                var latestTrades = await cryptoDataClient.ListLatestTradesAsync(new LatestDataListRequest([settings.CryptoBenchmarkSymbol]));
+                var btcPrice = latestTrades[settings.CryptoBenchmarkSymbol].Price;
+                for (int i = 0; i < settings.SMALength; i++)
+                {
+                    btcSma.Add(btcPrice);
+                }
+                Log($"  ✓ BTC SMA seeded with current price: ${btcPrice:N2} (x{settings.SMALength})");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogError($"  Failed to seed BTC SMA: {ex.Message}");
+        }
+    }
+}
+
 // Execution Logic: Enter Position
 async Task EnsurePositionAsync(
     string targetSymbol, 
@@ -2327,32 +2863,99 @@ async Task<bool> LiquidatePositionAsync(
     }
     
     // Liquidate using market, limit, or IOC sell order
-    var orderTypeStr = useIoc ? $"IOC LIMIT @ ${limitPrice:N2}" : (useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET");
+    var orderTypeStr = useIoc ? $"IOC LIMIT @ ${limitPrice:N2} (Machine-Gun)" : (useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET");
     Log($"[SELL] Liquidating {shareCount} shares of {symbol} @ ~${quotePrice:N2} ({orderTypeStr})");
     Log($"       Expected proceeds: ${estimatedProceeds:N2}");
     
+    // =========================================================================
+    // IOC MACHINE-GUN FAST PATH FOR SELLS
+    // =========================================================================
+    if (useIoc)
+    {
+        var (filledQty, avgPrice, totalProceeds) = await ExecuteIocMachineGunAsync(
+            symbol,
+            shareCount,
+            OrderSide.Sell,
+            limitPrice,
+            settings.IocRetryStepCents,
+            settings.IocMaxRetries,
+            settings.IocMaxDeviationPercent,
+            settings,
+            tradingClient);
+        
+        if (filledQty > 0)
+        {
+            // Success - update state with actual fill
+            var iocProceeds = totalProceeds;
+            var slippage = iocProceeds - estimatedProceeds;
+            
+            tradingState.AvailableCash = iocProceeds + tradingState.AccumulatedLeftover;
+            
+            // If we sold everything
+            if (filledQty >= shareCount)
+            {
+                tradingState.CurrentPosition = null;
+                tradingState.CurrentShares = 0;
+                SaveTradingState(stateFilePath, tradingState);
+                
+                var slipLabel = slippage >= 0 ? "favorable" : "unfavorable";
+                LogSuccess($"[FILL] IOC Sell complete: {filledQty} @ ${avgPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
+                
+                // Track slippage if monitoring enabled
+                if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
+                {
+                    var tradeSlippage = (avgPrice - quotePrice) * filledQty;
+                    lock (slippageLock)
+                    {
+                        updateSlippage(tradeSlippage);
+                    }
+                    
+                    if (slippageLogFile != null)
+                    {
+                        var favor = Math.Sign(tradeSlippage);
+                        var csvLine = $"{DateTime.UtcNow:s},{symbol},Sell,{filledQty},{quotePrice:F4},{avgPrice:F4},{tradeSlippage:F2},{favor}";
+                        _ = File.AppendAllTextAsync(slippageLogFile, csvLine + Environment.NewLine);
+                    }
+                }
+                
+                // Display balance and P/L
+                var iocTotalBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
+                var iocProfitLoss = iocTotalBalance - tradingState.StartingAmount;
+                LogBalanceWithPL(iocTotalBalance, iocProfitLoss);
+                
+                return true;
+            }
+            else
+            {
+                // Partial fill - still have shares
+                var remainingShares = shareCount - filledQty;
+                tradingState.CurrentShares = remainingShares;
+                SaveTradingState(stateFilePath, tradingState);
+                
+                LogWarning($"[FILL] IOC Sell partial: {filledQty}/{shareCount} @ ${avgPrice:N4}. {remainingShares} shares remaining.");
+                return false; // Partial liquidation
+            }
+        }
+        else
+        {
+            // IOC failed completely - nothing sold
+            LogError($"[FILL] IOC Sell failed after {settings.IocMaxRetries} attempts. Falling back to market order...");
+            // Fall through to standard order path with market order
+            useIoc = false;
+            useLimit = false;
+        }
+    }
+    
+    // =========================================================================
+    // STANDARD ORDER PATH (Limit or Market orders)
+    // =========================================================================
     Guid? sellOrderId = null;
     
     try
     {
         NewOrderRequest sellOrder;
         
-        if (useIoc)
-        {
-            // IOC (Immediate-Or-Cancel) - fills instantly or cancels
-            sellOrder = new NewOrderRequest(
-                symbol,
-                OrderQuantity.FromInt64(shareCount),
-                OrderSide.Sell,
-                OrderType.Limit,
-                TimeInForce.Ioc
-            )
-            {
-                ClientOrderId = settings.GenerateClientOrderId(),
-                LimitPrice = limitPrice
-            };
-        }
-        else if (useLimit)
+        if (useLimit)
         {
             sellOrder = new NewOrderRequest(
                 symbol,
@@ -2418,9 +3021,9 @@ async Task<bool> LiquidatePositionAsync(
     bool chaserTriggered = false;
     long filledQtySoFar = 0;
     
-    // IOC orders resolve immediately - use shorter polling for faster response
-    var pollDelayMs = useIoc ? 100 : 500;
-    var maxIterations = useIoc ? 30 : 20; // IOC: 3s total, Limit: 10s total
+    // Standard limit/market orders - poll every 500ms
+    var pollDelayMs = 500;
+    var maxIterations = 20; // 10s total
     
     for (int i = 0; i < maxIterations; i++)
     {
@@ -2472,53 +3075,6 @@ async Task<bool> LiquidatePositionAsync(
                      filledOrder.OrderStatus == OrderStatus.Expired ||
                      filledOrder.OrderStatus == OrderStatus.Rejected)
             {
-                // For IOC orders, check if we got a partial fill
-                var partialQty = (long)filledOrder.FilledQuantity;
-                
-                if (useIoc && partialQty > 0 && filledOrder.AverageFillPrice.HasValue)
-                {
-                    // IOC partial fill on sell - sold some shares, need to keep the rest
-                    var soldPrice = filledOrder.AverageFillPrice.Value;
-                    var soldProceeds = partialQty * soldPrice;
-                    var remainingShares = shareCount - partialQty;
-                    
-                    LogWarning($"[FILL] IOC partial fill: Sold {partialQty}/{shareCount} @ ${soldPrice:N4}");
-                    Log($"    Remaining {remainingShares} shares still held. Force-selling with market order...");
-                    
-                    // Force-sell remaining shares with market order
-                    try
-                    {
-                        var forceOrder = new NewOrderRequest(
-                            symbol,
-                            OrderQuantity.FromInt64(remainingShares),
-                            OrderSide.Sell,
-                            OrderType.Market,
-                            TimeInForce.Day
-                        )
-                        {
-                            ClientOrderId = settings.GenerateClientOrderId()
-                        };
-                        
-                        var forceResult = await tradingClient.PostOrderAsync(forceOrder);
-                        sellOrderId = forceResult.OrderId;
-                        Log($"    Force-sell order submitted: {forceResult.OrderId}");
-                        
-                        // Update partial fill tracking
-                        filledQtySoFar = partialQty;
-                        actualProceeds = soldProceeds;
-                        continue; // Continue polling for the force-sell to complete
-                    }
-                    catch (Exception forceEx)
-                    {
-                        LogError($"    Force-sell failed: {forceEx.Message}");
-                        // Update state with partial results
-                        tradingState.AvailableCash = soldProceeds + tradingState.AccumulatedLeftover;
-                        tradingState.CurrentShares = remainingShares;
-                        SaveTradingState(stateFilePath, tradingState);
-                        return false; // Partial liquidation
-                    }
-                }
-                
                 // Order failed - don't update state, position still exists
                 LogError($"[FILL] Sell order {filledOrder.OrderStatus} - position still held");
                 return false;
@@ -2531,10 +3087,10 @@ async Task<bool> LiquidatePositionAsync(
                 filledQtySoFar = partialQty;
             }
             
-            // EXIT CHASER LOGIC: Limit order hasn't filled in time (not for IOC - handles itself)
+            // EXIT CHASER LOGIC: Limit order hasn't filled in time
             // SMART EXIT: Re-check signal before forcing market sell
             // This catches "V-shaped" reversals where price recovers during timeout
-            if (useLimit && !useIoc && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
+            if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
             {
                 chaserTriggered = true;
                 filledQtySoFar = (long)filledOrder.FilledQuantity;
@@ -2669,6 +3225,13 @@ async Task<bool> LiquidatePositionAsync(
     tradingState.AccumulatedLeftover = 0m; 
     tradingState.CurrentPosition = null;
     tradingState.CurrentShares = 0;
+    
+    // Clear trailing stop state on position exit
+    tradingState.HighWaterMark = null;
+    tradingState.LowWaterMark = null;
+    tradingState.TrailingStopValue = null;
+    // Note: Keep IsStoppedOut and related fields - they control the washout latch
+    
     SaveTradingState(stateFilePath, tradingState);
     
     // Display balance and P/L after sale
@@ -2677,6 +3240,134 @@ async Task<bool> LiquidatePositionAsync(
     LogBalanceWithPL(totalBalance, profitLoss);
     
     return true;
+}
+
+// ============================================================================
+// IOC MACHINE-GUN EXECUTION HELPER
+// ============================================================================
+// For true low-latency, IOC orders are fire-and-check synchronously.
+// If cancelled, immediately re-fire at adjusted price without polling delays.
+// Returns (filledQty, avgPrice, totalProceeds)
+async Task<(long FilledQty, decimal AvgPrice, decimal TotalProceeds)> ExecuteIocMachineGunAsync(
+    string symbol,
+    long targetQty,
+    OrderSide side,
+    decimal startPrice,
+    decimal priceStepCents,
+    int maxRetries,
+    decimal maxDeviationPercent,
+    TradingSettings settings,
+    IAlpacaTradingClient tradingClient)
+{
+    long totalFilled = 0;
+    decimal totalProceeds = 0m;
+    decimal currentPrice = startPrice;
+    var originalPrice = startPrice;
+    
+    for (int attempt = 0; attempt < maxRetries && totalFilled < targetQty; attempt++)
+    {
+        var remainingQty = targetQty - totalFilled;
+        
+        // Check price deviation limit
+        var deviation = Math.Abs((currentPrice - originalPrice) / originalPrice);
+        if (deviation > maxDeviationPercent)
+        {
+            LogWarning($"[IOC] Price deviation {deviation:P2} exceeds limit {maxDeviationPercent:P2}. Stopping retries.");
+            break;
+        }
+        
+        // Submit IOC order
+        var limitPrice = Math.Round(currentPrice, 2);
+        var orderRequest = new NewOrderRequest(
+            symbol,
+            OrderQuantity.FromInt64(remainingQty),
+            side,
+            OrderType.Limit,
+            TimeInForce.Ioc
+        )
+        {
+            ClientOrderId = settings.GenerateClientOrderId(),
+            LimitPrice = limitPrice
+        };
+        
+        try
+        {
+            var order = await tradingClient.PostOrderAsync(orderRequest);
+            
+            // OPTIMIZATION: Check PostOrderAsync response FIRST before GetOrderAsync
+            // IOC orders often resolve immediately - save an HTTP round trip if already terminal
+            IOrder filledOrder;
+            
+            if (order.OrderStatus == OrderStatus.Filled || 
+                order.OrderStatus == OrderStatus.Canceled ||
+                order.OrderStatus == OrderStatus.Expired)
+            {
+                // Order already resolved - use response directly (saves ~50% latency)
+                filledOrder = order;
+            }
+            else
+            {
+                // Order still pending - fetch updated status (rare for IOC)
+                filledOrder = await tradingClient.GetOrderAsync(order.OrderId);
+            }
+            
+            if (filledOrder.OrderStatus == OrderStatus.Filled || 
+                (filledOrder.FilledQuantity > 0 && filledOrder.AverageFillPrice.HasValue))
+            {
+                var filledQty = (long)filledOrder.FilledQuantity;
+                var avgPrice = filledOrder.AverageFillPrice ?? limitPrice;
+                totalFilled += filledQty;
+                totalProceeds += filledQty * avgPrice;
+                
+                if (filledOrder.OrderStatus == OrderStatus.Filled)
+                {
+                    Log($"[IOC] Attempt {attempt + 1}: FILLED {filledQty} @ ${avgPrice:N4}");
+                    break; // Fully filled
+                }
+                else
+                {
+                    // Partial fill - exhausted liquidity at this price, must chase up
+                    Log($"[IOC] Attempt {attempt + 1}: Partial {filledQty}/{remainingQty} @ ${avgPrice:N4}");
+                    if (side == OrderSide.Buy)
+                    {
+                        currentPrice += (priceStepCents / 100m); // Bid higher for remaining
+                    }
+                    else
+                    {
+                        currentPrice -= (priceStepCents / 100m); // Ask lower for remaining
+                    }
+                }
+            }
+            else if (filledOrder.OrderStatus == OrderStatus.Canceled ||
+                     filledOrder.OrderStatus == OrderStatus.Expired)
+            {
+                // No fill - adjust price and retry immediately
+                if (side == OrderSide.Buy)
+                {
+                    currentPrice += (priceStepCents / 100m); // Bid higher
+                }
+                else
+                {
+                    currentPrice -= (priceStepCents / 100m); // Ask lower
+                }
+                Log($"[IOC] Attempt {attempt + 1}: Cancelled. Retrying at ${currentPrice:N2}...");
+            }
+            else
+            {
+                // Pending or other status - shouldn't happen for IOC, but wait briefly
+                Log($"[IOC] Attempt {attempt + 1}: Status={filledOrder.OrderStatus}. Waiting...");
+                await Task.Delay(100);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogError($"[IOC] Attempt {attempt + 1} error: {ex.Message}");
+            await Task.Delay(100); // Brief pause before retry on error
+        }
+    }
+    
+    var avgFillPrice = totalFilled > 0 ? (totalProceeds / totalFilled) : 0m;
+    return (totalFilled, avgFillPrice, totalProceeds);
 }
 
 // Helper: Buy Position
@@ -2738,28 +3429,80 @@ async Task BuyPositionAsync(
 
     if (quantity > 0)
     {
-        var orderTypeStr = useIoc ? $"IOC LIMIT @ ${limitPrice:N2}" : (useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET");
+        var orderTypeStr = useIoc ? $"IOC LIMIT @ ${limitPrice:N2} (Machine-Gun)" : (useLimit ? $"LIMIT @ ${limitPrice:N2}" : "MARKET");
         Log($"[BUY] {symbol} x {quantity} @ ~${basePrice:N2} ({orderTypeStr})");
         
-        NewOrderRequest orderRequest;
-        
+        // =====================================================================
+        // IOC MACHINE-GUN FAST PATH
+        // For IOC orders, use synchronous retry logic without polling delays
+        // =====================================================================
         if (useIoc)
         {
-            // IOC (Immediate-Or-Cancel) Limit Order - "Sniper Mode"
-            // Fills instantly against available liquidity or cancels completely
-            orderRequest = new NewOrderRequest(
+            var (filledQty, avgPrice, totalProceeds) = await ExecuteIocMachineGunAsync(
                 symbol,
-                OrderQuantity.FromInt64(quantity),
+                quantity,
                 OrderSide.Buy,
-                OrderType.Limit,
-                TimeInForce.Ioc
-            )
+                limitPrice,
+                settings.IocRetryStepCents,
+                settings.IocMaxRetries,
+                settings.IocMaxDeviationPercent,
+                settings,
+                tradingClient);
+            
+            if (filledQty > 0)
             {
-                ClientOrderId = settings.GenerateClientOrderId(),
-                LimitPrice = limitPrice
-            };
+                // Success - update state with actual fill
+                var actualCost = totalProceeds;
+                var actualLeftover = availableForPurchase - actualCost;
+                var slippage = actualCost - (filledQty * basePrice);
+                
+                tradingState.AvailableCash = 0m;
+                tradingState.AccumulatedLeftover = actualLeftover;
+                tradingState.CurrentPosition = symbol;
+                tradingState.CurrentShares = filledQty;
+                tradingState.LastTradeTimestamp = DateTime.UtcNow.ToString("o");
+                SaveTradingState(stateFilePath, tradingState);
+                
+                var slipLabel = slippage >= 0 ? "unfavorable" : "favorable";
+                LogSuccess($"[FILL] IOC Buy complete: {filledQty} @ ${avgPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
+                
+                // Track slippage if monitoring enabled
+                if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
+                {
+                    var tradeSlippage = (basePrice - avgPrice) * filledQty;
+                    lock (slippageLock)
+                    {
+                        updateSlippage(tradeSlippage);
+                    }
+                    
+                    if (slippageLogFile != null)
+                    {
+                        var favor = Math.Sign(tradeSlippage);
+                        var csvLine = $"{DateTime.UtcNow:s},{symbol},Buy,{filledQty},{basePrice:F4},{avgPrice:F4},{tradeSlippage:F2},{favor}";
+                        _ = File.AppendAllTextAsync(slippageLogFile, csvLine + Environment.NewLine);
+                    }
+                }
+            }
+            else
+            {
+                // IOC failed completely - rollback state
+                LogWarning($"[FILL] IOC Buy failed after {settings.IocMaxRetries} attempts. Price moved too fast.");
+                tradingState.AvailableCash = availableForPurchase;
+                tradingState.AccumulatedLeftover = 0m;
+                tradingState.CurrentPosition = null;
+                tradingState.CurrentShares = 0;
+                SaveTradingState(stateFilePath, tradingState);
+            }
+            
+            return; // Exit - IOC path complete
         }
-        else if (useLimit)
+        
+        // =====================================================================
+        // STANDARD ORDER PATH (Limit or Market orders)
+        // =====================================================================
+        NewOrderRequest orderRequest;
+        
+        if (useLimit)
         {
             orderRequest = new NewOrderRequest(
                 symbol,
@@ -2806,7 +3549,6 @@ async Task BuyPositionAsync(
         var quotePrice = basePrice; // Capture quote price for slippage calculation
         var preBuyCash = availableForPurchase; // Capture for rollback
         var chaserTimeoutMs = 5000; // 5 second timeout for limit orders before chaser kicks in
-        var isIocOrder = useIoc; // Capture IOC mode for closure
         
         _ = Task.Run(async () =>
         {
@@ -2817,9 +3559,9 @@ async Task BuyPositionAsync(
                 decimal totalFillCost = 0m;
                 bool chaserTriggered = false;
                 
-                // IOC orders resolve immediately - use shorter polling for faster response
-                var pollDelayMs = isIocOrder ? 100 : 500;
-                var maxIterations = isIocOrder ? 30 : 20; // IOC: 3s total, Limit: 10s total
+                // Standard limit orders - poll every 500ms
+                var pollDelayMs = 500;
+                var maxIterations = 20; // 10s total
                 
                 for (int i = 0; i < maxIterations; i++)
                 {
@@ -2868,24 +3610,7 @@ async Task BuyPositionAsync(
                              filledOrder.OrderStatus == OrderStatus.Expired ||
                              filledOrder.OrderStatus == OrderStatus.Rejected)
                     {
-                        // For IOC orders, check if we got a partial fill
-                        var partialQty = (long)filledOrder.FilledQuantity;
-                        
-                        if (isIocOrder && partialQty > 0 && filledOrder.AverageFillPrice.HasValue)
-                        {
-                            // IOC partial fill - keep what we got
-                            var actualPrice = filledOrder.AverageFillPrice.Value;
-                            var actualCost = partialQty * actualPrice;
-                            
-                            tradingState.CurrentShares = partialQty;
-                            tradingState.AccumulatedLeftover = preBuyCash - actualCost;
-                            SaveTradingState(stateFilePath, tradingState);
-                            
-                            LogWarning($"[FILL] IOC partial fill: {partialQty}/{quantity} @ ${actualPrice:N4}");
-                            Log($"    Unfilled {quantity - partialQty} shares cancelled. Remaining cash: ${tradingState.AccumulatedLeftover:N2}");
-                            return;
-                        }
-                        
+                        // Order cancelled/rejected - rollback state
                         LogError($"[FILL] Buy order {filledOrder.OrderStatus} - rolling back state");
                         tradingState.AvailableCash = preBuyCash;
                         tradingState.AccumulatedLeftover = 0m;
@@ -2895,9 +3620,9 @@ async Task BuyPositionAsync(
                         LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
                         return;
                     }
-                    else if (useLimit && !isIocOrder && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
+                    else if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
                     {
-                        // SMART CHASER LOGIC FOR ENTRIES (not used for IOC - IOC handles itself)
+                        // SMART CHASER LOGIC FOR ENTRIES
                         // Priority: VALUE / SIGNAL VALIDITY
                         // If price runs away, don't blindly chase - re-evaluate first
                         chaserTriggered = true;
@@ -3191,6 +3916,9 @@ class TradingSettings
     public bool LowLatencyMode { get; set; } = false;     // Enable channel-based reactive pipeline
     public bool UseIocOrders { get; set; } = false;       // Use IOC limit orders ("sniper mode")
     public decimal IocLimitOffsetCents { get; set; } = 1m; // Offset above ask (buy) or below bid (sell)
+    public int IocMaxRetries { get; set; } = 5;           // Max retries before fallback to market order
+    public decimal IocRetryStepCents { get; set; } = 1m;  // Price step per retry (cents)
+    public decimal IocMaxDeviationPercent { get; set; } = 0.005m; // Max price chase before stopping (0.5%)
     public int KeepAlivePingSeconds { get; set; } = 5;    // HTTP connection keep-alive ping interval
     public int WarmUpIterations { get; set; } = 10000;    // JIT warm-up iterations before market open
     
@@ -3199,27 +3927,6 @@ class TradingSettings
     
     // Generate a client order ID with bot prefix for order tracking
     public string GenerateClientOrderId() => $"qqqBot-{BotId}-{Guid.NewGuid():N}";
-}
-
-class TradingState
-{
-    public decimal AvailableCash { get; set; }
-    public decimal AccumulatedLeftover { get; set; }
-    public bool IsInitialized { get; set; }
-    public string? LastTradeTimestamp { get; set; }
-    public string? CurrentPosition { get; set; }
-    public long CurrentShares { get; set; }
-    public decimal StartingAmount { get; set; } // Track original amount for P/L calculation
-    public decimal DayStartBalance { get; set; } // Balance at start of trading day (for daily P/L)
-    public string? DayStartDate { get; set; } // Date when DayStartBalance was recorded (yyyy-MM-dd)
-    public TradingStateMetadata? Metadata { get; set; } // Track symbols used during session
-}
-
-class TradingStateMetadata
-{
-    public string? SymbolBull { get; set; }
-    public string? SymbolBear { get; set; }
-    public string? SymbolIndex { get; set; }
 }
 
 class CommandLineOverrides
@@ -3330,41 +4037,6 @@ class IncrementalSma
         {
             Add(price);
         }
-    }
-}
-
-/// <summary>
-/// Pre-allocated order request wrapper to avoid GC allocations during hot path.
-/// Reuse this struct instead of creating new NewOrderRequest objects.
-/// </summary>
-struct PreallocatedOrder
-{
-    public string Symbol;
-    public long Quantity;
-    public OrderSide Side;
-    public OrderType Type;
-    public TimeInForce TimeInForce;
-    public decimal? LimitPrice;
-    
-    public NewOrderRequest ToOrderRequest(string clientOrderId)
-    {
-        var req = new NewOrderRequest(
-            Symbol,
-            OrderQuantity.FromInt64(Quantity),
-            Side,
-            Type,
-            TimeInForce
-        )
-        {
-            ClientOrderId = clientOrderId
-        };
-        
-        if (LimitPrice.HasValue && Type == OrderType.Limit)
-        {
-            req.LimitPrice = LimitPrice.Value;
-        }
-        
-        return req;
     }
 }
 

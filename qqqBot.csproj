@@ -8,6 +8,11 @@
     <UserSecretsId>qqqbot-alpaca-trading</UserSecretsId>
   </PropertyGroup>
 
+  <!-- Exclude test project folder from main project compilation -->
+  <ItemGroup>
+    <Compile Remove="qqqBot.Tests\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Alpaca.Markets" Version="7.*" />
     <PackageReference Include="CsvHelper" Version="33.1.0" />
