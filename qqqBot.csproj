@@ -6,7 +6,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UserSecretsId>qqqbot-alpaca-trading</UserSecretsId>
+
+    <TieredPGO>true</TieredPGO>
+    <ReadyToRun>true</ReadyToRun>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+    <ServerGarbageCollection>true</ServerGarbageCollection>    
   </PropertyGroup>
+
+  <!-- Exclude test and library project folders from main project compilation -->
+  <ItemGroup>
+    <Compile Remove="qqqBot.Tests\**" />
+    <Compile Remove="MarketBlocks\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Alpaca.Markets" Version="7.*" />
@@ -23,6 +34,10 @@
     <None Update="trading_state.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="MarketBlocks\MarketBlocks.csproj" />
   </ItemGroup>
 
 </Project>
