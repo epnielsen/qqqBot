@@ -6,7 +6,7 @@ using Alpaca.Markets;
 using MarketBlocks.Core.Domain;
 using MarketBlocks.Infrastructure.Alpaca;
 
-namespace qqqBot.Tests.Infrastructure;
+namespace MarketBlocks.Tests.Infrastructure;
 
 /// <summary>
 /// Tests for AlpacaExecutionAdapter - verifies correct mapping and optimization paths.
