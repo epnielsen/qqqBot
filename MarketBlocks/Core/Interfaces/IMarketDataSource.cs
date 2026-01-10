@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 
-namespace qqqBot.Core.Interfaces;
+namespace MarketBlocks.Core.Interfaces;
 
 /// <summary>
 /// Broker-agnostic interface for real-time market data.

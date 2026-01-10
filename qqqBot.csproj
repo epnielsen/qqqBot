@@ -13,9 +13,10 @@
     <ServerGarbageCollection>true</ServerGarbageCollection>    
   </PropertyGroup>
 
-  <!-- Exclude test project folder from main project compilation -->
+  <!-- Exclude test and library project folders from main project compilation -->
   <ItemGroup>
     <Compile Remove="qqqBot.Tests\**" />
+    <Compile Remove="MarketBlocks\**" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +34,10 @@
     <None Update="trading_state.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="MarketBlocks\MarketBlocks.csproj" />
   </ItemGroup>
 
 </Project>

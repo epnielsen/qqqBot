@@ -1,4 +1,4 @@
-namespace qqqBot.Core.Domain;
+namespace MarketBlocks.Core.Domain;
 
 /// <summary>
 /// Trade price message for the high-performance channel pipeline.

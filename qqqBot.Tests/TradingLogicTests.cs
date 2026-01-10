@@ -4,8 +4,9 @@ using Xunit;
 using Moq;
 using Alpaca.Markets;
 using qqqBot;
-using qqqBot.Core.Domain;
-using qqqBot.Core.Interfaces;
+using MarketBlocks.Core.Domain;
+using MarketBlocks.Core.Interfaces;
+using MarketBlocks.Components;
 
 namespace qqqBot.Tests;
 

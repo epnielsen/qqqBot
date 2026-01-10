@@ -1,5 +1,5 @@
 using Xunit;
-using qqqBot.Core.Math;
+using MarketBlocks.Core.Math;
 
 namespace qqqBot.Tests.Core;
 

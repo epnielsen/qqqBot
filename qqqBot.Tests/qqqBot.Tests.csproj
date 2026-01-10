@@ -20,12 +20,13 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
-  <!-- Include source files from main project for testing without assembly conflicts -->
+  <!-- Include TrailingStopEngine from main project for testing -->
   <ItemGroup>
     <Compile Include="..\TrailingStopEngine.cs" Link="TrailingStopEngine.cs" />
-    <Compile Include="..\IocMachineGunExecutor.cs" Link="IocMachineGunExecutor.cs" />
-    <Compile Include="..\Core\**\*.cs" Link="Core\%(RecursiveDir)%(FileName)%(Extension)" />
-    <Compile Include="..\Infrastructure\**\*.cs" Link="Infrastructure\%(RecursiveDir)%(FileName)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MarketBlocks\MarketBlocks.csproj" />
   </ItemGroup>
 
 </Project>

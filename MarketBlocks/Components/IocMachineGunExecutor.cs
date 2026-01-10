@@ -1,9 +1,9 @@
 using System;
 using System.Threading.Tasks;
-using qqqBot.Core.Domain;
-using qqqBot.Core.Interfaces;
+using MarketBlocks.Core.Domain;
+using MarketBlocks.Core.Interfaces;
 
-namespace qqqBot;
+namespace MarketBlocks.Components;
 
 /// <summary>
 /// Result of IOC machine-gun execution.

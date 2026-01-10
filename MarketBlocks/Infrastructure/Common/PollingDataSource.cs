@@ -1,8 +1,8 @@
 using System.Threading.Channels;
-using qqqBot.Core.Domain;
-using qqqBot.Core.Interfaces;
+using MarketBlocks.Core.Domain;
+using MarketBlocks.Core.Interfaces;
 
-namespace qqqBot.Infrastructure.Common;
+namespace MarketBlocks.Infrastructure.Common;
 
 /// <summary>
 /// Polling-based implementation of IMarketDataSource.

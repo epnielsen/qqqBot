@@ -1,9 +1,9 @@
 using System.Threading.Channels;
 using Alpaca.Markets;
-using qqqBot.Core.Domain;
-using qqqBot.Core.Interfaces;
+using MarketBlocks.Core.Domain;
+using MarketBlocks.Core.Interfaces;
 
-namespace qqqBot.Infrastructure.Alpaca;
+namespace MarketBlocks.Infrastructure.Alpaca;
 
 /// <summary>
 /// Alpaca Markets implementation of IMarketDataSource.

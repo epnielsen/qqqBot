@@ -1,4 +1,4 @@
-namespace qqqBot.Core.Math;
+namespace MarketBlocks.Core.Math;
 
 /// <summary>
 /// O(1) complexity Simple Moving Average calculator using a circular buffer.

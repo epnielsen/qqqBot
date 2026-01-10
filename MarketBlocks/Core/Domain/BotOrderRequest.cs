@@ -1,4 +1,4 @@
-namespace qqqBot.Core.Domain;
+namespace MarketBlocks.Core.Domain;
 
 /// <summary>
 /// Broker-agnostic order request.

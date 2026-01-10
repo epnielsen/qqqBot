@@ -1,6 +1,6 @@
-using qqqBot.Core.Domain;
+using MarketBlocks.Core.Domain;
 
-namespace qqqBot.Core.Interfaces;
+namespace MarketBlocks.Core.Interfaces;
 
 /// <summary>
 /// Broker-agnostic interface for order execution.

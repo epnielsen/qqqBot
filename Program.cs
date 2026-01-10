@@ -6,11 +6,12 @@ using Alpaca.Markets;
 using CsvHelper;
 using Microsoft.Extensions.Configuration;
 using qqqBot;
-using qqqBot.Core.Domain;
-using qqqBot.Core.Interfaces;
-using qqqBot.Core.Math;
-using qqqBot.Infrastructure.Alpaca;
-using qqqBot.Infrastructure.Common;
+using MarketBlocks.Core.Domain;
+using MarketBlocks.Core.Interfaces;
+using MarketBlocks.Core.Math;
+using MarketBlocks.Infrastructure.Alpaca;
+using MarketBlocks.Infrastructure.Common;
+using MarketBlocks.Components;
 
 // ============================================================================
 // QQQ Trading Bot - .NET 10 Alpaca Paper Trading Bot

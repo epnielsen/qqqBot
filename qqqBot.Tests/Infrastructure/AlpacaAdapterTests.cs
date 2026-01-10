@@ -3,8 +3,8 @@ using System.Threading.Tasks;
 using Xunit;
 using Moq;
 using Alpaca.Markets;
-using qqqBot.Core.Domain;
-using qqqBot.Infrastructure.Alpaca;
+using MarketBlocks.Core.Domain;
+using MarketBlocks.Infrastructure.Alpaca;
 
 namespace qqqBot.Tests.Infrastructure;
 
