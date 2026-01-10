@@ -1,7 +1,7 @@
 using Xunit;
 using MarketBlocks.Core.Math;
 
-namespace qqqBot.Tests.Core;
+namespace MarketBlocks.Tests.Core;
 
 public class SmaTests
 {
