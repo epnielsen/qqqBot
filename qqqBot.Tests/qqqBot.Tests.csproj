@@ -23,7 +23,9 @@
 
   <!-- Include TrailingStopEngine from main project for testing -->
   <ItemGroup>
-    <Compile Include="..\TrailingStopEngine.cs" Link="TrailingStopEngine.cs" />
+    <Compile Include="..\qqqBot\TrailingStopEngine.cs" Link="TrailingStopEngine.cs" />
+    <Compile Include="..\qqqBot\TradingState.cs" Link="TradingState.cs" />
+    <Compile Include="..\qqqBot\TradingStateMetadata.cs" Link="TradingStateMetadata.cs" />
   </ItemGroup>
 
 </Project>
