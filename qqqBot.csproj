@@ -6,6 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UserSecretsId>qqqbot-alpaca-trading</UserSecretsId>
+
+    <TieredPGO>true</TieredPGO>
+    <ReadyToRun>true</ReadyToRun>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+    <ServerGarbageCollection>true</ServerGarbageCollection>    
   </PropertyGroup>
 
   <!-- Exclude test project folder from main project compilation -->
