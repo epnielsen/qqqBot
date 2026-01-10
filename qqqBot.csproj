@@ -16,15 +16,15 @@
   <!-- Exclude test and library project folders from main project compilation -->
   <ItemGroup>
     <Compile Remove="qqqBot.Tests\**" />
-    <Compile Remove="MarketBlocks\**" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Alpaca.Markets" Version="7.*" />
     <PackageReference Include="CsvHelper" Version="33.1.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.*" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.*" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="9.*" />
+    <PackageReference Include="MarketBlocks" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,10 +34,6 @@
     <None Update="trading_state.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="MarketBlocks\MarketBlocks.csproj" />
   </ItemGroup>
 
 </Project>
