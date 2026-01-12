@@ -13,6 +13,8 @@ class TradingSettings
     public int SMAWindowSeconds { get; set; } = 60; // Total time window for rolling average
     public decimal ChopThresholdPercent { get; set; } = 0.0015m;
     public decimal MinChopAbsolute { get; set; } = 0.02m; // Absolute floor for hysteresis (tick-aware)
+    public bool SlidingBand { get; set; } = false; // When true, band slides based on position high/low
+    public decimal SlidingBandFactor { get; set; } = 0.5m; // Exit threshold: BULL exits at (high - width*factor), BEAR exits at (low + width*factor)
     public int NeutralWaitSeconds { get; set; } = 30;
     public decimal StartingAmount { get; set; } = 10000m;
     public bool BullOnlyMode { get; set; } = false;

@@ -613,6 +613,8 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         SMAWindowSeconds = configuration.GetValue("TradingBot:SMAWindowSeconds", 60),
         ChopThresholdPercent = configuration.GetValue("TradingBot:ChopThresholdPercent", 0.0015m),
         MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
+        SlidingBand = configuration.GetValue("TradingBot:SlidingBand", false),
+        SlidingBandFactor = configuration.GetValue("TradingBot:SlidingBandFactor", 0.5m),
         NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
         WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
         MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
@@ -649,6 +651,8 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         SMAWindowSeconds = configSettings.SMAWindowSeconds,
         ChopThresholdPercent = configSettings.ChopThresholdPercent,
         MinChopAbsolute = cmdOverrides.MinChopAbsoluteOverride ?? configSettings.MinChopAbsolute,
+        SlidingBand = configSettings.SlidingBand,
+        SlidingBandFactor = configSettings.SlidingBandFactor,
         NeutralWaitSeconds = cmdOverrides.NeutralWaitSecondsOverride ?? configSettings.NeutralWaitSeconds,
         StartingAmount = configSettings.StartingAmount,
         BullOnlyMode = cmdOverrides.BullOnlyMode,
@@ -702,11 +706,27 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         Log($"[MODE] Standard Polling enabled ({settings.PollingIntervalSeconds}s interval)");
     }
     
-    // IocMachineGunExecutor for IOC order execution
+    // Track average ping for dynamic IOC poll delay (2x avg ping)
+    const int PingSampleCount = 10;
+    var _pingSamples = new Queue<long>(PingSampleCount);
+    var _pingSamplesLock = new object();
+    long _avgPingMs = IocMachineGunExecutor.DefaultPollDelayMs; // Start with default
+    
+    int GetIocPollDelayMs()
+    {
+        lock (_pingSamplesLock)
+        {
+            // Return 2x average ping, with floor of default and ceiling of 200ms
+            return (int)Math.Clamp(_avgPingMs * 2, IocMachineGunExecutor.DefaultPollDelayMs, 200);
+        }
+    }
+    
+    // IocMachineGunExecutor for IOC order execution (uses 2x avg ping for poll delay)
     var iocExecutor = new IocMachineGunExecutor(
         broker,
         () => settings.GenerateClientOrderId(),
-        msg => Log(msg));
+        msg => Log(msg),
+        GetIocPollDelayMs);
     
     // Slippage monitoring state (thread-safe)
     var slippageLock = new object();
@@ -762,6 +782,12 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     // Load or initialize trading state
     var stateFilePath = Path.Combine(AppContext.BaseDirectory, "trading_state.json");
     var tradingState = LoadTradingState(stateFilePath);
+    
+    // Clear trailing stop state on restart - it should be recalculated fresh
+    // This prevents stale stop levels from triggering unexpected exits
+    tradingState.HighWaterMark = null;
+    tradingState.LowWaterMark = null;
+    tradingState.TrailingStopValue = null;
     
     // Check for symbol mismatch between saved state and current settings
     if (tradingState.Metadata != null)
@@ -855,7 +881,15 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     Log($"  SMA Window: {settings.SMAWindowSeconds}s | Heartbeat: {settings.PollingIntervalSeconds}s | Queue Size: {settings.SMALength}");
     Log($"  Chop Threshold: {settings.ChopThresholdPercent * 100:N3}%");
     Log($"  Min Chop Absolute: ${settings.MinChopAbsolute:N4}");
-    Log($"  Neutral Wait: {settings.NeutralWaitSeconds}s");
+    if (settings.SlidingBand)
+    {
+        Log($"  Sliding Band: Enabled (factor: {settings.SlidingBandFactor:N2})");
+    }
+    else
+    {
+        Log($"  Sliding Band: Disabled");
+    }
+    Log($"  Neutral Wait: {(settings.NeutralWaitSeconds < 0 ? "Hold-Through (no liquidate)" : $"{settings.NeutralWaitSeconds}s")}");
     Log($"  BTC Correlation (Neutral Nudge): {(settings.WatchBtc ? "Enabled" : "Disabled")}");
     Log($"  Starting Amount: ${tradingState.StartingAmount:N2}");
     Log($"  Current Available Cash: ${tradingState.AvailableCash:N2}");
@@ -1077,10 +1111,19 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     await tradingClient.GetClockAsync();
                     sw.Stop();
                     
+                    // Track rolling average ping for IOC poll delay
+                    lock (_pingSamplesLock)
+                    {
+                        if (_pingSamples.Count >= PingSampleCount)
+                            _pingSamples.Dequeue();
+                        _pingSamples.Enqueue(sw.ElapsedMilliseconds);
+                        _avgPingMs = (long)_pingSamples.Average();
+                    }
+                    
                     // Only log if latency is concerning (>50ms)
                     if (sw.ElapsedMilliseconds > 50)
                     {
-                        Log($"[KEEP-ALIVE] Ping: {sw.ElapsedMilliseconds}ms (elevated)");
+                        Log($"[KEEP-ALIVE] Ping: {sw.ElapsedMilliseconds}ms (elevated, avg: {_avgPingMs}ms)");
                     }
                 }
                 catch (OperationCanceledException)
@@ -1167,6 +1210,11 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             ? null 
             : DateTime.TryParse(tradingState.StopoutTimestamp, out var ts) ? ts : (DateTime?)null;
         
+        // Sliding band: Track benchmark high (for BULL) and low (for BEAR)
+        // These reset when position changes
+        decimal pipelineSlidingBandHigh = 0m;
+        decimal pipelineSlidingBandLow = 0m;
+        
         // Log restored state if any
         if (pipelineHwm > 0 || pipelineLwm > 0)
         {
@@ -1219,6 +1267,10 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                         pipelineLastDayStr = todayDateStr;
                         SaveTradingState(stateFilePath, tradingState);
                         Log($"New trading day detected. Day start balance: ${currentBalance:N2}");
+                        
+                        // Reset sliding band highs/lows for new trading day
+                        pipelineSlidingBandHigh = 0m;
+                        pipelineSlidingBandLow = 0m;
                     }
                     
                     // For early trading, only process BTC ticks; otherwise only benchmark ticks
@@ -1249,10 +1301,67 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     }
                     
                     // Calculate Hysteresis Bands
+                    // Standard: band center = SMA, bands = [SMA - width, SMA + width]
+                    // When SlidingBand is enabled with factor (0 < factor < 1):
+                    // - In BULL: track benchmark high, exit when price < (high - width * factor)
+                    // - In BEAR: track benchmark low, exit when price > (low + width * factor)
+                    // - In Neutral/Cash: standard SMA-based bands
+                    
+                    // First calculate standard width based on SMA
                     decimal percentageWidth = currentSma * settings.ChopThresholdPercent;
                     decimal effectiveWidth = Math.Max(percentageWidth, settings.MinChopAbsolute);
-                    var upperBand = currentSma + effectiveWidth;
-                    var lowerBand = currentSma - effectiveWidth;
+                    
+                    decimal upperBand;
+                    decimal lowerBand;
+                    decimal bandCenter; // For logging
+                    
+                    if (settings.SlidingBand && tick.IsBenchmark)
+                    {
+                        bool inBull = tradingState.CurrentPosition == settings.BullSymbol && tradingState.CurrentShares > 0;
+                        bool inBear = tradingState.CurrentPosition == settings.BearSymbol && tradingState.CurrentShares > 0;
+                        
+                        if (inBull)
+                        {
+                            // Track benchmark high - band slides up with price
+                            if (currentPrice > pipelineSlidingBandHigh || pipelineSlidingBandHigh == 0m)
+                            {
+                                pipelineSlidingBandHigh = currentPrice;
+                            }
+                            // BULL exits when price falls below (high - width * factor)
+                            // Upper band is high + width*factor (needs to exceed to get stronger BULL)
+                            bandCenter = pipelineSlidingBandHigh;
+                            upperBand = pipelineSlidingBandHigh + (effectiveWidth * settings.SlidingBandFactor);
+                            lowerBand = pipelineSlidingBandHigh - (effectiveWidth * settings.SlidingBandFactor);
+                        }
+                        else if (inBear)
+                        {
+                            // Track benchmark low - band slides down with price
+                            if (currentPrice < pipelineSlidingBandLow || pipelineSlidingBandLow == 0m)
+                            {
+                                pipelineSlidingBandLow = currentPrice;
+                            }
+                            // BEAR exits when price rises above (low + width * factor)
+                            bandCenter = pipelineSlidingBandLow;
+                            upperBand = pipelineSlidingBandLow + (effectiveWidth * settings.SlidingBandFactor);
+                            lowerBand = pipelineSlidingBandLow - (effectiveWidth * settings.SlidingBandFactor);
+                        }
+                        else
+                        {
+                            // Neutral/cash - use standard SMA bands, reset sliding values
+                            bandCenter = currentSma;
+                            upperBand = currentSma + effectiveWidth;
+                            lowerBand = currentSma - effectiveWidth;
+                            pipelineSlidingBandHigh = 0m;
+                            pipelineSlidingBandLow = 0m;
+                        }
+                    }
+                    else
+                    {
+                        // Standard behavior
+                        bandCenter = currentSma;
+                        upperBand = currentSma + effectiveWidth;
+                        lowerBand = currentSma - effectiveWidth;
+                    }
                     
                     // Determine signal
                     string signal;
@@ -1474,20 +1583,29 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     }
                     else if (finalSignal == "NEUTRAL")
                     {
-                        if (pipelineNeutralDetectionTime == null)
+                        // NeutralWaitSeconds == -1 means "hold through neutral" - don't liquidate
+                        // The position will only change on BULL <-> BEAR flip (or EOD/shutdown)
+                        if (settings.NeutralWaitSeconds < 0)
                         {
-                            pipelineNeutralDetectionTime = DateTime.UtcNow;
+                            // Hold current position - do nothing
                         }
-                        
-                        var elapsed = (DateTime.UtcNow - pipelineNeutralDetectionTime.Value).TotalSeconds;
-                        if (elapsed >= settings.NeutralWaitSeconds)
+                        else
                         {
-                            // Only liquidate if we have a position
-                            if (tradingState.CurrentPosition != null && tradingState.CurrentShares > 0)
+                            if (pipelineNeutralDetectionTime == null)
                             {
-                                await EnsureNeutralAsync(tradingState, broker, iocExecutor, stateFilePath, settings, 
-                                    showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, 
-                                    slippageLogFile: _slippageLogFile, getSignalAtPrice: signalChecker);
+                                pipelineNeutralDetectionTime = DateTime.UtcNow;
+                            }
+                            
+                            var elapsed = (DateTime.UtcNow - pipelineNeutralDetectionTime.Value).TotalSeconds;
+                            if (elapsed >= settings.NeutralWaitSeconds)
+                            {
+                                // Only liquidate if we have a position
+                                if (tradingState.CurrentPosition != null && tradingState.CurrentShares > 0)
+                                {
+                                    await EnsureNeutralAsync(tradingState, broker, iocExecutor, stateFilePath, settings, 
+                                        showStatus: shouldLog, slippageLock: slippageLock, updateSlippage: slippageCallback, 
+                                        slippageLogFile: _slippageLogFile, getSignalAtPrice: signalChecker);
+                                }
                             }
                         }
                     }
@@ -1880,8 +1998,31 @@ async Task EnsurePositionAsync(
     
     if (oppositePosition is BotPosition oppPos && oppPos.Quantity > 0)
     {
-        LogError($"[SAFEGUARD] Opposite position {oppositeSymbol} still exists ({oppPos.Quantity} shares). Aborting buy to prevent dual holdings.");
-        return;
+        LogWarning($"[SAFEGUARD] Opposite position {oppositeSymbol} still exists ({oppPos.Quantity} shares). Syncing state and attempting liquidation...");
+        
+        // Sync local state from broker to fix mismatch
+        tradingState.CurrentPosition = oppositeSymbol;
+        tradingState.CurrentShares = oppPos.Quantity;
+        SaveTradingState(stateFilePath, tradingState);
+        
+        // Attempt to liquidate the orphaned position
+        var emergencyLiquidated = await LiquidatePositionAsync(oppositeSymbol!, oppositePosition, tradingState, broker, iocExecutor, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
+        
+        if (!emergencyLiquidated)
+        {
+            LogError($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} failed. Aborting buy to prevent dual holdings.");
+            return;
+        }
+        
+        // Verify liquidation succeeded
+        var verifyPos = await broker.GetPositionAsync(oppositeSymbol!);
+        if (verifyPos is BotPosition stillHeld && stillHeld.Quantity > 0)
+        {
+            LogError($"[SAFEGUARD] {oppositeSymbol} still has {stillHeld.Quantity} shares after emergency liquidation. Aborting.");
+            return;
+        }
+        
+        LogSuccess($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} successful. Proceeding with buy.");
     }
 
     // 3. Buy Target if not held
@@ -2033,7 +2174,11 @@ async Task<bool> LiquidatePositionAsync(
             var iocProceeds = result.TotalProceeds;
             var slippage = iocProceeds - estimatedProceeds;
             
-            tradingState.AvailableCash = iocProceeds + tradingState.AccumulatedLeftover;
+            // ACCUMULATE proceeds (don't overwrite) - handles partial fill retries correctly
+            // On first call: AvailableCash was 0, AccumulatedLeftover had the buy change
+            // On retry after partial: AvailableCash has previous proceeds, AccumulatedLeftover is 0
+            tradingState.AvailableCash += iocProceeds + tradingState.AccumulatedLeftover;
+            tradingState.AccumulatedLeftover = 0m; // Clear leftover - it's now part of AvailableCash
             
             // If we sold everything
             if (result.FilledQty >= shareCount)
@@ -2042,8 +2187,9 @@ async Task<bool> LiquidatePositionAsync(
                 tradingState.CurrentShares = 0;
                 SaveTradingState(stateFilePath, tradingState);
                 
-                var slipLabel = slippage >= 0 ? "favorable" : "unfavorable";
-                LogSuccess($"[FILL] IOC Sell complete: {result.FilledQty} @ ${result.AvgPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
+                var slipLabel = slippage > 0 ? "favorable" : (slippage < 0 ? "unfavorable" : "neutral");
+                var slipMessage = $"[FILL] IOC Sell complete: {result.FilledQty} @ ${result.AvgPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})";
+                if (slippage > 0) LogSuccess(slipMessage); else if (slippage < 0) LogRed(slipMessage); else LogBlue(slipMessage);
                 
                 // Track slippage if monitoring enabled
                 if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
@@ -2184,11 +2330,13 @@ async Task<bool> LiquidatePositionAsync(
                 if (Math.Abs(slippage) > 0.001m)
                 {
                     // For SELL: positive slippage = got more than expected = favorable
-                    var slipLabel = slippage >= 0 ? "favorable" : "unfavorable";
-                    Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
+                    var slipLabel = slippage > 0 ? "favorable" : "unfavorable";
+                    var slipMessage = $"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})";
+                    if (slippage > 0) LogSuccess(slipMessage); else LogRed(slipMessage);
                 }
                 else
                 {
+                    LogBlue($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4} (slippage: +0.00 neutral)");
                     Log($"[FILL] Sell confirmed: {actualQty} @ ${actualPrice:N4}");
                 }
                 
@@ -2467,8 +2615,9 @@ async Task BuyPositionAsync(
                 tradingState.LastTradeTimestamp = DateTime.UtcNow.ToString("o");
                 SaveTradingState(stateFilePath, tradingState);
                 
-                var slipLabel = slippage >= 0 ? "unfavorable" : "favorable";
-                LogSuccess($"[FILL] IOC Buy complete: {result.FilledQty} @ ${result.AvgPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
+                var slipLabel = slippage < 0 ? "favorable" : (slippage > 0 ? "unfavorable" : "neutral");
+                var slipMessage = $"[FILL] IOC Buy complete: {result.FilledQty} @ ${result.AvgPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})";
+                if (slippage < 0) LogSuccess(slipMessage); else if (slippage > 0) LogRed(slipMessage); else LogBlue(slipMessage);
                 
                 // Track slippage if monitoring enabled
                 if (settings.MonitorSlippage && slippageLock != null && updateSlippage != null)
@@ -2582,11 +2731,13 @@ async Task BuyPositionAsync(
                             tradingState.AccumulatedLeftover -= slippage;
                             tradingState.CurrentShares = actualQty;
                             SaveTradingState(stateFilePath, tradingState);
-                            var slipLabel = slippage <= 0 ? "favorable" : "unfavorable";
-                            Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})");
+                            var slipLabel = slippage < 0 ? "favorable" : "unfavorable";
+                            var slipMessage = $"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4} (slippage: {(slippage >= 0 ? "+" : "")}{slippage:N2} {slipLabel})";
+                            if (slippage < 0) LogSuccess(slipMessage); else LogRed(slipMessage);
                         }
                         else
                         {
+                            LogBlue($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4} (slippage: +0.00 neutral)");
                             Log($"[FILL] Buy confirmed: {actualQty} @ ${actualPrice:N4}");
                         }
                         
@@ -2811,6 +2962,20 @@ void LogWarning(string message)
 void LogSuccess(string message)
 {
     Console.ForegroundColor = ConsoleColor.Green;
+    Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
+    Console.ResetColor();
+}
+
+void LogRed(string message)
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
+    Console.ResetColor();
+}
+
+void LogBlue(string message)
+{
+    Console.ForegroundColor = ConsoleColor.Cyan;
     Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
     Console.ResetColor();
 }
