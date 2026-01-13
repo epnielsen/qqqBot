@@ -13,6 +13,10 @@ using MarketBlocks.Infrastructure.Alpaca;
 using MarketBlocks.Infrastructure.Common;
 using MarketBlocks.Components;
 
+// Alias local types to avoid ambiguity with MarketBlocks.Core.Domain versions
+using TradingState = qqqBot.TradingState;
+using TradingStateMetadata = qqqBot.TradingStateMetadata;
+
 // ============================================================================
 // QQQ Trading Bot - .NET 10 Alpaca Paper Trading Bot
 // Strategy: SMA-based Stop & Reverse between TQQQ (Bull) and SQQQ (Bear)
@@ -24,6 +28,14 @@ const string PAPER_KEY_PREFIX = "PK";
 if (args.Length > 0 && args[0].Equals("--setup", StringComparison.OrdinalIgnoreCase))
 {
     await RunSetupAsync();
+    return;
+}
+
+// Check for refactored mode (Producer/Consumer architecture)
+if (args.Any(a => a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)))
+{
+    var filteredArgs = args.Where(a => !a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)).ToArray();
+    await qqqBot.ProgramRefactored.RunAsync(filteredArgs);
     return;
 }
 
