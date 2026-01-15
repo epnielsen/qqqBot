@@ -16,6 +16,10 @@
   <!-- Exclude test and library project folders from main project compilation -->
   <ItemGroup>
     <Compile Remove="qqqBot.Tests\**" />
+    <!-- Exclude incomplete refactored architecture files (missing AnalystEngine, TraderEngine) -->
+    <Compile Remove="ProgramRefactored.cs" />
+    <Compile Remove="PollingAnalystDataSource.cs" />
+    <Compile Remove="StreamingAnalystDataSource.cs" />
   </ItemGroup>
 
   <ItemGroup>
