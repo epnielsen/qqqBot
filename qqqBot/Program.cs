@@ -16,6 +16,7 @@ using MarketBlocks.Components;
 // Alias local types to avoid ambiguity with MarketBlocks.Core.Domain versions
 using TradingState = qqqBot.TradingState;
 using TradingStateMetadata = qqqBot.TradingStateMetadata;
+using OrphanedPosition = qqqBot.OrphanedPosition;
 
 // ============================================================================
 // QQQ Trading Bot - .NET 10 Alpaca Paper Trading Bot
@@ -32,18 +33,10 @@ if (args.Length > 0 && args[0].Equals("--setup", StringComparison.OrdinalIgnoreC
 }
 
 // Check for refactored mode (Producer/Consumer architecture)
-// DISABLED: Refactored mode is incomplete - missing AnalystEngine and TraderEngine implementations
-// if (args.Any(a => a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)))
-// {
-//     var filteredArgs = args.Where(a => !a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)).ToArray();
-//     await qqqBot.ProgramRefactored.RunAsync(filteredArgs);
-//     return;
-// }
 if (args.Any(a => a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)))
 {
-    Console.WriteLine("ERROR: --refactored mode is currently disabled.");
-    Console.WriteLine("Missing implementations: AnalystEngine, TraderEngine, IAnalystMarketDataSource");
-    Console.WriteLine("Run without --refactored flag to use the standard mode.");
+    var filteredArgs = args.Where(a => !a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)).ToArray();
+    await qqqBot.ProgramRefactored.RunAsync(filteredArgs);
     return;
 }
 
