@@ -6,14 +6,14 @@ using Alpaca.Markets;
 using CsvHelper;
 using Microsoft.Extensions.Configuration;
 using qqqBot;
-using MarketBlocks.Core.Domain;
-using MarketBlocks.Core.Interfaces;
-using MarketBlocks.Core.Math;
+using MarketBlocks.Trade.Domain;
+using MarketBlocks.Trade.Interfaces;
+using MarketBlocks.Trade.Math;
 using MarketBlocks.Infrastructure.Alpaca;
 using MarketBlocks.Infrastructure.Common;
-using MarketBlocks.Components;
+using MarketBlocks.Trade.Components;
 
-// Alias local types to avoid ambiguity with MarketBlocks.Core.Domain versions
+// Alias local types to avoid ambiguity with MarketBlocks.Trade.Domain versions
 using TradingState = qqqBot.TradingState;
 using TradingStateMetadata = qqqBot.TradingStateMetadata;
 using OrphanedPosition = qqqBot.OrphanedPosition;

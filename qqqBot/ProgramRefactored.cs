@@ -9,12 +9,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using MarketBlocks.Core.Domain;
-using MarketBlocks.Core.Interfaces;
-using MarketBlocks.Core.Services;
+using MarketBlocks.Trade.Domain;
+using MarketBlocks.Trade.Interfaces;
+using MarketBlocks.Trade.Services;
+using MarketBlocks.Bots.Domain;
+using MarketBlocks.Bots.Interfaces;
+using MarketBlocks.Bots.Services;
 using MarketBlocks.Infrastructure.Alpaca;
 using MarketBlocks.Infrastructure.Common;
-using MarketBlocks.Components;
+using MarketBlocks.Trade.Components;
 
 namespace qqqBot;
 
@@ -95,7 +98,7 @@ public static class ProgramRefactored
                 services.AddSingleton<IocMachineGunExecutor>(sp =>
                 {
                     var broker = sp.GetRequiredService<IBrokerExecution>();
-                    var s = sp.GetRequiredService<MarketBlocks.Core.Domain.TradingSettings>();
+                    var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
                     var logger = sp.GetRequiredService<ILogger<IocMachineGunExecutor>>();
                     return new IocMachineGunExecutor(
                         broker,
@@ -112,7 +115,7 @@ public static class ProgramRefactored
                 // Register streaming clients (only created when low-latency mode is enabled)
                 services.AddSingleton(sp =>
                 {
-                    var s = sp.GetRequiredService<MarketBlocks.Core.Domain.TradingSettings>();
+                    var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
                     if (s.LowLatencyMode)
                     {
                         return Alpaca.Markets.Environments.Paper.GetAlpacaDataStreamingClient(secretKey);
@@ -123,7 +126,7 @@ public static class ProgramRefactored
                 
                 services.AddSingleton(sp =>
                 {
-                    var s = sp.GetRequiredService<MarketBlocks.Core.Domain.TradingSettings>();
+                    var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
                     if (s.LowLatencyMode)
                     {
                         return Alpaca.Markets.Environments.Paper.GetAlpacaCryptoStreamingClient(secretKey);
@@ -132,9 +135,9 @@ public static class ProgramRefactored
                 });
                 
                 // Register market data source for AnalystEngine (uses IAnalystMarketDataSource)
-                services.AddSingleton<MarketBlocks.Core.Services.IAnalystMarketDataSource>(sp =>
+                services.AddSingleton<MarketBlocks.Bots.Services.IAnalystMarketDataSource>(sp =>
                 {
-                    var s = sp.GetRequiredService<MarketBlocks.Core.Domain.TradingSettings>();
+                    var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
                     var broker = sp.GetRequiredService<IBrokerExecution>();
                     
                     if (s.LowLatencyMode)
@@ -159,8 +162,8 @@ public static class ProgramRefactored
                 services.AddSingleton<AnalystEngine>(sp =>
                 {
                     var logger = sp.GetRequiredService<ILogger<AnalystEngine>>();
-                    var s = sp.GetRequiredService<MarketBlocks.Core.Domain.TradingSettings>();
-                    var marketSource = sp.GetRequiredService<MarketBlocks.Core.Services.IAnalystMarketDataSource>();
+                    var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                    var marketSource = sp.GetRequiredService<MarketBlocks.Bots.Services.IAnalystMarketDataSource>();
                     var trader = sp.GetRequiredService<TraderEngine>();
                     
                     return new AnalystEngine(
@@ -175,9 +178,9 @@ public static class ProgramRefactored
                 services.AddHostedService<TradingOrchestrator>();
             });
     
-    private static MarketBlocks.Core.Domain.TradingSettings BuildTradingSettings(IConfiguration configuration)
+    private static MarketBlocks.Bots.Domain.TradingSettings BuildTradingSettings(IConfiguration configuration)
     {
-        return new MarketBlocks.Core.Domain.TradingSettings
+        return new MarketBlocks.Bots.Domain.TradingSettings
         {
             BotId = configuration["TradingBot:BotId"] ?? "main",
             PollingIntervalSeconds = configuration.GetValue("TradingBot:PollingIntervalSeconds", 1),
@@ -222,14 +225,14 @@ public class TradingOrchestrator : BackgroundService
     private readonly ILogger<TradingOrchestrator> _logger;
     private readonly AnalystEngine _analyst;
     private readonly TraderEngine _trader;
-    private readonly MarketBlocks.Core.Domain.TradingSettings _settings;
+    private readonly MarketBlocks.Bots.Domain.TradingSettings _settings;
     private readonly IHostApplicationLifetime _lifetime;
     
     public TradingOrchestrator(
         ILogger<TradingOrchestrator> logger,
         AnalystEngine analyst,
         TraderEngine trader,
-        MarketBlocks.Core.Domain.TradingSettings settings,
+        MarketBlocks.Bots.Domain.TradingSettings settings,
         IHostApplicationLifetime lifetime)
     {
         _logger = logger;
