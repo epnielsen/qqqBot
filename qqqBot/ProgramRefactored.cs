@@ -207,7 +207,8 @@ public static class ProgramRefactored
             IocMaxDeviationPercent = configuration.GetValue("TradingBot:IocMaxDeviationPercent", 0.005m),
             IocRemainingSharesTolerance = configuration.GetValue("TradingBot:IocRemainingSharesTolerance", 2),
             KeepAlivePingSeconds = configuration.GetValue("TradingBot:KeepAlivePingSeconds", 5),
-            WarmUpIterations = configuration.GetValue("TradingBot:WarmUpIterations", 10000)
+            WarmUpIterations = configuration.GetValue("TradingBot:WarmUpIterations", 10000),
+            StatusLogIntervalSeconds = configuration.GetValue("TradingBot:StatusLogIntervalSeconds", 5)
         };
     }
 }
