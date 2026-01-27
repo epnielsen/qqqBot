@@ -265,6 +265,14 @@ public class TradingOrchestrator : BackgroundService
             _logger.LogInformation("[ORCHESTRATOR] Starting Trader Engine...");
             await _trader.StartAsync(_analyst.RegimeChannel, stoppingToken);
             
+            // Check if repair mode was triggered during startup verification
+            if (_trader.RepairModeTriggered)
+            {
+                _logger.LogWarning("[ORCHESTRATOR] Repair mode triggered. Shutting down...");
+                _lifetime.StopApplication();
+                return;
+            }
+            
             // Start analyst (producer) - it will begin emitting signals
             _logger.LogInformation("[ORCHESTRATOR] Starting Analyst Engine...");
             await _analyst.StartAsync(stoppingToken);

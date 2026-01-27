@@ -32,18 +32,24 @@ if (args.Length > 0 && args[0].Equals("--setup", StringComparison.OrdinalIgnoreC
     return;
 }
 
-// Check for refactored mode (Producer/Consumer architecture)
-if (args.Any(a => a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)))
-{
-    var filteredArgs = args.Where(a => !a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)).ToArray();
-    await qqqBot.ProgramRefactored.RunAsync(filteredArgs);
-    return;
-}
-
 // Check for report mode
 if (args.Any(a => a.Equals("-report", StringComparison.OrdinalIgnoreCase)))
 {
     await RunReportAsync(args);
+    return;
+}
+
+// Check for legacy mode (Monolithic architecture)
+// ERROR: We default to refactored mode now. Use --legacy to run the old logic.
+if (args.Any(a => a.Equals("--legacy", StringComparison.OrdinalIgnoreCase)))
+{
+    args = args.Where(a => !a.Equals("--legacy", StringComparison.OrdinalIgnoreCase)).ToArray();
+}
+else
+{
+    // Default: Refactored mode (Producer/Consumer architecture)
+    var filteredArgs = args.Where(a => !a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)).ToArray();
+    await qqqBot.ProgramRefactored.RunAsync(filteredArgs);
     return;
 }
 
@@ -2012,33 +2018,43 @@ async Task EnsurePositionAsync(
         oppositePosition = await broker.GetPositionAsync(oppositeSymbol);
     }
     
-    if (oppositePosition is BotPosition oppPos && oppPos.Quantity > 0)
+    if (oppositePosition is BotPosition oppPos && oppPos.Quantity != 0)
     {
-        LogWarning($"[SAFEGUARD] Opposite position {oppositeSymbol} still exists ({oppPos.Quantity} shares). Syncing state and attempting liquidation...");
-        
-        // Sync local state from broker to fix mismatch
-        tradingState.CurrentPosition = oppositeSymbol;
-        tradingState.CurrentShares = oppPos.Quantity;
-        SaveTradingState(stateFilePath, tradingState);
-        
-        // Attempt to liquidate the orphaned position
-        var emergencyLiquidated = await LiquidatePositionAsync(oppositeSymbol!, oppositePosition, tradingState, broker, iocExecutor, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
-        
-        if (!emergencyLiquidated)
+        if (oppPos.Quantity > 0)
         {
-            LogError($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} failed. Aborting buy to prevent dual holdings.");
+            // LONG position exists - sync state and attempt emergency liquidation
+            LogWarning($"[SAFEGUARD] Opposite position {oppositeSymbol} still exists ({oppPos.Quantity} shares). Syncing state and attempting liquidation...");
+            
+            // Sync local state from broker to fix mismatch
+            tradingState.CurrentPosition = oppositeSymbol;
+            tradingState.CurrentShares = oppPos.Quantity;
+            SaveTradingState(stateFilePath, tradingState);
+            
+            // Attempt to liquidate the orphaned position
+            var emergencyLiquidated = await LiquidatePositionAsync(oppositeSymbol!, oppositePosition, tradingState, broker, iocExecutor, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
+            
+            if (!emergencyLiquidated)
+            {
+                LogError($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} failed. Aborting buy to prevent dual holdings.");
+                return;
+            }
+            
+            // Verify liquidation succeeded
+            var verifyPos = await broker.GetPositionAsync(oppositeSymbol!);
+            if (verifyPos is BotPosition stillHeld && stillHeld.Quantity > 0)
+            {
+                LogError($"[SAFEGUARD] {oppositeSymbol} still has {stillHeld.Quantity} shares after emergency liquidation. Aborting.");
+                return;
+            }
+            
+            LogSuccess($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} successful. Proceeding with buy.");
+        }
+        else
+        {
+            // SHORT position exists - this bot doesn't manage shorts
+            LogError($"[SAFEGUARD] SHORT position detected: {oppositeSymbol} has {oppPos.Quantity} shares. This bot does not manage short positions. Aborting buy to prevent complications.");
             return;
         }
-        
-        // Verify liquidation succeeded
-        var verifyPos = await broker.GetPositionAsync(oppositeSymbol!);
-        if (verifyPos is BotPosition stillHeld && stillHeld.Quantity > 0)
-        {
-            LogError($"[SAFEGUARD] {oppositeSymbol} still has {stillHeld.Quantity} shares after emergency liquidation. Aborting.");
-            return;
-        }
-        
-        LogSuccess($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} successful. Proceeding with buy.");
     }
 
     // 3. Buy Target if not held
@@ -2241,11 +2257,41 @@ async Task<bool> LiquidatePositionAsync(
     
     if (shareCount <= 0)
     {
-        Log($"[WARN] No shares to liquidate for {symbol} (local state shows 0). Clearing state.");
-        tradingState.CurrentPosition = null;
-        tradingState.CurrentShares = 0;
-        SaveTradingState(stateFilePath, tradingState);
-        return true; // Nothing to sell, state is clean
+        // LOCAL STATE SHOWS 0 - but check if broker has a real position (state/broker mismatch)
+        // This can happen if trading_state.json was deleted or corrupted while positions exist
+        if (position is { } pos && pos.Quantity != 0)
+        {
+            // CRITICAL: Broker has shares but local state doesn't! This is a dangerous mismatch.
+            // For LONG positions (Quantity > 0): Sync state and liquidate to prevent dual holdings
+            // For SHORT positions (Quantity < 0): Log error but don't auto-liquidate shorts
+            if (pos.Quantity > 0)
+            {
+                LogWarning($"[STATE MISMATCH] Local state shows 0 shares but broker has {pos.Quantity} shares of {symbol}. Syncing state and liquidating...");
+                tradingState.CurrentPosition = symbol;
+                tradingState.CurrentShares = pos.Quantity;
+                shareCount = pos.Quantity;
+                SaveTradingState(stateFilePath, tradingState);
+                // Continue to liquidation below
+            }
+            else
+            {
+                // SHORT POSITION detected - this bot doesn't manage shorts, so don't touch it
+                LogError($"[STATE MISMATCH] Broker shows SHORT position of {pos.Quantity} shares of {symbol}. This bot does not manage short positions - manual intervention required.");
+                // Clear local state but return false to prevent position switch
+                tradingState.CurrentPosition = null;
+                tradingState.CurrentShares = 0;
+                SaveTradingState(stateFilePath, tradingState);
+                return false; // Block position switch - there's a short position we can't handle
+            }
+        }
+        else
+        {
+            Log($"[WARN] No shares to liquidate for {symbol} (local state shows 0). Clearing state.");
+            tradingState.CurrentPosition = null;
+            tradingState.CurrentShares = 0;
+            SaveTradingState(stateFilePath, tradingState);
+            return true; // Nothing to sell, state is clean
+        }
     }
     
     var estimatedProceeds = shareCount * quotePrice;
@@ -2915,14 +2961,36 @@ async Task BuyPositionAsync(
                              filledOrder.Status == BotOrderStatus.Expired ||
                              filledOrder.Status == BotOrderStatus.Rejected)
                     {
-                        // Order cancelled/rejected - rollback state
-                        LogError($"[FILL] Buy order {filledOrder.Status} - rolling back state");
-                        tradingState.AvailableCash = preBuyCash;
-                        tradingState.AccumulatedLeftover = 0m;
-                        tradingState.CurrentPosition = null;
-                        tradingState.CurrentShares = 0;
-                        SaveTradingState(stateFilePath, tradingState);
-                        LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
+                        // Order cancelled/rejected - but check for PARTIAL FILL first!
+                        var partialQty = filledOrder.FilledQuantity;
+                        var partialPrice = filledOrder.AverageFillPrice ?? basePrice;
+                        
+                        if (partialQty > 0)
+                        {
+                            // CRITICAL: Partial fill occurred - we OWN these shares on the broker!
+                            // Do NOT rollback to pre-buy state - that would orphan the shares
+                            var partialCost = partialQty * partialPrice;
+                            var remainingCash = preBuyCash - partialCost;
+                            
+                            LogWarning($"[FILL] Buy order {filledOrder.Status} with PARTIAL FILL: {partialQty}/{quantity} @ ${partialPrice:N4}");
+                            tradingState.AvailableCash = remainingCash;
+                            tradingState.AccumulatedLeftover = 0m;
+                            tradingState.CurrentPosition = symbol;
+                            tradingState.CurrentShares = partialQty;
+                            SaveTradingState(stateFilePath, tradingState);
+                            LogWarning($"[FILL] State updated for partial: {partialQty} shares of {symbol}, ${remainingCash:N2} cash");
+                        }
+                        else
+                        {
+                            // No fill at all - safe to rollback completely
+                            LogError($"[FILL] Buy order {filledOrder.Status} - rolling back state");
+                            tradingState.AvailableCash = preBuyCash;
+                            tradingState.AccumulatedLeftover = 0m;
+                            tradingState.CurrentPosition = null;
+                            tradingState.CurrentShares = 0;
+                            SaveTradingState(stateFilePath, tradingState);
+                            LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
+                        }
                         return;
                     }
                     else if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)
