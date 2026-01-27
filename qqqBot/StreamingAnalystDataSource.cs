@@ -135,65 +135,81 @@ public sealed class StreamingAnalystDataSource : IAnalystMarketDataSource, IAsyn
         }
     }
     
-    public async Task SubscribeAsync(string symbol, ChannelWriter<PriceTick> writer, bool isBenchmark, CancellationToken ct)
+    public async Task SubscribeAsync(IEnumerable<AnalystSubscription> subscriptions, ChannelWriter<PriceTick> writer, CancellationToken ct)
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(StreamingAnalystDataSource));
         
-        ArgumentNullException.ThrowIfNull(symbol);
+        ArgumentNullException.ThrowIfNull(subscriptions);
         ArgumentNullException.ThrowIfNull(writer);
         
-        // Determine if this is a crypto symbol (contains '/')
-        bool isCrypto = symbol.Contains('/'); // e.g., "BTC/USD"
-        
-        if (isCrypto)
+        var stockSubs = new List<IAlpacaDataSubscription<ITrade>>();
+        var cryptoSubs = new List<IAlpacaDataSubscription<ITrade>>();
+        var newStockSubscriptions = new Dictionary<string, IAlpacaDataSubscription<ITrade>>();
+        var newCryptoSubscriptions = new Dictionary<string, IAlpacaDataSubscription<ITrade>>();
+
+        foreach (var req in subscriptions)
         {
-            if (_cryptoClient == null || !_cryptoConnected)
+            var symbol = req.Symbol;
+            var isBenchmark = req.IsBenchmark;
+            
+            bool isCrypto = symbol.Contains('/'); // e.g., "BTC/USD"
+            
+            if (isCrypto)
             {
-                _logger.LogWarning("[STREAMING] Cannot subscribe to crypto symbol {Symbol} - crypto client not available", symbol);
-                return;
+                if (_cryptoClient == null || !_cryptoConnected)
+                {
+                    _logger.LogWarning("[STREAMING] Cannot subscribe to crypto symbol {Symbol} - crypto client not available", symbol);
+                    continue;
+                }
+                
+                var subscription = _cryptoClient.GetTradeSubscription(symbol);
+                subscription.Received += trade =>
+                {
+                    var tick = new PriceTick(symbol, trade.Price, isBenchmark, trade.TimestampUtc);
+                    writer.TryWrite(tick);
+                };
+                
+                cryptoSubs.Add(subscription);
+                newCryptoSubscriptions[symbol] = subscription;
             }
-            
-            var subscription = _cryptoClient.GetTradeSubscription(symbol);
-            subscription.Received += trade =>
+            else
             {
-                var tick = new PriceTick(trade.Price, isBenchmark, trade.TimestampUtc);
-                // Non-blocking write (drops if channel is full - better than blocking the WebSocket handler)
-                writer.TryWrite(tick);
-            };
-            
-            await _cryptoClient.SubscribeAsync(subscription, ct);
-            
-            lock (_subscriptionLock)
-            {
-                _cryptoSubscriptions[symbol] = subscription;
+                if (!_stockConnected)
+                {
+                    _logger.LogWarning("[STREAMING] Cannot subscribe to stock symbol {Symbol} - stock stream not connected", symbol);
+                    continue; // Or throw?
+                }
+                
+                var subscription = _stockClient.GetTradeSubscription(symbol);
+                subscription.Received += trade =>
+                {
+                    var tick = new PriceTick(symbol, trade.Price, isBenchmark, trade.TimestampUtc);
+                    writer.TryWrite(tick);
+                };
+                
+                stockSubs.Add(subscription);
+                newStockSubscriptions[symbol] = subscription;
             }
-            
-            _logger.LogInformation("[STREAMING] Subscribed to crypto {Symbol} (benchmark: {IsBenchmark})", symbol, isBenchmark);
         }
-        else
+        
+        // Execute batch subscriptions
+        if (stockSubs.Count > 0)
         {
-            if (!_stockConnected)
-            {
-                throw new InvalidOperationException($"Cannot subscribe to {symbol} - stock stream not connected");
-            }
-            
-            var subscription = _stockClient.GetTradeSubscription(symbol);
-            subscription.Received += trade =>
-            {
-                var tick = new PriceTick(trade.Price, isBenchmark, trade.TimestampUtc);
-                // Non-blocking write (drops if channel is full)
-                writer.TryWrite(tick);
-            };
-            
-            await _stockClient.SubscribeAsync(subscription, ct);
-            
-            lock (_subscriptionLock)
-            {
-                _stockSubscriptions[symbol] = subscription;
-            }
-            
-            _logger.LogInformation("[STREAMING] Subscribed to stock {Symbol} (benchmark: {IsBenchmark})", symbol, isBenchmark);
+            await _stockClient.SubscribeAsync(stockSubs, ct);
+            _logger.LogInformation("[STREAMING] Batch subscribed to {Count} stock symbols", stockSubs.Count);
+        }
+        
+        if (cryptoSubs.Count > 0 && _cryptoClient != null)
+        {
+            await _cryptoClient.SubscribeAsync(cryptoSubs, ct);
+            _logger.LogInformation("[STREAMING] Batch subscribed to {Count} crypto symbols", cryptoSubs.Count);
+        }
+
+        lock (_subscriptionLock)
+        {
+            foreach (var kvp in newStockSubscriptions) _stockSubscriptions[kvp.Key] = kvp.Value;
+            foreach (var kvp in newCryptoSubscriptions) _cryptoSubscriptions[kvp.Key] = kvp.Value;
         }
     }
     

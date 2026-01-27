@@ -73,14 +73,17 @@ public sealed class PollingAnalystDataSource : IAnalystMarketDataSource
         _logger.LogInformation("[POLLING] Analyst data source disconnected");
     }
     
-    public Task SubscribeAsync(string symbol, ChannelWriter<PriceTick> writer, bool isBenchmark, CancellationToken ct)
+    public Task SubscribeAsync(IEnumerable<AnalystSubscription> subscriptions, ChannelWriter<PriceTick> writer, CancellationToken ct)
     {
         lock (_subscriptionLock)
         {
-            _subscriptions[symbol] = new SubscriptionInfo(symbol, writer, isBenchmark);
+            foreach (var sub in subscriptions)
+            {
+                _subscriptions[sub.Symbol] = new SubscriptionInfo(sub.Symbol, writer, sub.IsBenchmark);
+                _logger.LogInformation("[POLLING] Subscribed to {Symbol} (benchmark: {IsBenchmark})", sub.Symbol, sub.IsBenchmark);
+            }
         }
         
-        _logger.LogInformation("[POLLING] Subscribed to {Symbol} (benchmark: {IsBenchmark})", symbol, isBenchmark);
         return Task.CompletedTask;
     }
     
@@ -122,7 +125,7 @@ public sealed class PollingAnalystDataSource : IAnalystMarketDataSource
                 var price = await _broker.GetLatestPriceAsync(sub.Symbol, ct);
                 if (price > 0)
                 {
-                    var tick = new PriceTick(price, sub.IsBenchmark, DateTime.UtcNow);
+                    var tick = new PriceTick(sub.Symbol, price, sub.IsBenchmark, DateTime.UtcNow);
                     await sub.Writer.WriteAsync(tick, ct);
                 }
             }
