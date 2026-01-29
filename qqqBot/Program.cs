@@ -138,6 +138,31 @@ async Task RunSetupAsync()
         return;
     }
 
+    // Optional: FMP API key for historical data hydration fallback
+    Log("\n=== FMP API Key Setup (Optional) ===");
+    Log("FMP (Financial Modeling Prep) provides free historical data for indicator hydration.");
+    Log("Get a free API key at: https://site.financialmodelingprep.com/developer/docs\n");
+    
+    Console.Write("Enter FMP API Key (or press Enter to skip): ");
+    var fmpKey = Console.ReadLine()?.Trim() ?? string.Empty;
+    
+    if (!string.IsNullOrEmpty(fmpKey))
+    {
+        var fmpResult = await RunDotnetCommandAsync($"user-secrets set \"Fmp:ApiKey\" \"{fmpKey}\" --project \"{projectDir}\"");
+        if (!fmpResult)
+        {
+            LogError("Failed to store FMP API Key.");
+        }
+        else
+        {
+            LogSuccess("FMP API Key stored successfully.");
+        }
+    }
+    else
+    {
+        Log("Skipping FMP setup. You can add it later with: dotnet user-secrets set \"Fmp:ApiKey\" \"your-key\"");
+    }
+
     LogSuccess("\nSetup complete! Your credentials have been securely stored.");
     LogSuccess("You can now run the bot without the --setup flag.");
 }

@@ -17,7 +17,9 @@ using MarketBlocks.Bots.Interfaces;
 using MarketBlocks.Bots.Services;
 using MarketBlocks.Infrastructure.Alpaca;
 using MarketBlocks.Infrastructure.Common;
+using MarketBlocks.Infrastructure.Data.Fmp;
 using MarketBlocks.Trade.Components;
+using Refit;
 
 namespace qqqBot;
 
@@ -183,26 +185,68 @@ public static class ProgramRefactored
                     }
                 });
                 
+                // Register historical data source for Hydration (Cold Start -> Hot Start)
+                services.AddSingleton<IMarketDataSource>(sp =>
+                {
+                    var dataClient = sp.GetRequiredService<IAlpacaDataClient>();
+                    var logger = sp.GetRequiredService<ILogger<AlpacaSourceAdapter>>();
+                    // Create adapter with just the data client (no streaming for history)
+                    return new AlpacaSourceAdapter(
+                        sp.GetRequiredService<IAlpacaDataStreamingClient>(),
+                        sp.GetRequiredService<IAlpacaCryptoStreamingClient>(),
+                        dataClient,
+                        logger);
+                });
+                
+                // Register FMP adapter as fallback for hydration
+                services.AddSingleton<IMarketDataAdapter>(sp =>
+                {
+                    var fmpApi = RestService.For<IFmpMarketDataApi>("https://financialmodelingprep.com/stable");
+                    var logger = sp.GetRequiredService<ILogger<FmpMarketDataAdapter>>();
+                    var adapter = new FmpMarketDataAdapter(fmpApi, logger);
+                    
+                    // Set FMP credentials from config
+                    var config = sp.GetRequiredService<IConfiguration>();
+                    var fmpKey = config["Fmp:ApiKey"] ?? Environment.GetEnvironmentVariable("FMP_API_KEY");
+                    if (!string.IsNullOrEmpty(fmpKey))
+                    {
+                        adapter.SetCredentials(fmpKey);
+                        logger.LogInformation("[FMP] Fallback adapter configured for hydration");
+                    }
+                    else
+                    {
+                        logger.LogWarning("[FMP] No API key configured. Fallback hydration unavailable.");
+                    }
+                    
+                    return adapter;
+                });
+                
                 // Register TraderEngine first (Trader is injected into Analyst for position awareness)
                 services.AddSingleton<TraderEngine>();
                 
                 // Register AnalystEngine with callbacks from TraderEngine
                 // - Position callbacks: for Sliding Bands feature
                 // - Signal callbacks: for restart recovery (Amnesia Prevention)
+                // - Historical source: for Hydration (Hot Start)
+                // - Fallback adapter: FMP for when Alpaca SIP restriction kicks in
                 services.AddSingleton<AnalystEngine>(sp =>
                 {
                     var logger = sp.GetRequiredService<ILogger<AnalystEngine>>();
                     var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
                     var marketSource = sp.GetRequiredService<MarketBlocks.Bots.Services.IAnalystMarketDataSource>();
+                    var historicalSource = sp.GetRequiredService<IMarketDataSource>();
+                    var fallbackAdapter = sp.GetService<IMarketDataAdapter>(); // Optional fallback
                     var trader = sp.GetRequiredService<TraderEngine>();
                     
                     return new AnalystEngine(
                         logger,
                         s,
                         marketSource,
+                        historicalSource,                            // Historical source for Hydration (Alpaca)
+                        fallbackAdapter,                             // Fallback for Hydration (FMP)
                         () => trader.CurrentPosition,
                         () => trader.CurrentShares,
-                        () => trader.LastAnalystSignal,          // Get persisted signal
+                        () => trader.LastAnalystSignal,              // Get persisted signal
                         signal => trader.SaveLastAnalystSignal(signal));  // Save signal on change
                 });
                 
@@ -234,6 +278,12 @@ public static class ProgramRefactored
             UseMarketableLimits = configuration.GetValue("TradingBot:UseMarketableLimits", false),
             MaxSlippagePercent = configuration.GetValue("TradingBot:MaxSlippagePercent", 0.002m),
             MaxChaseDeviationPercent = configuration.GetValue("TradingBot:MaxChaseDeviationPercent", 0.003m),
+            // Hybrid Engine Settings
+            MinVelocityThreshold = configuration.GetValue("TradingBot:MinVelocityThreshold", 0.0001m),
+            SlopeWindowSize = configuration.GetValue("TradingBot:SlopeWindowSize", 5),
+            EntryConfirmationTicks = configuration.GetValue("TradingBot:EntryConfirmationTicks", 2),
+            TrendWindowSeconds = configuration.GetValue("TradingBot:TrendWindowSeconds", 1800),
+            // Low-Latency Mode Settings
             LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
             UseIocOrders = configuration.GetValue("TradingBot:UseIocOrders", false),
             IocLimitOffsetCents = configuration.GetValue("TradingBot:IocLimitOffsetCents", 1m),
