@@ -186,7 +186,9 @@ public static class ProgramRefactored
                 // Register TraderEngine first (Trader is injected into Analyst for position awareness)
                 services.AddSingleton<TraderEngine>();
                 
-                // Register AnalystEngine with position callbacks from TraderEngine
+                // Register AnalystEngine with callbacks from TraderEngine
+                // - Position callbacks: for Sliding Bands feature
+                // - Signal callbacks: for restart recovery (Amnesia Prevention)
                 services.AddSingleton<AnalystEngine>(sp =>
                 {
                     var logger = sp.GetRequiredService<ILogger<AnalystEngine>>();
@@ -199,7 +201,9 @@ public static class ProgramRefactored
                         s,
                         marketSource,
                         () => trader.CurrentPosition,
-                        () => trader.CurrentShares);
+                        () => trader.CurrentShares,
+                        () => trader.LastAnalystSignal,          // Get persisted signal
+                        signal => trader.SaveLastAnalystSignal(signal));  // Save signal on change
                 });
                 
                 // Register the orchestration service that wires Analyst → Trader

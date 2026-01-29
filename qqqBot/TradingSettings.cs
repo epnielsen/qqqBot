@@ -15,7 +15,7 @@ class TradingSettings
     public decimal MinChopAbsolute { get; set; } = 0.02m; // Absolute floor for hysteresis (tick-aware)
     public bool SlidingBand { get; set; } = false; // When true, band slides based on position high/low
     public decimal SlidingBandFactor { get; set; } = 0.5m; // Exit threshold: BULL exits at (high - width*factor), BEAR exits at (low + width*factor)
-    public int NeutralWaitSeconds { get; set; } = 30;
+    public int NeutralWaitSeconds { get; set; } = 0; // 0 = liquidate immediately, -1 = hold through neutral
     public decimal StartingAmount { get; set; } = 10000m;
     public bool BullOnlyMode { get; set; } = false;
     public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
