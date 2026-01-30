@@ -14,7 +14,6 @@ public class CommandLineOverrides
     public decimal? TrailingStopPercentOverride { get; set; }
     public bool UseMarketableLimits { get; set; }
     public decimal? MaxSlippagePercentOverride { get; set; }
-    public decimal? TakeProfitAmountOverride { get; set; }
     // Low-latency mode flags
     public bool LowLatencyMode { get; set; }
     public bool UseIocOrders { get; set; }
@@ -119,23 +118,8 @@ public class CommandLineOverrides
             {
                 overrides.UseIocOrders = true;
             }
-            else if (arg.StartsWith("-takeprofit=", StringComparison.OrdinalIgnoreCase))
-            {
-                var value = arg.Substring("-takeprofit=".Length).Trim();
-                if (decimal.TryParse(value, out var dollars) && dollars >= 0)
-                {
-                    overrides.TakeProfitAmountOverride = dollars;
-                }
-                else
-                {
-                    Console.Error.WriteLine($"[ERROR] -takeprofit must be a non-negative number. Got: {value}");
-                    return null;
-                }
-            }
-            else if (arg.Equals("-takeprofit", StringComparison.OrdinalIgnoreCase))
-            {
-                overrides.TakeProfitAmountOverride = 500m; // Default to $500 if no value provided
-            }
+            // NOTE: -takeprofit has been replaced by the Hybrid Profit Management System.
+            // Use ProfitReinvestmentPercent and Trimming settings in appsettings.json instead.
         }
         
         // Validation: -bear may not be specified without -bull

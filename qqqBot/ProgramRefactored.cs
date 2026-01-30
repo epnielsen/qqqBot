@@ -110,7 +110,6 @@ public static class ProgramRefactored
                     if (overrides.MaxSlippagePercentOverride.HasValue) settings.MaxSlippagePercent = overrides.MaxSlippagePercentOverride.Value;
                     if (overrides.LowLatencyMode) settings.LowLatencyMode = true;
                     if (overrides.UseIocOrders) settings.UseIocOrders = true;
-                    if (overrides.TakeProfitAmountOverride.HasValue) settings.TakeProfitAmount = overrides.TakeProfitAmountOverride.Value;
                 }
                 
                 services.AddSingleton(settings);
