@@ -532,7 +532,12 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
         SlidingBand = configuration.GetValue("TradingBot:SlidingBand", false),
         SlidingBandFactor = configuration.GetValue("TradingBot:SlidingBandFactor", 0.5m),
-        NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
+        ExitStrategy = new DynamicExitConfig
+        {
+            ScalpWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:ScalpWaitSeconds", 0),
+            TrendWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:TrendWaitSeconds", 120),
+            TrendConfidenceThreshold = configuration.GetValue("TradingBot:ExitStrategy:TrendConfidenceThreshold", 0.00015)
+        },
         WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
         MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
         TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
@@ -570,7 +575,12 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         MinChopAbsolute = cmdOverrides.MinChopAbsoluteOverride ?? configSettings.MinChopAbsolute,
         SlidingBand = configSettings.SlidingBand,
         SlidingBandFactor = configSettings.SlidingBandFactor,
-        NeutralWaitSeconds = cmdOverrides.NeutralWaitSecondsOverride ?? configSettings.NeutralWaitSeconds,
+        ExitStrategy = new DynamicExitConfig
+        {
+            ScalpWaitSeconds = cmdOverrides.ScalpWaitSecondsOverride ?? configSettings.ExitStrategy.ScalpWaitSeconds,
+            TrendWaitSeconds = cmdOverrides.TrendWaitSecondsOverride ?? configSettings.ExitStrategy.TrendWaitSeconds,
+            TrendConfidenceThreshold = configSettings.ExitStrategy.TrendConfidenceThreshold
+        },
         StartingAmount = configSettings.StartingAmount,
         BullOnlyMode = cmdOverrides.BullOnlyMode,
         UseBtcEarlyTrading = useBtcEarlyTrading,
@@ -806,7 +816,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
     {
         Log($"  Sliding Band: Disabled");
     }
-    Log($"  Neutral Wait: {(settings.NeutralWaitSeconds < 0 ? "Hold-Through (no liquidate)" : $"{settings.NeutralWaitSeconds}s")}");
+    Log($"  Neutral Wait: Scalp={settings.ExitStrategy.ScalpWaitSeconds}s | Trend={settings.ExitStrategy.TrendWaitSeconds}s | Threshold={settings.ExitStrategy.TrendConfidenceThreshold:F6}");
     Log($"  BTC Correlation (Neutral Nudge): {(settings.WatchBtc ? "Enabled" : "Disabled")}");
     Log($"  Starting Amount: ${tradingState.StartingAmount:N2}");
     Log($"  Current Available Cash: ${tradingState.AvailableCash:N2}");
@@ -1500,9 +1510,10 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                     }
                     else if (finalSignal == "NEUTRAL")
                     {
-                        // NeutralWaitSeconds == -1 means "hold through neutral" - don't liquidate
-                        // The position will only change on BULL <-> BEAR flip (or EOD/shutdown)
-                        if (settings.NeutralWaitSeconds < 0)
+                        // ScalpWaitSeconds == -1 means "hold through neutral" in scalp mode (disabled)
+                        // Note: Legacy Program.cs doesn't have access to slope, so use ScalpWaitSeconds
+                        var effectiveWaitSeconds = settings.ExitStrategy.ScalpWaitSeconds;
+                        if (effectiveWaitSeconds < 0)
                         {
                             // Hold current position - do nothing
                         }
@@ -1514,7 +1525,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
                             }
                             
                             var elapsed = (DateTime.UtcNow - pipelineNeutralDetectionTime.Value).TotalSeconds;
-                            if (elapsed >= settings.NeutralWaitSeconds)
+                            if (elapsed >= effectiveWaitSeconds)
                             {
                                 // Only liquidate if we have a position
                                 if (tradingState.CurrentPosition != null && tradingState.CurrentShares > 0)

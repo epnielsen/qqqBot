@@ -101,7 +101,8 @@ public static class ProgramRefactored
                     if (overrides.BullOnlyMode) settings.BullOnlyMode = true;
                     if (overrides.UseBtcEarlyTrading) settings.UseBtcEarlyTrading = true;
                     if (overrides.WatchBtc) settings.WatchBtc = true;
-                    if (overrides.NeutralWaitSecondsOverride.HasValue) settings.NeutralWaitSeconds = overrides.NeutralWaitSecondsOverride.Value;
+                    if (overrides.ScalpWaitSecondsOverride.HasValue) settings.ExitStrategy.ScalpWaitSeconds = overrides.ScalpWaitSecondsOverride.Value;
+                    if (overrides.TrendWaitSecondsOverride.HasValue) settings.ExitStrategy.TrendWaitSeconds = overrides.TrendWaitSecondsOverride.Value;
                     if (overrides.MinChopAbsoluteOverride.HasValue) settings.MinChopAbsolute = overrides.MinChopAbsoluteOverride.Value;
                     if (overrides.BotIdOverride != null) settings.BotId = overrides.BotIdOverride;
                     if (overrides.MonitorSlippage) settings.MonitorSlippage = true;
@@ -268,7 +269,12 @@ public static class ProgramRefactored
             MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
             SlidingBand = configuration.GetValue("TradingBot:SlidingBand", false),
             SlidingBandFactor = configuration.GetValue("TradingBot:SlidingBandFactor", 0.5m),
-            NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
+            ExitStrategy = new MarketBlocks.Bots.Domain.DynamicExitConfig
+            {
+                ScalpWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:ScalpWaitSeconds", 0),
+                TrendWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:TrendWaitSeconds", 120),
+                TrendConfidenceThreshold = configuration.GetValue("TradingBot:ExitStrategy:TrendConfidenceThreshold", 0.00015)
+            },
             WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
             MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
             TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
