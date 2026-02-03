@@ -62,10 +62,17 @@ public static class ProgramRefactored
                       .AddJsonFile("appsettings.json", optional: false)
                       .AddUserSecrets(typeof(ProgramRefactored).Assembly);
             })
-            .ConfigureLogging(logging =>
+            .ConfigureLogging((context, logging) =>
             {
                 logging.ClearProviders();
                 logging.AddConsole();
+                
+                // Add file logging - writes to logs/qqqbot_{date}.log
+                var logDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+                Directory.CreateDirectory(logDirectory);
+                var logFilePath = Path.Combine(logDirectory, $"qqqbot_{DateTime.Now:yyyyMMdd}.log");
+                logging.AddProvider(new FileLoggerProvider(logFilePath));
+                
                 logging.SetMinimumLevel(LogLevel.Information);
             })
             .ConfigureServices((context, services) =>
