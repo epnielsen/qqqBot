@@ -42,12 +42,18 @@ public static class ProgramRefactored
     
     public static async Task RunAsync(string[] args)
     {
-        var host = CreateHostBuilder(args).Build();
+        var overrides = CommandLineOverrides.Parse(args);
+        // If overrides are null, it means parsing failed (error logged to console inside Parse), so we exit.
+        // However, if args is empty, Parse returns a valid object with HasOverrides=false.
+        // It only returns null on validation error.
+        if (overrides == null) return;
+
+        var host = CreateHostBuilder(args, overrides).Build();
         await host.RunAsync();
     }
     
-    public static IHostBuilder CreateHostBuilder(string[] args) =>
-        Host.CreateDefaultBuilder(args)
+    public static IHostBuilder CreateHostBuilder(string[] args, CommandLineOverrides overrides) =>
+        Host.CreateDefaultBuilder() // Do not pass args here to prevent default CLI parser from crashing on custom flags
             .ConfigureAppConfiguration((context, config) =>
             {
                 config.SetBasePath(AppContext.BaseDirectory)
@@ -83,6 +89,28 @@ public static class ProgramRefactored
                 
                 // Build TradingSettings from configuration
                 var settings = BuildTradingSettings(configuration);
+                
+                // Apply command line overrides if any
+                if (overrides != null)
+                {
+                    if (overrides.BullTicker != null) settings.BullSymbol = overrides.BullTicker;
+                    if (overrides.BearTicker != null) settings.BearSymbol = overrides.BearTicker;
+                    if (overrides.BenchmarkTicker != null) settings.BenchmarkSymbol = overrides.BenchmarkTicker;
+                    if (overrides.BullOnlyMode) settings.BullOnlyMode = true;
+                    if (overrides.UseBtcEarlyTrading) settings.UseBtcEarlyTrading = true;
+                    if (overrides.WatchBtc) settings.WatchBtc = true;
+                    if (overrides.NeutralWaitSecondsOverride.HasValue) settings.NeutralWaitSeconds = overrides.NeutralWaitSecondsOverride.Value;
+                    if (overrides.MinChopAbsoluteOverride.HasValue) settings.MinChopAbsolute = overrides.MinChopAbsoluteOverride.Value;
+                    if (overrides.BotIdOverride != null) settings.BotId = overrides.BotIdOverride;
+                    if (overrides.MonitorSlippage) settings.MonitorSlippage = true;
+                    if (overrides.TrailingStopPercentOverride.HasValue) settings.TrailingStopPercent = overrides.TrailingStopPercentOverride.Value;
+                    if (overrides.UseMarketableLimits) settings.UseMarketableLimits = true;
+                    if (overrides.MaxSlippagePercentOverride.HasValue) settings.MaxSlippagePercent = overrides.MaxSlippagePercentOverride.Value;
+                    if (overrides.LowLatencyMode) settings.LowLatencyMode = true;
+                    if (overrides.UseIocOrders) settings.UseIocOrders = true;
+                    if (overrides.TakeProfitAmountOverride.HasValue) settings.TakeProfitAmount = overrides.TakeProfitAmountOverride.Value;
+                }
+                
                 services.AddSingleton(settings);
                 
                 // Register Alpaca clients
@@ -211,7 +239,8 @@ public static class ProgramRefactored
             IocRemainingSharesTolerance = configuration.GetValue("TradingBot:IocRemainingSharesTolerance", 2),
             KeepAlivePingSeconds = configuration.GetValue("TradingBot:KeepAlivePingSeconds", 5),
             WarmUpIterations = configuration.GetValue("TradingBot:WarmUpIterations", 10000),
-            StatusLogIntervalSeconds = configuration.GetValue("TradingBot:StatusLogIntervalSeconds", 5)
+            StatusLogIntervalSeconds = configuration.GetValue("TradingBot:StatusLogIntervalSeconds", 5),
+            TakeProfitAmount = configuration.GetValue("TradingBot:TakeProfitAmount", 0m)
         };
     }
 }

@@ -21,6 +21,7 @@ public class TradingState
     public string? LastTradeTimestamp { get; set; }
     public string? CurrentPosition { get; set; }
     public long CurrentShares { get; set; }
+    public decimal? AverageEntryPrice { get; set; } // Track cost basis for P/L calcs (e.g. TakeProfit)
     public decimal StartingAmount { get; set; }
     public decimal DayStartBalance { get; set; }
     public string? DayStartDate { get; set; }

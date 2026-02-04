@@ -27,6 +27,9 @@ class TradingSettings
     public decimal MaxSlippagePercent { get; set; } = 0.002m; // 0.2% max slippage for limit orders
     public decimal MaxChaseDeviationPercent { get; set; } = 0.003m; // 0.3% max price move before aborting entry chase
     
+    // TAKE PROFIT SETTINGS
+    public decimal TakeProfitAmount { get; set; } = 0m; // Fixed dollar amount profit target (0 = disabled)
+    
     // LOW-LATENCY MODE SETTINGS
     public bool LowLatencyMode { get; set; } = false;     // Enable channel-based reactive pipeline
     public bool UseIocOrders { get; set; } = false;       // Use IOC limit orders ("sniper mode")
