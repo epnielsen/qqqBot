@@ -1,0 +1,61 @@
+{
+  "TradingBot": {
+    "BotId": "main",
+    "PollingIntervalSeconds": 1,
+    "BullSymbol": "TQQQ",
+    "BearSymbol": "SQQQ",
+    "BenchmarkSymbol": "QQQ",
+    "CryptoBenchmarkSymbol": "BTC/USD",
+    
+    "//_COMMENT": "--- PHASE 3: POWER HOUR (14:00 - 16:00) ---",
+    "MinVelocityThreshold": 0.000002,
+    "SMAWindowSeconds": 120,
+    "SlopeWindowSize": 15,
+    "ChopThresholdPercent": 0.0007,
+    "MinChopAbsolute": 0.02,
+    "TrendWindowSeconds": 1800,    
+    "ExitStrategy": {
+        "ScalpWaitSeconds": 0,
+        "TrendWaitSeconds": 180,
+        "TrendConfidenceThreshold": 0.00015
+    },
+    "UseMarketableLimits": true,
+    "IocLimitOffsetCents": 5,
+    "TrailingStopPercent": 0.0015,
+    "EnableTrimming": true,
+    "TrimTriggerPercent": 0.005,
+    "TrimSlopeThreshold": 0.000002,
+    "TrimCooldownSeconds": 60,
+    "//_COMMENT_END": "----------------------------",
+
+
+    "//_COMMENT_PROFIT": "--- PROFIT MANAGEMENT (Split Allocation Model) ---",
+    "TrimRatio": 0.33,
+    "ProfitReinvestmentPercent": 0.5,
+    "//_COMMENT_PROFIT_END": "-------------------------------------------------",
+
+
+    "SlidingBand": false,
+    "SlidingBandFactor": 0.75,
+        
+    "WatchBtc": false,
+    "MonitorSlippage": true,
+    "StopLossCooldownSeconds": 10,
+    "MaxSlippagePercent": 0.002,
+    "MaxChaseDeviationPercent": 0.003,
+    
+    "LowLatencyMode": true,
+    "UseIocOrders": true,
+    "IocRetryStepCents": 5,
+    "IocMaxRetries": 5,
+    "IocMaxDeviationPercent": 0.005,
+    "IocRemainingSharesTolerance": 2,
+    "KeepAlivePingSeconds": 5,
+    "WarmUpIterations": 10000,
+
+    "StatusLogIntervalSeconds": 5,
+
+    "StartingAmount": 10176.69
+
+  }
+}

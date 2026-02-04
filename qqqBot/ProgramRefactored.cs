@@ -54,12 +54,20 @@ public static class ProgramRefactored
         await host.RunAsync();
     }
     
-    public static IHostBuilder CreateHostBuilder(string[] args, CommandLineOverrides overrides) =>
-        Host.CreateDefaultBuilder() // Do not pass args here to prevent default CLI parser from crashing on custom flags
+    // Store config file name for startup logging
+    internal static string ConfigFileName { get; private set; } = "appsettings.json";
+    
+    public static IHostBuilder CreateHostBuilder(string[] args, CommandLineOverrides overrides)
+    {
+        // Determine which config file to use
+        var configFileName = overrides?.ConfigFile ?? "appsettings.json";
+        ConfigFileName = configFileName; // Store for logging later
+        
+        return Host.CreateDefaultBuilder() // Do not pass args here to prevent default CLI parser from crashing on custom flags
             .ConfigureAppConfiguration((context, config) =>
             {
                 config.SetBasePath(AppContext.BaseDirectory)
-                      .AddJsonFile("appsettings.json", optional: false)
+                      .AddJsonFile(configFileName, optional: false)
                       .AddUserSecrets(typeof(ProgramRefactored).Assembly);
             })
             .ConfigureLogging((context, logging) =>
@@ -260,6 +268,7 @@ public static class ProgramRefactored
                 // Register the orchestration service that wires Analyst → Trader
                 services.AddHostedService<TradingOrchestrator>();
             });
+    }
     
     private static MarketBlocks.Bots.Domain.TradingSettings BuildTradingSettings(IConfiguration configuration)
     {
@@ -306,7 +315,14 @@ public static class ProgramRefactored
             KeepAlivePingSeconds = configuration.GetValue("TradingBot:KeepAlivePingSeconds", 5),
             WarmUpIterations = configuration.GetValue("TradingBot:WarmUpIterations", 10000),
             StatusLogIntervalSeconds = configuration.GetValue("TradingBot:StatusLogIntervalSeconds", 5),
-            TakeProfitAmount = configuration.GetValue("TradingBot:TakeProfitAmount", 0m)
+            TakeProfitAmount = configuration.GetValue("TradingBot:TakeProfitAmount", 0m),
+            // Profit Management Settings
+            ProfitReinvestmentPercent = configuration.GetValue("TradingBot:ProfitReinvestmentPercent", 0.5m),
+            EnableTrimming = configuration.GetValue("TradingBot:EnableTrimming", true),
+            TrimRatio = configuration.GetValue("TradingBot:TrimRatio", 0.33m),
+            TrimTriggerPercent = configuration.GetValue("TradingBot:TrimTriggerPercent", 0.015m),
+            TrimSlopeThreshold = configuration.GetValue("TradingBot:TrimSlopeThreshold", 0.000005m),
+            TrimCooldownSeconds = configuration.GetValue("TradingBot:TrimCooldownSeconds", 120)
         };
     }
 }
@@ -342,14 +358,42 @@ public class TradingOrchestrator : BackgroundService
         _logger.LogInformation("=== QQQ Trading Bot Starting ===");
         _logger.LogInformation("Architecture: Producer/Consumer with Channel<MarketRegime>");
         _logger.LogInformation("");
-        _logger.LogInformation("Configuration:");
+        
+        // Log configuration file and key parameters
+        _logger.LogInformation("Config File: {ConfigFile}", ProgramRefactored.ConfigFileName);
+        _logger.LogInformation("");
+        _logger.LogInformation("Analytics:");
+        _logger.LogInformation("  MinVelocityThreshold: {Value}", _settings.MinVelocityThreshold);
+        _logger.LogInformation("  SMAWindowSeconds: {Value}", _settings.SMAWindowSeconds);
+        _logger.LogInformation("  SlopeWindowSize: {Value}", _settings.SlopeWindowSize);
+        _logger.LogInformation("  ChopThresholdPercent: {Value:P4}", _settings.ChopThresholdPercent);
+        _logger.LogInformation("  MinChopAbsolute: {Value:C}", _settings.MinChopAbsolute);
+        _logger.LogInformation("  TrendWindowSeconds: {Value}", _settings.TrendWindowSeconds);
+        _logger.LogInformation("");
+        _logger.LogInformation("Trading:");
+        _logger.LogInformation("  UseMarketableLimits: {Value}", _settings.UseMarketableLimits);
+        _logger.LogInformation("  IocLimitOffsetCents: {Value}", _settings.IocLimitOffsetCents);
+        _logger.LogInformation("  TrailingStopPercent: {Value:P2}", _settings.TrailingStopPercent);
+        _logger.LogInformation("");
+        _logger.LogInformation("Profit:");
+        _logger.LogInformation("  ProfitReinvestmentPercent: {Value:P0}", _settings.ProfitReinvestmentPercent);
+        _logger.LogInformation("  EnableTrimming: {Value}", _settings.EnableTrimming);
+        _logger.LogInformation("  TrimRatio: {Value:P0}", _settings.TrimRatio);
+        _logger.LogInformation("  TrimTriggerPercent: {Value:P2}", _settings.TrimTriggerPercent);
+        _logger.LogInformation("  TrimSlopeThreshold: {Value}", _settings.TrimSlopeThreshold);
+        _logger.LogInformation("  TrimCooldownSeconds: {Value}", _settings.TrimCooldownSeconds);
+        _logger.LogInformation("");
+        _logger.LogInformation("Exit Strategy:");
+        _logger.LogInformation("  ScalpWaitSeconds: {Value}", _settings.ExitStrategy.ScalpWaitSeconds);
+        _logger.LogInformation("  TrendWaitSeconds: {Value}", _settings.ExitStrategy.TrendWaitSeconds);
+        _logger.LogInformation("  TrendConfidenceThreshold: {Value}", _settings.ExitStrategy.TrendConfidenceThreshold);
+        _logger.LogInformation("");
+        _logger.LogInformation("Symbols:");
         _logger.LogInformation("  Bot ID: {BotId}", _settings.BotId);
         _logger.LogInformation("  Bull: {Bull} | Bear: {Bear} | Benchmark: {Bench}",
             _settings.BullSymbol,
             _settings.BearSymbol ?? "(none - bull-only)",
             _settings.BenchmarkSymbol);
-        _logger.LogInformation("  SMA Window: {Window}s | Chop: {Chop:P3}",
-            _settings.SMAWindowSeconds, _settings.ChopThresholdPercent);
         _logger.LogInformation("  Mode: {Mode}",
             _settings.LowLatencyMode ? "Low-Latency Streaming" : "HTTP Polling");
         _logger.LogInformation("");
