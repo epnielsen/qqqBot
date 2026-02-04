@@ -10,19 +10,20 @@
     "//_COMMENT": "--- PHASE 1: OPEN VOLATILITY (09:30 - 10:30) ---",
     "MinVelocityThreshold": 0.000005,
     "SMAWindowSeconds": 120,
-    "SlopeWindowSize": 10,
+    "SlopeWindowSize": 20,
     "ChopThresholdPercent": 0.001,
     "MinChopAbsolute": 0.05,
     "TrendWindowSeconds": 900,
 
     "ExitStrategy": {
         "ScalpWaitSeconds": 0,
-        "TrendWaitSeconds": 60,
+        "TrendWaitSeconds": 180,
         "TrendConfidenceThreshold": 0.0002
     },
     "UseMarketableLimits": false,
-    "IocLimitOffsetCents": 10,
-    "TrailingStopPercent": 0.003,
+    "IocLimitOffsetCents": 20,
+    "IocRetryStepCents": 10,
+    "TrailingStopPercent": 0.005,
     "EnableTrimming": false,
     "TrimTriggerPercent": 0.005,
     "TrimSlopeThreshold": 0.000002,
@@ -46,8 +47,7 @@
     
     "LowLatencyMode": true,
     "UseIocOrders": true,
-    "IocRetryStepCents": 5,
-    "IocMaxRetries": 5,
+    "IocMaxRetries": 5,    
     "IocMaxDeviationPercent": 0.005,
     "IocRemainingSharesTolerance": 2,
     "KeepAlivePingSeconds": 5,
@@ -55,7 +55,7 @@
 
     "StatusLogIntervalSeconds": 5,
 
-    "StartingAmount": 10176.69
+    "StartingAmount": 10000
 
   }
 }

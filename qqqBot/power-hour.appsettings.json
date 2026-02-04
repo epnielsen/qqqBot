@@ -16,14 +16,14 @@
     "TrendWindowSeconds": 1800,    
     "ExitStrategy": {
         "ScalpWaitSeconds": 0,
-        "TrendWaitSeconds": 180,
+        "TrendWaitSeconds": 120,
         "TrendConfidenceThreshold": 0.00015
     },
-    "UseMarketableLimits": true,
-    "IocLimitOffsetCents": 5,
+    "UseMarketableLimits": false,
+    "IocLimitOffsetCents": 10,
     "TrailingStopPercent": 0.0015,
     "EnableTrimming": true,
-    "TrimTriggerPercent": 0.005,
+    "TrimTriggerPercent": 0.003,
     "TrimSlopeThreshold": 0.000002,
     "TrimCooldownSeconds": 60,
     "//_COMMENT_END": "----------------------------",
@@ -55,7 +55,7 @@
 
     "StatusLogIntervalSeconds": 5,
 
-    "StartingAmount": 10176.69
+    "StartingAmount": 10000
 
   }
 }
