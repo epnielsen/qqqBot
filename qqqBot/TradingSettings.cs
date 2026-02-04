@@ -15,7 +15,11 @@ class TradingSettings
     public decimal MinChopAbsolute { get; set; } = 0.02m; // Absolute floor for hysteresis (tick-aware)
     public bool SlidingBand { get; set; } = false; // When true, band slides based on position high/low
     public decimal SlidingBandFactor { get; set; } = 0.5m; // Exit threshold: BULL exits at (high - width*factor), BEAR exits at (low + width*factor)
-    public int NeutralWaitSeconds { get; set; } = 0; // 0 = liquidate immediately, -1 = hold through neutral
+    
+    // DYNAMIC EXIT STRATEGY (Hybrid Scalp/Trend Mode)
+    // Switches between fast exit (scalp) and slow exit (trend) based on slope strength
+    public DynamicExitConfig ExitStrategy { get; set; } = new();
+    
     public decimal StartingAmount { get; set; } = 10000m;
     public bool BullOnlyMode { get; set; } = false;
     public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
@@ -46,4 +50,31 @@ class TradingSettings
     
     // Generate a client order ID with bot prefix for order tracking
     public string GenerateClientOrderId() => $"qqqBot-{BotId}-{Guid.NewGuid():N}";
+}
+/// <summary>
+/// Configuration for dynamic exit strategy that switches between Scalp and Trend modes
+/// based on the strength of the current trend (absolute slope value).
+/// </summary>
+class DynamicExitConfig
+{
+    /// <summary>
+    /// How long to wait in Neutral if the trend is weak (Chop/Scalp mode).
+    /// Recommended: 0 seconds (immediate exit in choppy markets).
+    /// Set to -1 to hold through neutral (disabled).
+    /// </summary>
+    public int ScalpWaitSeconds { get; set; } = 0;
+
+    /// <summary>
+    /// How long to wait in Neutral if the trend is strong (Trend mode).
+    /// Recommended: 120 seconds (patience for momentum to resume).
+    /// Set to -1 to hold through neutral (disabled).
+    /// </summary>
+    public int TrendWaitSeconds { get; set; } = 120;
+
+    /// <summary>
+    /// The absolute slope value required to trigger "Trend Mode".
+    /// When |slope| >= this threshold, use TrendWaitSeconds; otherwise use ScalpWaitSeconds.
+    /// Recommended: 0.00015 (adjust based on your instrument volatility).
+    /// </summary>
+    public double TrendConfidenceThreshold { get; set; } = 0.00015;
 }

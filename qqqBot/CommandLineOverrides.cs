@@ -6,7 +6,8 @@ public class CommandLineOverrides
     public bool BullOnlyMode { get; set; }
     public bool HasOverrides { get; set; }
     public bool UseBtcEarlyTrading { get; set; }
-    public int? NeutralWaitSecondsOverride { get; set; }
+    public int? ScalpWaitSecondsOverride { get; set; }  // For chop/scalp mode neutral timeout
+    public int? TrendWaitSecondsOverride { get; set; }  // For trend mode neutral timeout
     public decimal? MinChopAbsoluteOverride { get; set; }
     public bool WatchBtc { get; set; }
     public string? BotIdOverride { get; set; }
@@ -14,7 +15,6 @@ public class CommandLineOverrides
     public decimal? TrailingStopPercentOverride { get; set; }
     public bool UseMarketableLimits { get; set; }
     public decimal? MaxSlippagePercentOverride { get; set; }
-    public decimal? TakeProfitAmountOverride { get; set; }
     // Low-latency mode flags
     public bool LowLatencyMode { get; set; }
     public bool UseIocOrders { get; set; }
@@ -41,16 +41,29 @@ public class CommandLineOverrides
             {
                 overrides.UseBtcEarlyTrading = true;
             }
-            else if (arg.StartsWith("-neutralwait=", StringComparison.OrdinalIgnoreCase))
+            else if (arg.StartsWith("-scalpwait=", StringComparison.OrdinalIgnoreCase))
             {
-                var value = arg.Substring("-neutralwait=".Length).Trim();
-                if (int.TryParse(value, out var seconds) && seconds > 0)
+                var value = arg.Substring("-scalpwait=".Length).Trim();
+                if (int.TryParse(value, out var seconds) && seconds >= -1)
                 {
-                    overrides.NeutralWaitSecondsOverride = seconds;
+                    overrides.ScalpWaitSecondsOverride = seconds;
                 }
                 else
                 {
-                    Console.Error.WriteLine($"[ERROR] -neutralwait must be a positive integer. Got: {value}");
+                    Console.Error.WriteLine($"[ERROR] -scalpwait must be an integer >= -1. Got: {value}");
+                    return null;
+                }
+            }
+            else if (arg.StartsWith("-trendwait=", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg.Substring("-trendwait=".Length).Trim();
+                if (int.TryParse(value, out var seconds) && seconds >= -1)
+                {
+                    overrides.TrendWaitSecondsOverride = seconds;
+                }
+                else
+                {
+                    Console.Error.WriteLine($"[ERROR] -trendwait must be an integer >= -1. Got: {value}");
                     return null;
                 }
             }
@@ -119,23 +132,8 @@ public class CommandLineOverrides
             {
                 overrides.UseIocOrders = true;
             }
-            else if (arg.StartsWith("-takeprofit=", StringComparison.OrdinalIgnoreCase))
-            {
-                var value = arg.Substring("-takeprofit=".Length).Trim();
-                if (decimal.TryParse(value, out var dollars) && dollars >= 0)
-                {
-                    overrides.TakeProfitAmountOverride = dollars;
-                }
-                else
-                {
-                    Console.Error.WriteLine($"[ERROR] -takeprofit must be a non-negative number. Got: {value}");
-                    return null;
-                }
-            }
-            else if (arg.Equals("-takeprofit", StringComparison.OrdinalIgnoreCase))
-            {
-                overrides.TakeProfitAmountOverride = 500m; // Default to $500 if no value provided
-            }
+            // NOTE: -takeprofit has been replaced by the Hybrid Profit Management System.
+            // Use ProfitReinvestmentPercent and Trimming settings in appsettings.json instead.
         }
         
         // Validation: -bear may not be specified without -bull

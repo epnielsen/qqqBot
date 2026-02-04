@@ -62,10 +62,17 @@ public static class ProgramRefactored
                       .AddJsonFile("appsettings.json", optional: false)
                       .AddUserSecrets(typeof(ProgramRefactored).Assembly);
             })
-            .ConfigureLogging(logging =>
+            .ConfigureLogging((context, logging) =>
             {
                 logging.ClearProviders();
                 logging.AddConsole();
+                
+                // Add file logging - writes to logs/qqqbot_{date}.log
+                var logDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+                Directory.CreateDirectory(logDirectory);
+                var logFilePath = Path.Combine(logDirectory, $"qqqbot_{DateTime.Now:yyyyMMdd}.log");
+                logging.AddProvider(new FileLoggerProvider(logFilePath));
+                
                 logging.SetMinimumLevel(LogLevel.Information);
             })
             .ConfigureServices((context, services) =>
@@ -101,7 +108,8 @@ public static class ProgramRefactored
                     if (overrides.BullOnlyMode) settings.BullOnlyMode = true;
                     if (overrides.UseBtcEarlyTrading) settings.UseBtcEarlyTrading = true;
                     if (overrides.WatchBtc) settings.WatchBtc = true;
-                    if (overrides.NeutralWaitSecondsOverride.HasValue) settings.NeutralWaitSeconds = overrides.NeutralWaitSecondsOverride.Value;
+                    if (overrides.ScalpWaitSecondsOverride.HasValue) settings.ExitStrategy.ScalpWaitSeconds = overrides.ScalpWaitSecondsOverride.Value;
+                    if (overrides.TrendWaitSecondsOverride.HasValue) settings.ExitStrategy.TrendWaitSeconds = overrides.TrendWaitSecondsOverride.Value;
                     if (overrides.MinChopAbsoluteOverride.HasValue) settings.MinChopAbsolute = overrides.MinChopAbsoluteOverride.Value;
                     if (overrides.BotIdOverride != null) settings.BotId = overrides.BotIdOverride;
                     if (overrides.MonitorSlippage) settings.MonitorSlippage = true;
@@ -110,7 +118,6 @@ public static class ProgramRefactored
                     if (overrides.MaxSlippagePercentOverride.HasValue) settings.MaxSlippagePercent = overrides.MaxSlippagePercentOverride.Value;
                     if (overrides.LowLatencyMode) settings.LowLatencyMode = true;
                     if (overrides.UseIocOrders) settings.UseIocOrders = true;
-                    if (overrides.TakeProfitAmountOverride.HasValue) settings.TakeProfitAmount = overrides.TakeProfitAmountOverride.Value;
                 }
                 
                 services.AddSingleton(settings);
@@ -269,7 +276,12 @@ public static class ProgramRefactored
             MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
             SlidingBand = configuration.GetValue("TradingBot:SlidingBand", false),
             SlidingBandFactor = configuration.GetValue("TradingBot:SlidingBandFactor", 0.5m),
-            NeutralWaitSeconds = configuration.GetValue("TradingBot:NeutralWaitSeconds", 30),
+            ExitStrategy = new MarketBlocks.Bots.Domain.DynamicExitConfig
+            {
+                ScalpWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:ScalpWaitSeconds", 0),
+                TrendWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:TrendWaitSeconds", 120),
+                TrendConfidenceThreshold = configuration.GetValue("TradingBot:ExitStrategy:TrendConfidenceThreshold", 0.00015)
+            },
             WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
             MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
             TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
