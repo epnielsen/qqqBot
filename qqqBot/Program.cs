@@ -6,12 +6,17 @@ using Alpaca.Markets;
 using CsvHelper;
 using Microsoft.Extensions.Configuration;
 using qqqBot;
-using MarketBlocks.Core.Domain;
-using MarketBlocks.Core.Interfaces;
-using MarketBlocks.Core.Math;
+using MarketBlocks.Trade.Domain;
+using MarketBlocks.Trade.Interfaces;
+using MarketBlocks.Trade.Math;
 using MarketBlocks.Infrastructure.Alpaca;
 using MarketBlocks.Infrastructure.Common;
-using MarketBlocks.Components;
+using MarketBlocks.Trade.Components;
+
+// Alias local types to avoid ambiguity with MarketBlocks.Trade.Domain versions
+using TradingState = qqqBot.TradingState;
+using TradingStateMetadata = qqqBot.TradingStateMetadata;
+using OrphanedPosition = qqqBot.OrphanedPosition;
 
 // ============================================================================
 // QQQ Trading Bot - .NET 10 Alpaca Paper Trading Bot
@@ -31,6 +36,20 @@ if (args.Length > 0 && args[0].Equals("--setup", StringComparison.OrdinalIgnoreC
 if (args.Any(a => a.Equals("-report", StringComparison.OrdinalIgnoreCase)))
 {
     await RunReportAsync(args);
+    return;
+}
+
+// Check for legacy mode (Monolithic architecture)
+// ERROR: We default to refactored mode now. Use --legacy to run the old logic.
+if (args.Any(a => a.Equals("--legacy", StringComparison.OrdinalIgnoreCase)))
+{
+    args = args.Where(a => !a.Equals("--legacy", StringComparison.OrdinalIgnoreCase)).ToArray();
+}
+else
+{
+    // Default: Refactored mode (Producer/Consumer architecture)
+    var filteredArgs = args.Where(a => !a.Equals("--refactored", StringComparison.OrdinalIgnoreCase)).ToArray();
+    await qqqBot.ProgramRefactored.RunAsync(filteredArgs);
     return;
 }
 
@@ -1962,6 +1981,9 @@ async Task EnsurePositionAsync(
     Func<decimal>? getCurrentPrice = null,
     Func<decimal, string>? getSignalAtPrice = null)
 {
+    // First, clean up any orphaned shares from previous partial fills
+    await CleanupOrphanedSharesAsync(tradingState, broker, iocExecutor, stateFilePath, settings);
+    
     // Get current positions from broker
     var targetPosition = await broker.GetPositionAsync(targetSymbol);
     BotPosition? oppositePosition = null;
@@ -1996,33 +2018,43 @@ async Task EnsurePositionAsync(
         oppositePosition = await broker.GetPositionAsync(oppositeSymbol);
     }
     
-    if (oppositePosition is BotPosition oppPos && oppPos.Quantity > 0)
+    if (oppositePosition is BotPosition oppPos && oppPos.Quantity != 0)
     {
-        LogWarning($"[SAFEGUARD] Opposite position {oppositeSymbol} still exists ({oppPos.Quantity} shares). Syncing state and attempting liquidation...");
-        
-        // Sync local state from broker to fix mismatch
-        tradingState.CurrentPosition = oppositeSymbol;
-        tradingState.CurrentShares = oppPos.Quantity;
-        SaveTradingState(stateFilePath, tradingState);
-        
-        // Attempt to liquidate the orphaned position
-        var emergencyLiquidated = await LiquidatePositionAsync(oppositeSymbol!, oppositePosition, tradingState, broker, iocExecutor, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
-        
-        if (!emergencyLiquidated)
+        if (oppPos.Quantity > 0)
         {
-            LogError($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} failed. Aborting buy to prevent dual holdings.");
+            // LONG position exists - sync state and attempt emergency liquidation
+            LogWarning($"[SAFEGUARD] Opposite position {oppositeSymbol} still exists ({oppPos.Quantity} shares). Syncing state and attempting liquidation...");
+            
+            // Sync local state from broker to fix mismatch
+            tradingState.CurrentPosition = oppositeSymbol;
+            tradingState.CurrentShares = oppPos.Quantity;
+            SaveTradingState(stateFilePath, tradingState);
+            
+            // Attempt to liquidate the orphaned position
+            var emergencyLiquidated = await LiquidatePositionAsync(oppositeSymbol!, oppositePosition, tradingState, broker, iocExecutor, stateFilePath, settings, slippageLock, updateSlippage, slippageLogFile, getSignalAtPrice);
+            
+            if (!emergencyLiquidated)
+            {
+                LogError($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} failed. Aborting buy to prevent dual holdings.");
+                return;
+            }
+            
+            // Verify liquidation succeeded
+            var verifyPos = await broker.GetPositionAsync(oppositeSymbol!);
+            if (verifyPos is BotPosition stillHeld && stillHeld.Quantity > 0)
+            {
+                LogError($"[SAFEGUARD] {oppositeSymbol} still has {stillHeld.Quantity} shares after emergency liquidation. Aborting.");
+                return;
+            }
+            
+            LogSuccess($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} successful. Proceeding with buy.");
+        }
+        else
+        {
+            // SHORT position exists - this bot doesn't manage shorts
+            LogError($"[SAFEGUARD] SHORT position detected: {oppositeSymbol} has {oppPos.Quantity} shares. This bot does not manage short positions. Aborting buy to prevent complications.");
             return;
         }
-        
-        // Verify liquidation succeeded
-        var verifyPos = await broker.GetPositionAsync(oppositeSymbol!);
-        if (verifyPos is BotPosition stillHeld && stillHeld.Quantity > 0)
-        {
-            LogError($"[SAFEGUARD] {oppositeSymbol} still has {stillHeld.Quantity} shares after emergency liquidation. Aborting.");
-            return;
-        }
-        
-        LogSuccess($"[SAFEGUARD] Emergency liquidation of {oppositeSymbol} successful. Proceeding with buy.");
     }
 
     // 3. Buy Target if not held
@@ -2093,6 +2125,112 @@ async Task EnsureNeutralAsync(
 }
 
 
+// Helper: Cleanup Orphaned Shares
+// Called after a successful position switch to liquidate any remaining shares from partial fills
+async Task CleanupOrphanedSharesAsync(
+    TradingState tradingState,
+    IBrokerExecution broker,
+    IocMachineGunExecutor iocExecutor,
+    string stateFilePath,
+    TradingSettings settings)
+{
+    if (tradingState.OrphanedShares == null || tradingState.OrphanedShares.Shares <= 0)
+    {
+        return; // No orphans to clean up
+    }
+    
+    var orphan = tradingState.OrphanedShares;
+    Log($"[ORPHAN] Cleaning up {orphan.Shares} orphaned share(s) of {orphan.Symbol}...");
+    
+    try
+    {
+        // Get current price for the orphaned symbol
+        var orphanPrice = await broker.GetLatestPriceAsync(orphan.Symbol);
+        var limitPrice = orphanPrice - (settings.IocLimitOffsetCents / 100m); // Aggressive sell
+        
+        // Use IOC machine gun to liquidate orphans
+        var result = await iocExecutor.ExecuteAsync(
+            orphan.Symbol,
+            orphan.Shares,
+            BotOrderSide.Sell,
+            limitPrice,
+            settings.IocRetryStepCents,
+            settings.IocMaxRetries + 2, // Extra retries for cleanup
+            settings.IocMaxDeviationPercent * 2); // More aggressive deviation allowance
+        
+        if (result.FilledQty > 0)
+        {
+            // Add proceeds to cash
+            tradingState.AvailableCash += result.TotalProceeds;
+            
+            if (result.FilledQty >= orphan.Shares)
+            {
+                // Fully cleaned up
+                tradingState.OrphanedShares = null;
+                SaveTradingState(stateFilePath, tradingState);
+                LogSuccess($"[ORPHAN] Cleanup complete: Sold {result.FilledQty} @ ${result.AvgPrice:N4} (+${result.TotalProceeds:N2})");
+            }
+            else
+            {
+                // Still have some orphans left
+                var remaining = orphan.Shares - result.FilledQty;
+                tradingState.OrphanedShares.Shares = remaining;
+                SaveTradingState(stateFilePath, tradingState);
+                LogWarning($"[ORPHAN] Partial cleanup: Sold {result.FilledQty} @ ${result.AvgPrice:N4}. {remaining} share(s) still orphaned.");
+            }
+        }
+        else
+        {
+            // IOC failed - try a market order as last resort
+            LogWarning($"[ORPHAN] IOC cleanup failed. Attempting market order...");
+            
+            var marketRequest = new BotOrderRequest
+            {
+                Symbol = orphan.Symbol,
+                Quantity = orphan.Shares,
+                Side = BotOrderSide.Sell,
+                Type = BotOrderType.Market,
+                TimeInForce = BotTimeInForce.Day,
+                ClientOrderId = settings.GenerateClientOrderId()
+            };
+            
+            try
+            {
+                var order = await broker.SubmitOrderAsync(marketRequest);
+                Log($"[ORPHAN] Market order submitted: {order.OrderId}");
+                
+                // Wait for fill
+                for (int i = 0; i < 10; i++)
+                {
+                    await Task.Delay(500);
+                    var filledOrder = await broker.GetOrderAsync(order.OrderId);
+                    
+                    if (filledOrder.Status == BotOrderStatus.Filled && filledOrder.AverageFillPrice.HasValue)
+                    {
+                        var proceeds = filledOrder.FilledQuantity * filledOrder.AverageFillPrice.Value;
+                        tradingState.AvailableCash += proceeds;
+                        tradingState.OrphanedShares = null;
+                        SaveTradingState(stateFilePath, tradingState);
+                        LogSuccess($"[ORPHAN] Market cleanup complete: Sold {filledOrder.FilledQuantity} @ ${filledOrder.AverageFillPrice:N4} (+${proceeds:N2})");
+                        return;
+                    }
+                }
+                
+                LogError($"[ORPHAN] Market order did not fill within timeout. Orphan remains.");
+            }
+            catch (Exception marketEx)
+            {
+                LogError($"[ORPHAN] Market order failed: {marketEx.Message}");
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        LogError($"[ORPHAN] Cleanup failed: {ex.Message}. Will retry on next cycle.");
+    }
+}
+
+
 // Helper: Liquidate Position
 // Returns true if liquidation succeeded, false if it failed
 // IMPORTANT: This method now WAITS for the sell order to fill before returning
@@ -2119,11 +2257,41 @@ async Task<bool> LiquidatePositionAsync(
     
     if (shareCount <= 0)
     {
-        Log($"[WARN] No shares to liquidate for {symbol} (local state shows 0). Clearing state.");
-        tradingState.CurrentPosition = null;
-        tradingState.CurrentShares = 0;
-        SaveTradingState(stateFilePath, tradingState);
-        return true; // Nothing to sell, state is clean
+        // LOCAL STATE SHOWS 0 - but check if broker has a real position (state/broker mismatch)
+        // This can happen if trading_state.json was deleted or corrupted while positions exist
+        if (position is { } pos && pos.Quantity != 0)
+        {
+            // CRITICAL: Broker has shares but local state doesn't! This is a dangerous mismatch.
+            // For LONG positions (Quantity > 0): Sync state and liquidate to prevent dual holdings
+            // For SHORT positions (Quantity < 0): Log error but don't auto-liquidate shorts
+            if (pos.Quantity > 0)
+            {
+                LogWarning($"[STATE MISMATCH] Local state shows 0 shares but broker has {pos.Quantity} shares of {symbol}. Syncing state and liquidating...");
+                tradingState.CurrentPosition = symbol;
+                tradingState.CurrentShares = pos.Quantity;
+                shareCount = pos.Quantity;
+                SaveTradingState(stateFilePath, tradingState);
+                // Continue to liquidation below
+            }
+            else
+            {
+                // SHORT POSITION detected - this bot doesn't manage shorts, so don't touch it
+                LogError($"[STATE MISMATCH] Broker shows SHORT position of {pos.Quantity} shares of {symbol}. This bot does not manage short positions - manual intervention required.");
+                // Clear local state but return false to prevent position switch
+                tradingState.CurrentPosition = null;
+                tradingState.CurrentShares = 0;
+                SaveTradingState(stateFilePath, tradingState);
+                return false; // Block position switch - there's a short position we can't handle
+            }
+        }
+        else
+        {
+            Log($"[WARN] No shares to liquidate for {symbol} (local state shows 0). Clearing state.");
+            tradingState.CurrentPosition = null;
+            tradingState.CurrentShares = 0;
+            SaveTradingState(stateFilePath, tradingState);
+            return true; // Nothing to sell, state is clean
+        }
     }
     
     var estimatedProceeds = shareCount * quotePrice;
@@ -2219,6 +2387,33 @@ async Task<bool> LiquidatePositionAsync(
             {
                 // Partial fill - still have shares
                 var remainingShares = shareCount - result.FilledQty;
+                
+                // Check if remaining shares are within tolerance ("good enough" liquidation)
+                if (remainingShares <= settings.IocRemainingSharesTolerance)
+                {
+                    // Queue orphaned shares for cleanup after position switch completes
+                    tradingState.OrphanedShares = new OrphanedPosition
+                    {
+                        Symbol = symbol,
+                        Shares = remainingShares,
+                        CreatedAt = DateTime.UtcNow.ToString("o")
+                    };
+                    
+                    LogWarning($"[FILL] IOC Sell partial: {result.FilledQty}/{shareCount} @ ${result.AvgPrice:N4}. Queued {remainingShares} share(s) for cleanup after position switch.");
+                    
+                    // Clear main position - we're treating this as liquidated for position switch purposes
+                    tradingState.CurrentPosition = null;
+                    tradingState.CurrentShares = 0;
+                    SaveTradingState(stateFilePath, tradingState);
+                    
+                    // Display balance and P/L (same as complete fill)
+                    var partialTotalBalance = tradingState.AvailableCash + tradingState.AccumulatedLeftover;
+                    var partialProfitLoss = partialTotalBalance - tradingState.StartingAmount;
+                    LogBalanceWithPL(partialTotalBalance, partialProfitLoss);
+                    
+                    return true; // Treat as successful liquidation
+                }
+                
                 tradingState.CurrentShares = remainingShares;
                 SaveTradingState(stateFilePath, tradingState);
                 
@@ -2635,6 +2830,9 @@ async Task BuyPositionAsync(
                         _ = File.AppendAllTextAsync(slippageLogFile, csvLine + Environment.NewLine);
                     }
                 }
+                
+                // Cleanup any orphaned shares from previous partial liquidation
+                await CleanupOrphanedSharesAsync(tradingState, broker, iocExecutor, stateFilePath, settings);
             }
             else
             {
@@ -2763,14 +2961,36 @@ async Task BuyPositionAsync(
                              filledOrder.Status == BotOrderStatus.Expired ||
                              filledOrder.Status == BotOrderStatus.Rejected)
                     {
-                        // Order cancelled/rejected - rollback state
-                        LogError($"[FILL] Buy order {filledOrder.Status} - rolling back state");
-                        tradingState.AvailableCash = preBuyCash;
-                        tradingState.AccumulatedLeftover = 0m;
-                        tradingState.CurrentPosition = null;
-                        tradingState.CurrentShares = 0;
-                        SaveTradingState(stateFilePath, tradingState);
-                        LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
+                        // Order cancelled/rejected - but check for PARTIAL FILL first!
+                        var partialQty = filledOrder.FilledQuantity;
+                        var partialPrice = filledOrder.AverageFillPrice ?? basePrice;
+                        
+                        if (partialQty > 0)
+                        {
+                            // CRITICAL: Partial fill occurred - we OWN these shares on the broker!
+                            // Do NOT rollback to pre-buy state - that would orphan the shares
+                            var partialCost = partialQty * partialPrice;
+                            var remainingCash = preBuyCash - partialCost;
+                            
+                            LogWarning($"[FILL] Buy order {filledOrder.Status} with PARTIAL FILL: {partialQty}/{quantity} @ ${partialPrice:N4}");
+                            tradingState.AvailableCash = remainingCash;
+                            tradingState.AccumulatedLeftover = 0m;
+                            tradingState.CurrentPosition = symbol;
+                            tradingState.CurrentShares = partialQty;
+                            SaveTradingState(stateFilePath, tradingState);
+                            LogWarning($"[FILL] State updated for partial: {partialQty} shares of {symbol}, ${remainingCash:N2} cash");
+                        }
+                        else
+                        {
+                            // No fill at all - safe to rollback completely
+                            LogError($"[FILL] Buy order {filledOrder.Status} - rolling back state");
+                            tradingState.AvailableCash = preBuyCash;
+                            tradingState.AccumulatedLeftover = 0m;
+                            tradingState.CurrentPosition = null;
+                            tradingState.CurrentShares = 0;
+                            SaveTradingState(stateFilePath, tradingState);
+                            LogError($"[FILL] State rolled back: ${preBuyCash:N2} cash restored, no position");
+                        }
                         return;
                     }
                     else if (useLimit && !chaserTriggered && (DateTime.UtcNow - startTime).TotalMilliseconds >= chaserTimeoutMs)

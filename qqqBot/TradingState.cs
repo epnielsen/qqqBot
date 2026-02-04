@@ -1,6 +1,16 @@
 namespace qqqBot;
 
 /// <summary>
+/// Represents shares that couldn't be fully liquidated and need cleanup.
+/// </summary>
+public class OrphanedPosition
+{
+    public string Symbol { get; set; } = string.Empty;
+    public long Shares { get; set; }
+    public string? CreatedAt { get; set; }
+}
+
+/// <summary>
 /// Trading state for persistence across restarts.
 /// </summary>
 public class TradingState
@@ -15,6 +25,9 @@ public class TradingState
     public decimal DayStartBalance { get; set; }
     public string? DayStartDate { get; set; }
     public TradingStateMetadata? Metadata { get; set; }
+    
+    // ORPHANED SHARES (partial fills that need cleanup after position switch)
+    public OrphanedPosition? OrphanedShares { get; set; }
     
     // TRAILING STOP PERSISTENCE (survives restarts)
     public decimal? HighWaterMark { get; set; }

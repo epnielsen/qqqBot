@@ -24,10 +24,12 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks\MarketBlocks.csproj" />
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Trade\MarketBlocks.Trade.csproj" />
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Bots\MarketBlocks.Bots.csproj" />
     <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Infrastructure\MarketBlocks.Infrastructure.csproj" />
   </ItemGroup>
 

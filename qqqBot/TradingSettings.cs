@@ -34,6 +34,7 @@ class TradingSettings
     public int IocMaxRetries { get; set; } = 5;           // Max retries before fallback to market order
     public decimal IocRetryStepCents { get; set; } = 1m;  // Price step per retry (cents)
     public decimal IocMaxDeviationPercent { get; set; } = 0.005m; // Max price chase before stopping (0.5%)
+    public int IocRemainingSharesTolerance { get; set; } = 2; // Max remaining shares to treat as "good enough" liquidation
     public int KeepAlivePingSeconds { get; set; } = 5;    // HTTP connection keep-alive ping interval
     public int WarmUpIterations { get; set; } = 10000;    // JIT warm-up iterations before market open
     
