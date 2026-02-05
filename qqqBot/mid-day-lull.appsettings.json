@@ -12,13 +12,13 @@
     "MinVelocityThreshold": 0.000001,
     "SMAWindowSeconds": 180,
     "SlopeWindowSize": 20,
-    "ChopThresholdPercent": 0.001,
+    "ChopThresholdPercent": 0.0011,
     "MinChopAbsolute": 0.02,
     "TrendWindowSeconds": 1800,    
     "ExitStrategy": {
-      "ScalpWaitSeconds": 0,
+      "ScalpWaitSeconds": 30,
       "TrendWaitSeconds": 300,
-      "TrendConfidenceThreshold": 0.00015
+      "TrendConfidenceThreshold": 0.00008
     },
     "UseMarketableLimits": true,
     "IocLimitOffsetCents": 8,
@@ -27,10 +27,10 @@
     "TrimTriggerPercent": 0.0025,
     "TrimSlopeThreshold": 0.000001,
     "TrimCooldownSeconds": 300,
+    "TrimRatio": 0.50,
     "//_COMMENT_END": "----------------------------",
 
     "//_COMMENT_PROFIT": "--- PROFIT MANAGEMENT (Split Allocation Model) ---",
-    "TrimRatio": 0.33,
     "ProfitReinvestmentPercent": 0.5,
     "//_COMMENT_PROFIT_END": "-------------------------------------------------",
 

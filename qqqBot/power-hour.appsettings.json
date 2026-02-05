@@ -15,11 +15,12 @@
     "MinChopAbsolute": 0.02,
     "TrendWindowSeconds": 1800,    
     "ExitStrategy": {
-        "ScalpWaitSeconds": 0,
+        "ScalpWaitSeconds": 30,
         "TrendWaitSeconds": 120,
-        "TrendConfidenceThreshold": 0.00015
+        "TrendConfidenceThreshold": 0.00012
     },
     "UseMarketableLimits": false,
+    "UseIocOrders": false,
     "IocLimitOffsetCents": 10,
     "TrailingStopPercent": 0.0015,
     "EnableTrimming": true,
@@ -30,7 +31,7 @@
 
 
     "//_COMMENT_PROFIT": "--- PROFIT MANAGEMENT (Split Allocation Model) ---",
-    "TrimRatio": 0.33,
+    "TrimRatio": 0.50,
     "ProfitReinvestmentPercent": 0.5,
     "//_COMMENT_PROFIT_END": "-------------------------------------------------",
 
@@ -45,7 +46,6 @@
     "MaxChaseDeviationPercent": 0.003,
     
     "LowLatencyMode": true,
-    "UseIocOrders": true,
     "IocRetryStepCents": 5,
     "IocMaxRetries": 5,
     "IocMaxDeviationPercent": 0.005,
