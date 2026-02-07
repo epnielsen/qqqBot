@@ -18,13 +18,22 @@
     "ExitStrategy": {
         "ScalpWaitSeconds": 30,
         "TrendWaitSeconds": 180,
-        "TrendConfidenceThreshold": 0.00012
+        "TrendConfidenceThreshold": 0.00012,
+        "HoldNeutralIfUnderwater": true
     },
     "UseMarketableLimits": false,
     "UseIocOrders": false,
     "IocLimitOffsetCents": 20,
     "IocRetryStepCents": 10,
     "TrailingStopPercent": 0.005,
+    "DynamicStopLoss": {
+      "Enabled": true,
+      "Tiers": [
+        { "TriggerProfitPercent": 0.005, "StopPercent": 0.003 },
+        { "TriggerProfitPercent": 0.008, "StopPercent": 0.002 },
+        { "TriggerProfitPercent": 0.012, "StopPercent": 0.0015 }
+      ]
+    },
     "EnableTrimming": false,
     "TrimTriggerPercent": 0.005,
     "TrimSlopeThreshold": 0.000002,
@@ -55,7 +64,7 @@
 
     "StatusLogIntervalSeconds": 5,
 
-    "StartingAmount": 9952.72
+    "StartingAmount": 9935.95
 
   }
 }
