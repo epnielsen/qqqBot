@@ -20,6 +20,12 @@ public class CommandLineOverrides
     public bool UseIocOrders { get; set; }
     // Configuration file override
     public string? ConfigFile { get; set; }
+    // Replay & data recording
+    public string? Mode { get; set; }          // "replay" or null (live)
+    public bool FetchHistory { get; set; }      // --fetch-history flag
+    public string? ReplayDate { get; set; }     // --date=2026-02-06
+    public double ReplaySpeed { get; set; } = 10.0; // --speed=10 (multiplier)
+    public string? SymbolsOverride { get; set; } // --symbols=QQQ,TQQQ,SQQQ
     
     public static CommandLineOverrides? Parse(string[] args)
     {
@@ -143,6 +149,35 @@ public class CommandLineOverrides
                     return null;
                 }
                 overrides.ConfigFile = value;
+            }
+            else if (arg.StartsWith("--mode=", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.Mode = arg.Substring("--mode=".Length).Trim().ToLowerInvariant();
+            }
+            else if (arg.Equals("--fetch-history", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.FetchHistory = true;
+            }
+            else if (arg.StartsWith("--date=", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.ReplayDate = arg.Substring("--date=".Length).Trim();
+            }
+            else if (arg.StartsWith("--speed=", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg.Substring("--speed=".Length).Trim();
+                if (double.TryParse(value, out var speed) && speed >= 0)
+                {
+                    overrides.ReplaySpeed = speed;
+                }
+                else
+                {
+                    Console.Error.WriteLine($"[ERROR] --speed must be a non-negative number. Got: {value}");
+                    return null;
+                }
+            }
+            else if (arg.StartsWith("--symbols=", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.SymbolsOverride = arg.Substring("--symbols=".Length).Trim();
             }
             // NOTE: -takeprofit has been replaced by the Hybrid Profit Management System.
             // Use ProfitReinvestmentPercent and Trimming settings in appsettings.json instead.

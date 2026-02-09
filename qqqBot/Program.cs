@@ -252,7 +252,7 @@ async Task RunReportAsync(string[] args)
     using var tradingClient = Environments.Paper.GetAlpacaTradingClient(secretKey);
 
     // Get today's date range in UTC
-    var easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+    var easternZone = EasternTimeZone.Instance;
     var easternNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, easternZone);
     var todayEastern = easternNow.Date;
     
@@ -672,7 +672,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         {
             File.WriteAllText(_slippageLogFile, "Timestamp,Symbol,Side,Quantity,QuotePrice,FillPrice,Slippage,Favor" + Environment.NewLine);
         }
-        Log($"  Slippage Monitoring: Enabled → {Path.GetFileName(_slippageLogFile)}");
+        Log($"  Slippage Monitoring: Enabled -> {Path.GetFileName(_slippageLogFile)}");
     }
 
     // Validate command line override tickers before any trades
@@ -886,8 +886,8 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         }
     }
 
-    // Eastern Time Zone
-    var easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+    // Eastern Time Zone (cross-platform: Windows + Linux/Docker)
+    var easternZone = EasternTimeZone.Instance;
 
     // =========================================================================
     // LOW-LATENCY MODE INFRASTRUCTURE (must be declared before stream handlers)

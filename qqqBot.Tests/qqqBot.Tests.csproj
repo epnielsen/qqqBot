@@ -11,6 +11,7 @@
     <PackageReference Include="Alpaca.Markets" Version="7.*" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="MarketBlocks" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -18,14 +19,24 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Trade\MarketBlocks.Trade.csproj" />
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Bots\MarketBlocks.Bots.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
-  <!-- Include TrailingStopEngine from main project for testing -->
+  <!-- Include source files from main project for testing -->
   <ItemGroup>
     <Compile Include="..\qqqBot\TrailingStopEngine.cs" Link="TrailingStopEngine.cs" />
     <Compile Include="..\qqqBot\TradingState.cs" Link="TradingState.cs" />
     <Compile Include="..\qqqBot\TradingStateMetadata.cs" Link="TradingStateMetadata.cs" />
+    <Compile Include="..\qqqBot\SimulatedBroker.cs" Link="SimulatedBroker.cs" />
+    <Compile Include="..\qqqBot\MarketDataRecorder.cs" Link="MarketDataRecorder.cs" />
+    <Compile Include="..\qqqBot\ReplayMarketDataSource.cs" Link="ReplayMarketDataSource.cs" />
+    <Compile Include="..\qqqBot\RecordingAnalystDataSource.cs" Link="RecordingAnalystDataSource.cs" />
+    <Compile Include="..\qqqBot\CommandLineOverrides.cs" Link="CommandLineOverrides.cs" />
   </ItemGroup>
 
 </Project>

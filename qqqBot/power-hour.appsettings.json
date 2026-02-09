@@ -11,7 +11,7 @@
     "MinVelocityThreshold": 0.000002,
     "SMAWindowSeconds": 120,
     "SlopeWindowSize": 15,
-    "ChopThresholdPercent": 0.0007,
+    "ChopThresholdPercent": 0.0015,
     "MinChopAbsolute": 0.02,
     "TrendWindowSeconds": 1800,    
     "ExitStrategy": {

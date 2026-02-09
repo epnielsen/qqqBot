@@ -1,0 +1,958 @@
+================================================================================
+MARKETBLOCKS & QQQBOT CODEBASE REFERENCE
+================================================================================
+This file contains the key source code from the qqqBot and MarketBlocks projects
+that you will need to draft:
+1. TradingIntent record + enums
+2. IIntentResolver interface + RegimeIntentResolver implementation
+3. IStatePublisher interface
+4. FreeSharesManager skeleton
+
+Note: Place new types in a MarketBlocks.Bots.Intent namespace.
+================================================================================
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Domain/MarketRegime.cs
+-----
+namespace MarketBlocks.Bots.Domain;
+
+/// <summary>
+/// Represents a snapshot of the market's regime at a specific moment.
+/// This is the message contract between the Analyst (Producer) and Trader (Consumer).
+/// </summary>
+/// <param name="Signal">The trading signal: "BULL", "BEAR", "NEUTRAL", or "MARKET_CLOSE"</param>
+/// <param name="BenchmarkPrice">Current benchmark price (e.g., QQQ)</param>
+/// <param name="SmaValue">Current SMA value for context/logging</param>
+/// <param name="Slope">Velocity (Linear Regression Slope) of the SMA - used for brake system</param>
+/// <param name="UpperBand">Upper hysteresis band for charting/debugging</param>
+/// <param name="LowerBand">Lower hysteresis band for charting/debugging</param>
+/// <param name="TimestampUtc">Data freshness timestamp</param>
+/// <param name="Reason">Human-readable reason for the signal (e.g., "Price > UpperBand")</param>
+public record MarketRegime(
+    string Signal,
+    decimal BenchmarkPrice,
+    decimal SmaValue,
+    decimal Slope,
+    decimal UpperBand,
+    decimal LowerBand,
+    DateTime TimestampUtc,
+    string Reason,
+    decimal? BullPrice = null,
+    decimal? BearPrice = null
+)
+{
+    /// <summary>
+    /// Check if this regime data is stale (older than threshold).
+    /// </summary>
+    public bool IsStale(TimeSpan maxAge) => DateTime.UtcNow - TimestampUtc > maxAge;
+    
+    /// <summary>
+    /// Default stale threshold (10 seconds).
+    /// </summary>
+    public static readonly TimeSpan DefaultStaleThreshold = TimeSpan.FromSeconds(10);
+    
+    /// <summary>
+    /// Creates a NEUTRAL regime for stale data protection.
+    /// </summary>
+    public static MarketRegime StaleDataNeutral(decimal lastPrice, decimal sma) =>
+        new("NEUTRAL", lastPrice, sma, 0m, 0m, 0m, DateTime.UtcNow, "Stale Data Protection");
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Domain/TradingState.cs
+-----
+namespace MarketBlocks.Bots.Domain;
+
+/// <summary>
+/// Represents shares that couldn't be fully liquidated and need cleanup.
+/// </summary>
+public class OrphanedPosition
+{
+    public string Symbol { get; set; } = string.Empty;
+    public long Shares { get; set; }
+    public string? CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Trading state for persistence across restarts.
+/// Contains position information, cash tracking, and trailing stop state.
+/// </summary>
+public class TradingState
+{
+    public decimal AvailableCash { get; set; }
+    public decimal AccumulatedLeftover { get; set; }
+    public bool IsInitialized { get; set; }
+    public string? LastTradeTimestamp { get; set; }
+    public string? CurrentPosition { get; set; }
+    public long CurrentShares { get; set; }
+    public decimal? AverageEntryPrice { get; set; } // Track cost basis for P/L calcs
+    public decimal StartingAmount { get; set; }
+    public decimal DayStartBalance { get; set; }
+    public string? DayStartDate { get; set; }
+    public TradingStateMetadata? Metadata { get; set; }
+    
+    // SESSION PROFIT TRACKING (persisted for compound growth)
+    public decimal RealizedSessionPnL { get; set; }
+    public string? CurrentTradingDay { get; set; } // ISO date string for day-reset detection
+    public DateTime? LastTrimTime { get; set; }    // Trim cooldown tracking
+    
+    // ORPHANED SHARES (partial fills that need cleanup after position switch)
+    public OrphanedPosition? OrphanedShares { get; set; }
+    
+    // TRAILING STOP PERSISTENCE (survives restarts)
+    public decimal? HighWaterMark { get; set; }
+    public decimal? LowWaterMark { get; set; }
+    public decimal? TrailingStopValue { get; set; }
+    public bool IsStoppedOut { get; set; }
+    public string? StoppedOutDirection { get; set; }
+    public decimal? WashoutLevel { get; set; }
+    public string? StopoutTimestamp { get; set; }
+    
+    // SLIDING BAND PERSISTENCE
+    public decimal? SlidingBandPositionHighWaterMark { get; set; }
+    public decimal? SlidingBandPositionLowWaterMark { get; set; }
+    
+    // ANALYST STATE PERSISTENCE (survives restarts)
+    public string? LastAnalystSignal { get; set; }
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Domain/TradingStateMetadata.cs
+-----
+namespace MarketBlocks.Bots.Domain;
+
+/// <summary>
+/// Metadata about the trading state for debugging/audit.
+/// </summary>
+public class TradingStateMetadata
+{
+    public string? SymbolBull { get; set; }
+    public string? SymbolBear { get; set; }
+    public string? SymbolIndex { get; set; }
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Domain/TradingSettings.cs (partial - key sections)
+-----
+namespace MarketBlocks.Bots.Domain;
+
+/// <summary>
+/// Configuration settings for trading bots.
+/// Contains all parameters for signal generation and trade execution.
+/// </summary>
+public class TradingSettings
+{
+    private bool _isValidated;
+    
+    public string BotId { get; set; } = "main";
+    public int PollingIntervalSeconds { get; set; } = 1;
+    
+    // CRITICAL: No defaults - must be explicitly configured
+    public string? BullSymbol { get; set; }
+    public string? BearSymbol { get; set; }
+    public decimal StartingAmount { get; set; }
+    public decimal MaxSlippagePercent { get; set; }
+    
+    public string BenchmarkSymbol { get; set; } = "QQQ";
+    public int SMAWindowSeconds { get; set; } = 60;
+    public decimal ChopThresholdPercent { get; set; } = 0.0015m;
+    public decimal MinChopAbsolute { get; set; } = 0.02m;
+    public bool SlidingBand { get; set; } = false;
+    public decimal SlidingBandFactor { get; set; } = 0.5m;
+    
+    public DynamicExitConfig ExitStrategy { get; set; } = new();
+    
+    public bool BullOnlyMode { get; set; } = false;
+    public decimal TrailingStopPercent { get; set; } = 0.0m;
+    public int StopLossCooldownSeconds { get; set; } = 10;
+    public bool UseMarketableLimits { get; set; } = false;
+    public decimal MaxChaseDeviationPercent { get; set; } = 0.003m;
+    
+    // BRAKE SYSTEM (Velocity/Slope Detection)
+    public decimal MinVelocityThreshold { get; set; } = 0.0001m;
+    public int SlopeWindowSize { get; set; } = 5;
+    public int EntryConfirmationTicks { get; set; } = 2;
+    public int TrendWindowSeconds { get; set; } = 1800;
+    
+    // PROFIT MANAGEMENT
+    public decimal ProfitReinvestmentPercent { get; set; } = 0.5m;
+    public bool EnableTrimming { get; set; } = true;
+    public decimal TrimTriggerPercent { get; set; } = 0.015m;
+    public decimal TrimRatio { get; set; } = 0.33m;
+    
+    // IOC SETTINGS
+    public bool UseIocOrders { get; set; } = false;
+    public decimal IocLimitOffsetCents { get; set; } = 1m;
+    public int IocMaxRetries { get; set; } = 5;
+    public decimal IocRetryStepCents { get; set; } = 1m;
+    public decimal IocMaxDeviationPercent { get; set; } = 0.005m;
+    
+    public int SMALength => System.Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
+    
+    public string GenerateClientOrderId() => $"qqqBot-{BotId}-{System.Guid.NewGuid():N}";
+    
+    public void Validate()
+    {
+        if (_isValidated) return;
+        
+        var errors = new List<string>();
+        
+        if (string.IsNullOrWhiteSpace(BullSymbol))
+            errors.Add("BullSymbol is required.");
+        
+        if (!BullOnlyMode && string.IsNullOrWhiteSpace(BearSymbol))
+            errors.Add("BearSymbol is required when BullOnlyMode is false.");
+        
+        if (StartingAmount <= 0)
+            errors.Add($"StartingAmount must be greater than zero.");
+        
+        if (errors.Count > 0)
+            throw new InvalidConfigurationException(string.Join("\n", errors));
+        
+        _isValidated = true;
+    }
+}
+
+public class DynamicExitConfig
+{
+    public int ScalpWaitSeconds { get; set; } = 0;
+    public int TrendWaitSeconds { get; set; } = 120;
+    public double TrendConfidenceThreshold { get; set; } = 0.00015;
+}
+
+public class InvalidConfigurationException : Exception
+{
+    public InvalidConfigurationException(string message) : base(message) { }
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Interfaces/IAnalyst.cs
+-----
+using System.Threading.Channels;
+using MarketBlocks.Bots.Domain;
+
+namespace MarketBlocks.Bots.Interfaces;
+
+/// <summary>
+/// Signal producer that analyzes market data and emits regime changes.
+/// </summary>
+public interface IAnalyst
+{
+    ChannelReader<MarketRegime> RegimeChannel { get; }
+    Task StartAsync(CancellationToken cancellationToken);
+    Task StopAsync(CancellationToken cancellationToken);
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Interfaces/ITrader.cs
+-----
+using System.Threading.Channels;
+using MarketBlocks.Bots.Domain;
+
+namespace MarketBlocks.Bots.Interfaces;
+
+/// <summary>
+/// Trade executor that consumes regime signals and manages positions.
+/// </summary>
+public interface ITrader
+{
+    Task StartAsync(ChannelReader<MarketRegime> regimeChannel, CancellationToken cancellationToken);
+    Task StopAsync(CancellationToken cancellationToken);
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Domain/TradingStateManager.cs
+-----
+using System.Text.Json;
+
+namespace MarketBlocks.Bots.Domain;
+
+/// <summary>
+/// Manages persistence of TradingState to JSON file.
+/// Implements a write-behind buffer (debounce) to reduce IO bottlenecks.
+/// Critical events flush immediately, routine updates are buffered.
+/// </summary>
+public class TradingStateManager : IDisposable
+{
+    private readonly string _stateFilePath;
+    private readonly object _fileLock = new();
+    private readonly object _bufferLock = new();
+    private readonly Timer _flushTimer;
+    
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    
+    private const int DefaultFlushIntervalSeconds = 5;
+    private volatile string? _pendingJson;
+    private bool _isDisposed;
+
+    public TradingStateManager(string stateFilePath, int flushIntervalSeconds = DefaultFlushIntervalSeconds)
+    {
+        _stateFilePath = stateFilePath;
+        var flushInterval = TimeSpan.FromSeconds(flushIntervalSeconds);
+        _flushTimer = new Timer(FlushTimerCallback, null, flushInterval, flushInterval);
+    }
+
+    public string StateFilePath => _stateFilePath;
+
+    public TradingState Load()
+    {
+        lock (_fileLock)
+        {
+            if (!File.Exists(_stateFilePath)) return new TradingState();
+            try
+            {
+                var json = File.ReadAllText(_stateFilePath);
+                return JsonSerializer.Deserialize<TradingState>(json) ?? new TradingState();
+            }
+            catch (Exception)
+            {
+                return new TradingState();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Persist trading state. Set forceImmediate=true for critical events
+    /// (order fills, liquidations, stop-outs, shutdown).
+    /// </summary>
+    public void Save(TradingState state, bool forceImmediate = false)
+    {
+        if (_isDisposed) return;
+        var json = JsonSerializer.Serialize(state, JsonOptions);
+        
+        if (forceImmediate)
+            FlushToDisk(json);
+        else
+            lock (_bufferLock) { _pendingJson = json; }
+    }
+    
+    public void Flush()
+    {
+        string? jsonToFlush;
+        lock (_bufferLock) { jsonToFlush = _pendingJson; _pendingJson = null; }
+        if (jsonToFlush != null) FlushToDisk(jsonToFlush);
+    }
+    
+    private void FlushTimerCallback(object? state) { if (!_isDisposed) Flush(); }
+    
+    private void FlushToDisk(string json)
+    {
+        lock (_fileLock)
+        {
+            try
+            {
+                var tempPath = _stateFilePath + ".tmp";
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, _stateFilePath, overwrite: true);
+            }
+            catch { }
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_isDisposed) return;
+        _isDisposed = true;
+        _flushTimer.Dispose();
+        Flush();
+    }
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Interfaces/IBrokerExecution.cs
+-----
+using MarketBlocks.Trade.Domain;
+
+namespace MarketBlocks.Trade.Interfaces;
+
+/// <summary>
+/// Broker-agnostic interface for order execution.
+/// </summary>
+public interface IBrokerExecution
+{
+    Task<BotOrder> SubmitOrderAsync(BotOrderRequest request, CancellationToken cancellationToken = default);
+    Task<BotOrder> GetOrderAsync(Guid orderId, CancellationToken cancellationToken = default);
+    Task<bool> CancelOrderAsync(Guid orderId, CancellationToken cancellationToken = default);
+    Task<int> CancelAllOpenOrdersAsync(string symbol, CancellationToken cancellationToken = default);
+    Task<BotPosition?> GetPositionAsync(string symbol, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<BotPosition>> GetAllPositionsAsync(CancellationToken cancellationToken = default);
+    Task<decimal> GetBuyingPowerAsync(CancellationToken cancellationToken = default);
+    Task<decimal> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default);
+    Task<bool> ValidateSymbolAsync(string symbol, CancellationToken cancellationToken = default);
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Interfaces/IIocExecutor.cs
+-----
+using MarketBlocks.Trade.Domain;
+
+namespace MarketBlocks.Trade.Interfaces;
+
+public class IocExecutionResult
+{
+    public long FilledQty { get; set; }
+    public decimal AvgPrice { get; set; }
+    public decimal TotalProceeds { get; set; }
+    public int AttemptsUsed { get; set; }
+}
+
+/// <summary>
+/// Interface for IOC order execution with retry logic ("Machine Gun" mode).
+/// </summary>
+public interface IIocExecutor
+{
+    Task<IocExecutionResult> ExecuteAsync(
+        string symbol,
+        long quantity,
+        BotOrderSide side,
+        decimal startingLimitPrice,
+        decimal retryStepCents,
+        int maxRetries,
+        decimal maxDeviationPercent);
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Domain/BotOrderRequest.cs
+-----
+namespace MarketBlocks.Trade.Domain;
+
+/// <summary>
+/// Broker-agnostic order request. Immutable record for thread-safety.
+/// </summary>
+public readonly record struct BotOrderRequest(
+    string Symbol,
+    long Quantity,
+    BotOrderSide Side,
+    BotOrderType Type,
+    BotTimeInForce TimeInForce = BotTimeInForce.Day,
+    decimal? LimitPrice = null,
+    decimal? StopPrice = null,
+    string? ClientOrderId = null)
+{
+    public static BotOrderRequest MarketBuy(string symbol, long quantity, string? clientOrderId = null)
+        => new(symbol, quantity, BotOrderSide.Buy, BotOrderType.Market, BotTimeInForce.Day, ClientOrderId: clientOrderId);
+    
+    public static BotOrderRequest MarketSell(string symbol, long quantity, string? clientOrderId = null)
+        => new(symbol, quantity, BotOrderSide.Sell, BotOrderType.Market, BotTimeInForce.Day, ClientOrderId: clientOrderId);
+    
+    public static BotOrderRequest IocLimitBuy(string symbol, long quantity, decimal limitPrice, string? clientOrderId = null)
+        => new(symbol, quantity, BotOrderSide.Buy, BotOrderType.Limit, BotTimeInForce.Ioc, limitPrice, ClientOrderId: clientOrderId);
+    
+    public static BotOrderRequest IocLimitSell(string symbol, long quantity, decimal limitPrice, string? clientOrderId = null)
+        => new(symbol, quantity, BotOrderSide.Sell, BotOrderType.Limit, BotTimeInForce.Ioc, limitPrice, ClientOrderId: clientOrderId);
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Domain/BotOrder.cs
+-----
+namespace MarketBlocks.Trade.Domain;
+
+/// <summary>
+/// Broker-agnostic order result/status.
+/// </summary>
+public sealed class BotOrder
+{
+    public required Guid OrderId { get; init; }
+    public string? ClientOrderId { get; init; }
+    public required string Symbol { get; init; }
+    public required BotOrderSide Side { get; init; }
+    public required BotOrderType Type { get; init; }
+    public required BotOrderStatus Status { get; init; }
+    public required long Quantity { get; init; }
+    public long FilledQuantity { get; init; }
+    public decimal? AverageFillPrice { get; init; }
+    public decimal? LimitPrice { get; init; }
+    public DateTime? SubmittedAtUtc { get; init; }
+    public DateTime? FilledAtUtc { get; init; }
+    
+    public bool IsTerminal => Status is 
+        BotOrderStatus.Filled or BotOrderStatus.Canceled or 
+        BotOrderStatus.Expired or BotOrderStatus.Rejected;
+    
+    public bool HasFill => FilledQuantity > 0 && AverageFillPrice.HasValue;
+    public long RemainingQuantity => Quantity - FilledQuantity;
+    public decimal TotalFillValue => FilledQuantity * (AverageFillPrice ?? 0m);
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Domain/BotPosition.cs
+-----
+namespace MarketBlocks.Trade.Domain;
+
+/// <summary>
+/// Broker-agnostic position representation.
+/// </summary>
+public readonly record struct BotPosition(
+    string Symbol,
+    long Quantity,
+    decimal AverageEntryPrice,
+    decimal? CurrentPrice = null,
+    decimal? MarketValue = null)
+{
+    public bool IsLong => Quantity > 0;
+    public bool IsShort => Quantity < 0;
+    public long AbsoluteQuantity => System.Math.Abs(Quantity);
+    public decimal CostBasis => AbsoluteQuantity * AverageEntryPrice;
+    
+    public decimal? UnrealizedPnL => CurrentPrice.HasValue 
+        ? (CurrentPrice.Value - AverageEntryPrice) * Quantity : null;
+    
+    public static BotPosition Flat(string symbol) => new(symbol, 0, 0m);
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Domain/BrokerEnums.cs
+-----
+namespace MarketBlocks.Trade.Domain;
+
+public enum BotOrderSide { Buy, Sell }
+
+public enum BotOrderType { Market, Limit, StopLimit, TrailingStop }
+
+public enum BotTimeInForce { Day, Gtc, Ioc, Fok, Opg, Cls }
+
+public enum BotOrderStatus
+{
+    New, Accepted, PartiallyFilled, Filled, Canceled, 
+    Expired, Rejected, PendingCancel, PendingReplace, Suspended
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Math/IncrementalSma.cs
+-----
+namespace MarketBlocks.Trade.Math;
+
+/// <summary>
+/// O(1) complexity Simple Moving Average calculator using a circular buffer.
+/// </summary>
+public sealed class IncrementalSma
+{
+    private readonly decimal[] _buffer;
+    private readonly int _capacity;
+    private int _count;
+    private int _head;
+    private decimal _runningSum;
+    
+    public IncrementalSma(int capacity)
+    {
+        if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
+        _capacity = capacity;
+        _buffer = new decimal[capacity];
+    }
+    
+    public decimal Add(decimal value)
+    {
+        if (_count < _capacity)
+        {
+            _buffer[_count] = value;
+            _runningSum += value;
+            _count++;
+        }
+        else
+        {
+            decimal oldest = _buffer[_head];
+            _runningSum = _runningSum - oldest + value;
+            _buffer[_head] = value;
+            _head = (_head + 1) % _capacity;
+        }
+        return _runningSum / _count;
+    }
+    
+    public decimal CurrentAverage => _count > 0 ? _runningSum / _count : 0m;
+    public int Count => _count;
+    public int Capacity => _capacity;
+    public bool IsFull => _count >= _capacity;
+    public decimal FillRatio => (decimal)_count / _capacity;
+    
+    public void Clear()
+    {
+        _count = 0; _head = 0; _runningSum = 0m;
+        Array.Clear(_buffer, 0, _buffer.Length);
+    }
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Trade/Core/Math/StreamingSlope.cs
+-----
+namespace MarketBlocks.Trade.Math;
+
+/// <summary>
+/// Calculates the Linear Regression Slope (Velocity) of a streaming data series.
+/// Used to detect if a trend is accelerating, decelerating, or flattening.
+/// </summary>
+public class StreamingSlope
+{
+    private readonly decimal[] _buffer;
+    private readonly int _windowSize;
+    private int _count;
+    private int _head;
+    private readonly decimal _sumX;
+    private readonly decimal _denominator;
+
+    public StreamingSlope(int windowSize)
+    {
+        if (windowSize < 2) throw new ArgumentException("Slope window must be at least 2");
+        _windowSize = windowSize;
+        _buffer = new decimal[windowSize];
+        
+        _sumX = (decimal)(windowSize * (windowSize - 1)) / 2.0m;
+        decimal sumXSquared = (decimal)((windowSize - 1) * windowSize * (2 * windowSize - 1)) / 6.0m;
+        _denominator = (windowSize * sumXSquared) - (_sumX * _sumX);
+    }
+
+    public void Add(decimal yValue)
+    {
+        _buffer[_head] = yValue;
+        _head = (_head + 1) % _windowSize;
+        if (_count < _windowSize) _count++;
+    }
+
+    public decimal CurrentSlope
+    {
+        get
+        {
+            if (_count < _windowSize) return 0m;
+
+            decimal sumY = 0m;
+            decimal sumXY = 0m;
+            int bufferIndex = _head; 
+            
+            for (int x = 0; x < _windowSize; x++)
+            {
+                decimal y = _buffer[bufferIndex];
+                sumY += y;
+                sumXY += x * y;
+                bufferIndex = (bufferIndex + 1) % _windowSize;
+            }
+
+            return ((_windowSize * sumXY) - (_sumX * sumY)) / _denominator;
+        }
+    }
+    
+    public bool IsReady => _count >= _windowSize;
+    public int Count => _count;
+    public int WindowSize => _windowSize;
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Services/AnalystEngine.cs (partial - key sections)
+-----
+using System.Threading.Channels;
+using MarketBlocks.Bots.Domain;
+using MarketBlocks.Bots.Interfaces;
+using MarketBlocks.Trade.Domain;
+using MarketBlocks.Trade.Interfaces;
+using MarketBlocks.Trade.Math;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace MarketBlocks.Bots.Services;
+
+/// <summary>
+/// Analyst Engine - Producer in the Producer/Consumer pattern.
+/// Subscribes to market data, calculates SMA/bands, and emits MarketRegime signals.
+/// </summary>
+public class AnalystEngine : BackgroundService, IAnalyst
+{
+    private readonly ILogger<AnalystEngine> _logger;
+    private readonly TradingSettings _settings;
+    private readonly IAnalystMarketDataSource _marketSource;
+    private readonly Channel<MarketRegime> _regimeChannel;
+    private readonly Channel<PriceTick> _priceChannel;
+    private readonly IncrementalSma _benchmarkSma;
+    private readonly StreamingSlope _smaSlopeCalc;
+    private readonly StreamingSlope _exitSlopeCalc; // Slow slope for holding (2x window)
+    private readonly IncrementalSma _trendSma;      // Long-term trend detection
+    
+    // Sliding Bands feature: needs position awareness (CURRENT COUPLING POINT)
+    private readonly Func<string?> _getCurrentPosition;
+    private readonly Func<long> _getCurrentShares;
+    
+    // Signal state persistence (Analyst owns its own state)
+    private readonly Func<string?> _getLastSignal;
+    private readonly Action<string> _saveLastSignal;
+    
+    private string _lastSignal = "NEUTRAL";
+    private int _sustainedVelocityTicks = 0;
+
+    public ChannelReader<MarketRegime> RegimeChannel => _regimeChannel.Reader;
+    
+    public AnalystEngine(
+        ILogger<AnalystEngine> logger,
+        TradingSettings settings,
+        IAnalystMarketDataSource marketSource,
+        IMarketDataSource? historicalDataSource,
+        IMarketDataAdapter? fallbackDataAdapter,
+        Func<string?> getCurrentPosition,  // CALLBACK TO TRADER
+        Func<long> getCurrentShares,        // CALLBACK TO TRADER
+        Func<string?> getLastSignal,        // CALLBACK TO TRADER
+        Action<string> saveLastSignal)      // CALLBACK TO TRADER
+    {
+        _logger = logger;
+        _settings = settings;
+        _marketSource = marketSource;
+        _getCurrentPosition = getCurrentPosition;
+        _getCurrentShares = getCurrentShares;
+        _getLastSignal = getLastSignal;
+        _saveLastSignal = saveLastSignal;
+        
+        _regimeChannel = Channel.CreateUnbounded<MarketRegime>();
+        _priceChannel = Channel.CreateUnbounded<PriceTick>();
+        
+        _benchmarkSma = new IncrementalSma(_settings.SMALength);
+        _smaSlopeCalc = new StreamingSlope(_settings.SlopeWindowSize);
+        _exitSlopeCalc = new StreamingSlope(_settings.SlopeWindowSize * 2);
+        
+        var trendSmaLength = System.Math.Max(1, _settings.TrendWindowSeconds / _settings.PollingIntervalSeconds);
+        _trendSma = new IncrementalSma(trendSmaLength);
+    }
+
+    // ... ProcessTick method generates MarketRegime and writes to channel ...
+    
+    private string DetermineSignal(
+        decimal price, decimal upperBand, decimal lowerBand, 
+        decimal entrySlope, decimal exitSlope, decimal currentSma, DateTime easternNow)
+    {
+        // Market close check
+        if (easternNow.TimeOfDay >= new TimeSpan(15, 58, 0)) return "MARKET_CLOSE";
+
+        // Cruise Control: Hold if deep in the money
+        bool isCruising = false;
+        decimal bandRadius = (upperBand - lowerBand) / 2.0m;
+        decimal cruiseBuffer = bandRadius * 0.5m;
+        
+        if (_lastSignal == "BULL" && price > (currentSma + cruiseBuffer)) isCruising = true;
+        if (_lastSignal == "BEAR" && price < (currentSma - cruiseBuffer)) isCruising = true;
+
+        bool isInTrade = _lastSignal == "BULL" || _lastSignal == "BEAR";
+        decimal activeSlope = isInTrade ? exitSlope : entrySlope;
+
+        // BULL LOGIC (delayed entry via EntryConfirmationTicks)
+        if (price > upperBand && activeSlope > 0)
+        {
+            if (_lastSignal == "BULL") return "BULL";
+            _sustainedVelocityTicks++;
+            if (_sustainedVelocityTicks >= _settings.EntryConfirmationTicks) return "BULL";
+        }
+        // BEAR LOGIC (instant - no delay)
+        else if (price < lowerBand && activeSlope < 0)
+        {
+            _sustainedVelocityTicks = 0;
+            return _settings.BullOnlyMode ? "NEUTRAL" : "BEAR";
+        }
+        else
+        {
+            _sustainedVelocityTicks = 0;
+            if (isInTrade && isCruising) return _lastSignal;
+        }
+
+        return "NEUTRAL";
+    }
+}
+
+-----
+FILE: MarketBlocks/MarketBlocks.Bots/Services/TraderEngine.cs (partial - key sections)
+-----
+using System.Threading.Channels;
+using MarketBlocks.Bots.Domain;
+using MarketBlocks.Bots.Interfaces;
+using MarketBlocks.Trade.Domain;
+using MarketBlocks.Trade.Interfaces;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace MarketBlocks.Bots.Services;
+
+/// <summary>
+/// Trader Engine - Consumer in the Producer/Consumer pattern.
+/// Consumes MarketRegime signals and executes trades.
+/// </summary>
+public class TraderEngine : BackgroundService, ITrader
+{
+    private readonly ILogger<TraderEngine> _logger;
+    private readonly TradingSettings _settings;
+    private readonly IBrokerExecution _broker;
+    private readonly IIocExecutor _iocExecutor;
+    private readonly TradingStateManager _stateManager;
+    private readonly SemaphoreSlim _stateLock = new(1, 1);
+    
+    private ChannelReader<MarketRegime>? _regimeChannel;
+    private TradingState _state;
+    
+    // Pending order tracking
+    private Guid? _pendingOrderId;
+    private const int PendingOrderTimeoutSeconds = 10;
+    
+    // Safe mode flag
+    private bool _isSafeMode;
+    private string? _safeModeReason;
+    
+    // Trailing stop state
+    private decimal _highWaterMark;
+    private decimal _lowWaterMark;
+    private bool _isStoppedOut;
+    
+    // Cached regime for trim decisions
+    private MarketRegime? _lastRegime;
+
+    public TraderEngine(
+        ILogger<TraderEngine> logger,
+        TradingSettings settings,
+        IBrokerExecution broker,
+        IIocExecutor iocExecutor,
+        TradingStateManager stateManager)
+    {
+        _logger = logger;
+        _settings = settings;
+        _settings.Validate();
+        _broker = broker;
+        _iocExecutor = iocExecutor;
+        _stateManager = stateManager;
+        
+        _state = _stateManager.Load();
+        
+        if (!_state.IsInitialized)
+        {
+            _state.AvailableCash = _settings.StartingAmount;
+            _state.IsInitialized = true;
+            _stateManager.Save(_state);
+        }
+        
+        // Restore trailing stop state from persistence
+        _highWaterMark = _state.HighWaterMark ?? 0m;
+        _lowWaterMark = _state.LowWaterMark ?? 0m;
+        _isStoppedOut = _state.IsStoppedOut;
+    }
+
+    // PUBLIC ACCESSORS FOR ANALYST CALLBACKS (CURRENT COUPLING POINT)
+    public string? CurrentPosition => _state.CurrentPosition;
+    public long CurrentShares => _state.CurrentShares;
+    public string? LastAnalystSignal => _state.LastAnalystSignal;
+    
+    public void SaveLastAnalystSignal(string signal)
+    {
+        _state.LastAnalystSignal = signal;
+        _stateManager.Save(_state);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        if (_regimeChannel == null) return;
+
+        await foreach (var regime in _regimeChannel.ReadAllAsync(stoppingToken))
+        {
+            // Check for pending order before processing new signals
+            if (_pendingOrderId.HasValue)
+            {
+                await ProcessPendingOrderAsync(stoppingToken);
+                if (_pendingOrderId.HasValue) continue; // Still pending, skip
+            }
+            
+            // Safe mode check (MARKET_CLOSE bypasses for mandatory liquidation)
+            if (_isSafeMode && regime.Signal != "MARKET_CLOSE") continue;
+            
+            _lastRegime = regime;
+            
+            // Process the regime signal -> execute trades
+            await ProcessRegimeAsync(regime, stoppingToken);
+        }
+    }
+    
+    // ... ProcessRegimeAsync handles position entry/exit/liquidation ...
+}
+
+-----
+FILE: qqqBot/ProgramRefactored.cs (partial - Orchestrator wiring)
+-----
+/// <summary>
+/// Orchestration service that wires Analyst → Trader via Channel<MarketRegime>.
+/// </summary>
+public class TradingOrchestrator : BackgroundService
+{
+    private readonly ILogger<TradingOrchestrator> _logger;
+    private readonly AnalystEngine _analyst;
+    private readonly TraderEngine _trader;
+    private readonly TradingSettings _settings;
+    private readonly IHostApplicationLifetime _lifetime;
+    
+    public TradingOrchestrator(
+        ILogger<TradingOrchestrator> logger,
+        AnalystEngine analyst,
+        TraderEngine trader,
+        TradingSettings settings,
+        IHostApplicationLifetime lifetime)
+    {
+        _logger = logger;
+        _analyst = analyst;
+        _trader = trader;
+        _settings = settings;
+        _lifetime = lifetime;
+    }
+    
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("=== QQQ Trading Bot Starting ===");
+        
+        try
+        {
+            // Start trader (consumer) first - ready to receive
+            await _trader.StartAsync(_analyst.RegimeChannel, stoppingToken);
+            
+            // Check if repair mode triggered during startup
+            if (_trader.RepairModeTriggered)
+            {
+                _lifetime.StopApplication();
+                return;
+            }
+            
+            // Start analyst (producer) - begins emitting signals
+            await _analyst.StartAsync(stoppingToken);
+            
+            await Task.Delay(Timeout.Infinite, stoppingToken);
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            await _analyst.StopAsync(CancellationToken.None);
+            await _trader.StopAsync(CancellationToken.None);
+        }
+    }
+}
+
+// DI WIRING (showing the callback coupling that needs to be replaced)
+services.AddSingleton<AnalystEngine>(sp =>
+{
+    var trader = sp.GetRequiredService<TraderEngine>();
+    
+    return new AnalystEngine(
+        logger, settings, marketSource, historicalSource, fallbackAdapter,
+        () => trader.CurrentPosition,      // CALLBACK #1
+        () => trader.CurrentShares,        // CALLBACK #2
+        () => trader.LastAnalystSignal,    // CALLBACK #3
+        signal => trader.SaveLastAnalystSignal(signal));  // CALLBACK #4
+});
+
+================================================================================
+END OF REFERENCE CODE
+================================================================================
+
+SUMMARY OF KEY COUPLING POINTS TO ADDRESS:
+
+1. AnalystEngine constructor takes 4 callbacks to TraderEngine:
+   - getCurrentPosition, getCurrentShares, getLastSignal, saveLastSignal
+   These should be replaced with an IPositionContext interface.
+
+2. MarketRegime.Signal is a string ("BULL", "BEAR", "NEUTRAL", "MARKET_CLOSE")
+   TradingIntent should use a TradingAction enum for type safety.
+
+3. TraderEngine directly interprets regime signals into position logic
+   An IIntentResolver should sit between MarketRegime and execution.
+
+4. TradingStateManager already supports immediate flush for critical events
+   Extend it to publish events (PositionChanged, FillConfirmed) via IStatePublisher.
+
+5. Math utilities (IncrementalSma, StreamingSlope) are in MarketBlocks.Trade.Math
+   FreeSharesManager can use these for velocity detection.
+
+6. IBrokerExecution and IIocExecutor provide broker-agnostic execution
+   The shared IExecutionEngine should compose these.
