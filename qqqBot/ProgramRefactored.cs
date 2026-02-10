@@ -522,6 +522,7 @@ public static class ProgramRefactored
             MinVelocityThreshold = configuration.GetValue("TradingBot:MinVelocityThreshold", 0.0001m),
             SlopeWindowSize = configuration.GetValue("TradingBot:SlopeWindowSize", 5),
             EntryConfirmationTicks = configuration.GetValue("TradingBot:EntryConfirmationTicks", 2),
+            BearEntryConfirmationTicks = configuration.GetValue("TradingBot:BearEntryConfirmationTicks", 0),
             TrendWindowSeconds = configuration.GetValue("TradingBot:TrendWindowSeconds", 1800),
             // Low-Latency Mode Settings
             LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
@@ -544,7 +545,9 @@ public static class ProgramRefactored
             TrimRatio = configuration.GetValue("TradingBot:TrimRatio", 0.33m),
             TrimTriggerPercent = configuration.GetValue("TradingBot:TrimTriggerPercent", 0.015m),
             TrimSlopeThreshold = configuration.GetValue("TradingBot:TrimSlopeThreshold", 0.000005m),
-            TrimCooldownSeconds = configuration.GetValue("TradingBot:TrimCooldownSeconds", 120)
+            TrimCooldownSeconds = configuration.GetValue("TradingBot:TrimCooldownSeconds", 120),
+            // Daily Profit Target
+            DailyProfitTarget = configuration.GetValue("TradingBot:DailyProfitTarget", 0m)
         };
         
         // Parse DynamicStopLoss (nested object with tiers)
@@ -603,6 +606,8 @@ public static class ProgramRefactored
         if (section["MinChopAbsolute"] != null) o.MinChopAbsolute = section.GetValue<decimal>("MinChopAbsolute");
         if (section["TrendWindowSeconds"] != null) o.TrendWindowSeconds = section.GetValue<int>("TrendWindowSeconds");
         if (section["EntryConfirmationTicks"] != null) o.EntryConfirmationTicks = section.GetValue<int>("EntryConfirmationTicks");
+        if (section["BearEntryConfirmationTicks"] != null) o.BearEntryConfirmationTicks = section.GetValue<int>("BearEntryConfirmationTicks");
+        if (section["BullOnlyMode"] != null) o.BullOnlyMode = section.GetValue<bool>("BullOnlyMode");
         // Exit strategy (flattened)
         if (section["ScalpWaitSeconds"] != null) o.ScalpWaitSeconds = section.GetValue<int>("ScalpWaitSeconds");
         if (section["TrendWaitSeconds"] != null) o.TrendWaitSeconds = section.GetValue<int>("TrendWaitSeconds");
