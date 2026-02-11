@@ -514,6 +514,7 @@ public static class ProgramRefactored
             MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
             TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
             StopLossCooldownSeconds = configuration.GetValue("TradingBot:StopLossCooldownSeconds", 10),
+            DirectionSwitchCooldownSeconds = configuration.GetValue("TradingBot:DirectionSwitchCooldownSeconds", 0),
             StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m),
             UseMarketableLimits = configuration.GetValue("TradingBot:UseMarketableLimits", false),
             MaxSlippagePercent = configuration.GetValue("TradingBot:MaxSlippagePercent", 0.002m),
@@ -644,6 +645,8 @@ public static class ProgramRefactored
         if (section["TrimCooldownSeconds"] != null) o.TrimCooldownSeconds = section.GetValue<int>("TrimCooldownSeconds");
         // Profit
         if (section["ProfitReinvestmentPercent"] != null) o.ProfitReinvestmentPercent = section.GetValue<decimal>("ProfitReinvestmentPercent");
+        // Direction switch cooldown
+        if (section["DirectionSwitchCooldownSeconds"] != null) o.DirectionSwitchCooldownSeconds = section.GetValue<int>("DirectionSwitchCooldownSeconds");
         
         return o;
     }
