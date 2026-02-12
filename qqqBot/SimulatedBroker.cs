@@ -67,7 +67,10 @@ public sealed class SimulatedBroker : IBrokerExecution
             var now = DateTime.UtcNow;
 
             // Determine fill price with slippage
-            decimal basePrice = request.LimitPrice ?? _latestPrices.GetValueOrDefault(request.Symbol, 0m);
+            // Priority: HintPrice (decision-tick price from TraderEngine) > LimitPrice > _latestPrices
+            // HintPrice captures the price the trader saw when it decided to trade, which may differ
+            // significantly from _latestPrices when the replay pipeline races ahead at speed=0.
+            decimal basePrice = request.HintPrice ?? request.LimitPrice ?? _latestPrices.GetValueOrDefault(request.Symbol, 0m);
             if (basePrice <= 0)
             {
                 _logger.LogWarning("[SIM-BROKER] No price available for {Symbol}. Rejecting order.", request.Symbol);

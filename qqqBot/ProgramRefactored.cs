@@ -548,7 +548,10 @@ public static class ProgramRefactored
             TrimSlopeThreshold = configuration.GetValue("TradingBot:TrimSlopeThreshold", 0.000005m),
             TrimCooldownSeconds = configuration.GetValue("TradingBot:TrimCooldownSeconds", 120),
             // Daily Profit Target
-            DailyProfitTarget = configuration.GetValue("TradingBot:DailyProfitTarget", 0m)
+            DailyProfitTarget = configuration.GetValue("TradingBot:DailyProfitTarget", 0m),
+            DailyProfitTargetPercent = configuration.GetValue("TradingBot:DailyProfitTargetPercent", 0m),
+            DailyProfitTargetRealtime = configuration.GetValue("TradingBot:DailyProfitTargetRealtime", false),
+            DailyProfitTargetTrailingStopPercent = configuration.GetValue("TradingBot:DailyProfitTargetTrailingStopPercent", 0m)
         };
         
         // Parse DynamicStopLoss (nested object with tiers)
