@@ -5,6 +5,12 @@
 		},
 		{
 			"path": "../MarketBlocks"
+		},
+		{
+			"path": "../logs/qqqbot"
+		},
+		{
+			"path": "../data/market"
 		}
 	],
 	"settings": {

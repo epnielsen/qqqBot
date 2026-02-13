@@ -156,7 +156,11 @@ public static class ProgramRefactored
             }
         }
         
-        var fetcher = new HistoricalDataFetcher(alpacaSource, fmpAdapter, logger);
+        var fetchDataDir = config["TradingBot:MarketDataDirectory"];
+        if (string.IsNullOrWhiteSpace(fetchDataDir))
+            fetchDataDir = Path.Combine(@"C:\dev\TradeEcosystem", "data", "market");
+        
+        var fetcher = new HistoricalDataFetcher(alpacaSource, fmpAdapter, logger, fetchDataDir);
         var files = await fetcher.FetchAsync(date, symbols);
         
         if (files.Count > 0)
@@ -232,6 +236,12 @@ public static class ProgramRefactored
             {
                 var configuration = context.Configuration;
                 var isReplay = IsReplayMode;
+                
+                // Resolve market data directory from config (default: C:\dev\TradeEcosystem\data\market)
+                var marketDataDir = configuration["TradingBot:MarketDataDirectory"];
+                if (string.IsNullOrWhiteSpace(marketDataDir))
+                    marketDataDir = Path.Combine(@"C:\dev\TradeEcosystem", "data", "market");
+                Directory.CreateDirectory(marketDataDir);
                 
                 // Load and validate API credentials (skip in Replay mode)
                 var apiKey = configuration["Alpaca:ApiKey"];
@@ -334,7 +344,7 @@ public static class ProgramRefactored
                     var replayDate = TryParseFlexibleDate(CurrentOverrides?.ReplayDate, out var rd)
                         ? rd : DateOnly.FromDateTime(DateTime.Now.AddDays(-1));
                     var replaySpeed = CurrentOverrides?.ReplaySpeed ?? 10.0;
-                    var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
+                    var dataDir = marketDataDir;
                     var segmentStart = CurrentOverrides?.StartTime;
                     var segmentEnd = CurrentOverrides?.EndTime;
                     
@@ -417,7 +427,11 @@ public static class ProgramRefactored
                     
                     // Register market data source for AnalystEngine (uses IAnalystMarketDataSource)
                     // Also wraps with MarketDataRecorder tap for live CSV recording
-                    services.AddSingleton<MarketDataRecorder>();
+                    services.AddSingleton<MarketDataRecorder>(sp =>
+                    {
+                        var logger = sp.GetRequiredService<ILogger<MarketDataRecorder>>();
+                        return new MarketDataRecorder(logger, marketDataDir);
+                    });
                     services.AddHostedService(sp => sp.GetRequiredService<MarketDataRecorder>());
                     
                     services.AddSingleton<MarketBlocks.Bots.Services.IAnalystMarketDataSource>(sp =>

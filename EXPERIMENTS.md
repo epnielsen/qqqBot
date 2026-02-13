@@ -28,9 +28,12 @@
 - **Phases**: Open Volatility (09:30–09:50), Base (09:50–14:00), Power Hour (14:00–16:00)
 - **TimeRuleApplier**: Snapshots base settings, applies per-phase overrides, restores on phase exit
 - **Replay System**: `dotnet run -- --mode=replay --date=YYYYMMDD --speed=0`
-  - Uses Brownian bridge interpolation for tick-level market data (20260209)
-  - Lower-resolution bar data for older dates (20260206 and earlier)
-  - Seeded with `_replayDate.DayNumber ^ StableHash(symbol)` for RNG
+  - **Deterministic serialized pipeline**: Both channels bounded(1) in replay mode (price + regime). Each tick fully processed analyst→trader before next enters.
+  - **Auto-detect data resolution**: `IsHighResolutionData()` samples first 100 CSV rows. Recorded tick data (avg gap <10s) replays raw; historical bar data (60s+) uses Brownian bridge interpolation.
+  - **ClockOverride**: Advances on analyst's consumer side (not producer) for deterministic timestamps.
+  - **Clean shutdown**: Analyst completes price channel at 16:00 ET; ReplayMDS catches `ChannelClosedException` and exits.
+  - **Summary**: Peak/trough P/L watermarks with timestamps displayed after each replay.
+  - Seeded with `_replayDate.DayNumber ^ StableHash(symbol)` for Brownian bridge RNG
 
 ### Key Files
 
@@ -42,7 +45,8 @@
 | `TimeRuleApplier.cs` | MarketBlocks.Bots/Services | Phase-based settings switching |
 | `TradingSettings.cs` | Both repos | Settings model (must stay in sync) |
 | `TrailingStopEngine.cs` | qqqBot | Trailing stop + dynamic stop-loss tiers |
-| `ReplayMarketDataSource.cs` | qqqBot | Brownian bridge replay data generation |
+| `ReplayMarketDataSource.cs` | qqqBot | Replay data source (raw ticks or Brownian bridge) |
+| `SimulatedBroker.cs` | qqqBot | Fake broker for replay (fills, P/L watermarks) |
 
 ---
 
@@ -292,11 +296,12 @@ Test with `DailyProfitTargetPercent=1.5` (= $150 on $10k) and `DailyProfitTarget
 
 ## Known Issues & Gotchas
 
-### 1. Replay Non-Determinism (tick-level data only) — RESOLVED
+### 1. Replay Non-Determinism — RESOLVED (2026-02-12)
 
-- **Root Cause**: AnalystEngine and TraderEngine shared a singleton TimeRuleApplier with a single `_highWaterTime`. At speed=0, AnalystEngine raced ahead, poisoning the TraderEngine's phase transition timing. Additionally, unbounded Channel allowed unlimited buffering.
-- **Fix**: Per-caller high-water marks in TimeRuleApplier (`Dictionary<string, TimeSpan>`), bounded price channel (capacity 50) with `BoundedChannelFullMode.Wait`, and `Task.WhenAll` for concurrent writer+reader in AnalystEngine.
-- **Result**: Replays are now deterministic at speed=0. All dates produce identical results on repeated runs.
+- **Root Cause (phase 1, 2026-02-11)**: AnalystEngine and TraderEngine shared a singleton TimeRuleApplier with a single `_highWaterTime`. At speed=0, AnalystEngine raced ahead, poisoning the TraderEngine's phase transition timing. Additionally, unbounded Channel allowed unlimited buffering.
+- **Root Cause (phase 2, 2026-02-12)**: Even with bounded(50) channels, the ClockOverride advanced at the producer (ReplayMDS) side, racing ahead of what the analyst/trader had actually processed. And the Brownian bridge injected ~60K synthetic ticks into ~33K recorded ticks, distorting SMA calculations and shifting signal timing by ~2 minutes vs live.
+- **Fix (final)**: Both channels bounded(1) for strict lockstep. ClockOverride advances on analyst's consumer side via `onTickProcessed` callback. `IsHighResolutionData()` auto-detects recorded tick data and skips Brownian bridge.
+- **Result**: Replays are deterministic: 3 consecutive runs produce identical results. Feb 12 replay gap closed from $425 to ~$23 vs live.
 
 ### 2. The "Slingshot" Effect
 
@@ -373,9 +378,9 @@ Test with `DailyProfitTargetPercent=1.5` (= $150 on $10k) and `DailyProfitTarget
 
 1. ~~**SimulatedBroker fill model improvement**~~ — **RESOLVED**. HintPrice + knownPrice fixes. See Known Issue #5 and Session 2026-02-11 (continued).
 
-2. **Brownian bridge elimination**: For tick-level data, the interpolation adds noise and non-determinism. Consider using raw ticks directly or a fixed-step interpolation. (Noted but NOT yet implemented.)
+2. ~~**Brownian bridge elimination**~~ — **RESOLVED (2026-02-12)**. `IsHighResolutionData()` auto-detects recorded tick data (avg gap <10s) and skips Brownian bridge interpolation. Historical bar data (60s+) still uses interpolation. Gap closed from $425 to ~$23.
 
-3. ~~**Channel synchronization**~~ — **RESOLVED**. Bounded channel (capacity 50) + `Task.WhenAll` for concurrent writer+reader in AnalystEngine. Replays are now deterministic.
+3. ~~**Channel synchronization**~~ — **RESOLVED (2026-02-12)**. Both channels bounded(1) in replay mode for strict serialized pipeline. ClockOverride on consumer side. Clean shutdown at 16:00 ET.
 
 4. **More test dates needed**: Only 4 dates tested (Feb 6, 9, 10, 11). Need more bear days, flat/chop days, and high-volatility days to validate robustness.
 
@@ -547,3 +552,78 @@ All were fixed and committed in `739b0f8`/`aa4b929`.
 - Known Issue #5 (SimBroker Fill): **RESOLVED** — HintPrice + knownPrice fixes
 - Open Question #1 (SimBroker fill model): **RESOLVED**
 - Open Question #3 (Channel synchronization): **RESOLVED** — bounded channel (capacity 50) + Task.WhenAll
+
+### Session: 2026-02-12 (AI session — deterministic replay & faithful data)
+
+**Context**: Feb 12 live trading produced +$171 profit. Replay of the same day produced -$254 — a $425 gap. Investigation and fixes.
+
+**Root cause analysis**:
+1. **Clock racing**: ClockOverride advanced at the ReplayMDS producer side. During bounded channel backpressure (`Task.Delay` in trader), the producer raced ahead, pushing the file-logger clock 3+ hours ahead of what was actually being processed. Result: trim events appeared to fire with 3-hour fill delays.
+2. **Brownian bridge distortion**: Recorded tick data (avg gap 3.03s, ~33K ticks) was expanded to ~92K ticks via Brownian bridge interpolation. The synthetic noise shifted SMA crossings by ~2 minutes — live BEAR signal at 09:44 ET vs replay at 09:46 ET. That $0.41 worse entry cascaded: live hit daily target (+$171) while replay never reached it (-$254).
+
+**Fixes implemented**:
+
+1. **Deterministic serialized pipeline** — Both channels bounded(1) in replay mode (was 50 for price, unbounded for regime). Each tick now fully processes analyst→trader before the next enters. Verified: 3 consecutive runs produce identical -$254.14 / 23 trades.
+
+2. **Clock on consumer side** — New `onTickProcessed` callback on AnalystEngine. ClockOverride now advances when the analyst *consumes* a tick, not when the producer *emits* it. `ProgramRefactored` passes: `onTickProcessed: IsReplayMode ? utc => FileLoggerProvider.ClockOverride = utc.ToLocalTime() : null`.
+
+3. **Skip Brownian bridge for recorded data** — `IsHighResolutionData()` samples first 100 CSV rows, computes avg tick gap, returns `true` if <10s. `ReplayMarketDataSource` accepts `skipInterpolation` flag. Auto-wired in `ProgramRefactored`. Logged: "High-resolution tick data detected (avg gap 3.03s). Skipping Brownian bridge interpolation."
+
+4. **Peak/trough P/L watermarks** — `SimulatedBroker.UpdatePrice` now accepts `DateTime timestampUtc`, computes equity (cash + unrealized) on every tick, tracks high/low watermarks. Displayed in replay summary.
+
+5. **Clean replay shutdown** — AnalystEngine completes `_priceChannel.Writer` at 16:00 ET session end in replay mode. ReplayMDS catches `ChannelClosedException` and exits cleanly. Eliminates 30-second timeout and "HANGING" warnings.
+
+**Files changed**:
+- `MarketBlocks.Bots/Services/AnalystEngine.cs` — bounded(1) channels in replay, `onTickProcessed` callback, price channel completion at session end
+- `qqqBot/ReplayMarketDataSource.cs` — `skipInterpolation` flag, `Action<string, decimal, DateTime>` delegate, `ChannelClosedException` handling, `writer.TryComplete()`
+- `qqqBot/SimulatedBroker.cs` — `UpdatePrice(symbol, price, timestampUtc)`, equity watermark tracking, peak/trough in `PrintSummary()`
+- `qqqBot/ProgramRefactored.cs` — `IsHighResolutionData()` helper, clock callback wiring, auto-detect + skip interpolation
+
+**Replay results (Feb 12)**:
+
+| Configuration | P/L | Trades | Gap vs Live | Notes |
+|--------------|-----|--------|-------------|-------|
+| Before fixes (Brownian bridge + racing clock) | -$254.14 | 23 | **$425** | Synthetic ticks distort SMA |
+| After fixes (raw ticks + serialized pipeline) | **+$136.71** | 13 | **~$23** | 3x deterministic |
+| Live trading | +$160 (adjusted) | ~13 | — | Was +$171 reported, ~$11 position mismatch |
+
+**Replay summary output (new format)**:
+```
+[SIM-BROKER]  R E P L A Y   S U M M A R Y
+[SIM-BROKER]  Starting Cash:  $10,000.00
+[SIM-BROKER]  Ending Cash:    $10,136.71
+[SIM-BROKER]  Ending Equity:  $10,136.71
+[SIM-BROKER]  Realized P/L:   $136.71
+[SIM-BROKER]  Net Return:     1.37 %
+[SIM-BROKER]  Total Trades:   13
+[SIM-BROKER]  Peak P/L:       +$163.50 (1.64 %) at 10:58:55 ET
+[SIM-BROKER]  Trough P/L:     -$11.60 (-0.12 %) at 09:45:15 ET
+```
+
+**Key observations**:
+- Replay is now a reliable tool for tuning strategies (~$23 gap vs live, down from $425)
+- The remaining gap is expected: live has real-time streaming latency, sub-ms fills, order queue position effects that replay can't model
+- Trade count matches (13 replay vs ~13 live), signal directions match, profit direction matches
+- Brownian bridge is still used for historical API data (e.g., pre-recording dates) where tick resolution is 60s bars
+
+**Updated resolution status**:
+- Known Issue #1 (Replay Non-Determinism): **FULLY RESOLVED** — bounded(1) + consumer-side clock + skip interpolation
+- Open Question #2 (Brownian bridge elimination): **RESOLVED** — auto-detected and skipped for recorded data
+- Open Question #5 (Live vs Replay divergence): **LARGELY RESOLVED** — gap reduced from $425 to ~$23 by eliminating synthetic ticks
+
+---
+
+## Session: 2026-02-13 — Configurable Market Data Directory
+
+**Context**: Recorded market data CSVs were stored under `bin/Debug/net10.0/data/`, which is destroyed by `dotnet clean`. This made it easy to accidentally lose irreplaceable tick recordings.
+
+**Changes**:
+1. Added `MarketDataDirectory` setting to `appsettings.json` under `TradingBot` section (default: `C:\dev\TradeEcosystem\data\market`)
+2. Wired the setting through all three consumers:
+   - `ProgramRefactored.cs` replay mode `dataDir` (was `Path.Combine(AppContext.BaseDirectory, "data")`)
+   - `MarketDataRecorder` registration (was using hardcoded default in constructor)
+   - `HistoricalDataFetcher` in `RunFetchHistoryAsync` (was using hardcoded default in constructor)
+3. Copied 15 existing CSV files (5 trading days: Feb 6, 9, 10, 11, 12) to `C:\dev\TradeEcosystem\data\market\`
+4. Updated README.md (Configuration Reference table) and TODO.md
+
+**Verification**: Build passes (63/63 tests), replay produces same results ($136.71 P/L, 13 trades for Feb 12 full day).
