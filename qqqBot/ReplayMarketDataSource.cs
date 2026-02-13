@@ -24,9 +24,13 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
     private readonly string _dataDirectory;
     private readonly DateOnly _replayDate;
     private readonly double _speedMultiplier;
-    private readonly Action<string, decimal>? _onPriceUpdate;
+    private readonly Action<string, decimal, DateTime>? _onPriceUpdate;
     private readonly Action<DateTime>? _onTimeAdvance;
     private readonly int _replaySeed;
+    private readonly TimeOnly? _startTimeFilter; // Eastern time filter
+    private readonly TimeOnly? _endTimeFilter;   // Eastern time filter
+    private readonly bool _skipInterpolation;
+    private readonly TimeZoneInfo _easternZone;
     private bool _connected;
 
     /// <summary>
@@ -39,9 +43,12 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
         string dataDirectory,
         DateOnly replayDate,
         double speedMultiplier = 1.0,
-        Action<string, decimal>? onPriceUpdate = null,
+        Action<string, decimal, DateTime>? onPriceUpdate = null,
         Action<DateTime>? onTimeAdvance = null,
-        int? replaySeed = null)
+        int? replaySeed = null,
+        TimeOnly? startTime = null,
+        TimeOnly? endTime = null,
+        bool skipInterpolation = false)
     {
         _logger = logger;
         _dataDirectory = dataDirectory;
@@ -50,6 +57,10 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
         _onPriceUpdate = onPriceUpdate;
         _onTimeAdvance = onTimeAdvance;
         _replaySeed = replaySeed ?? _replayDate.DayNumber;
+        _startTimeFilter = startTime;
+        _endTimeFilter = endTime;
+        _skipInterpolation = skipInterpolation;
+        _easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
     }
 
     public Task ConnectAsync(CancellationToken ct)
@@ -60,6 +71,12 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
         _logger.LogInformation("[REPLAY]  Date: {Date}", _replayDate);
         _logger.LogInformation("[REPLAY]  Speed: {Speed}x", _speedMultiplier);
         _logger.LogInformation("[REPLAY]  Seed:  {Seed}", _replaySeed);
+        if (_startTimeFilter.HasValue || _endTimeFilter.HasValue)
+        {
+            _logger.LogInformation("[REPLAY]  Segment: {Start} -> {End} (Eastern)",
+                _startTimeFilter?.ToString("HH:mm") ?? "open",
+                _endTimeFilter?.ToString("HH:mm") ?? "close");
+        }
         _logger.LogInformation("[REPLAY]  Data Dir: {Dir}", _dataDirectory);
         _logger.LogInformation("[REPLAY] ==========================================");
         return Task.CompletedTask;
@@ -102,11 +119,20 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
             }
 
             var rawTicks = LoadCsvFile(filePath, sub.Symbol);
-            var symbolSeed = _replaySeed ^ StableHash(sub.Symbol);
-            var ticks = InterpolateWithBrownianBridge(rawTicks, symbolSeed);
-            allTicks.AddRange(ticks);
-            _logger.LogInformation("[REPLAY] Loaded {Raw} bars -> {Count} ticks (Brownian bridge, seed={Seed}) from {File}",
-                rawTicks.Count, ticks.Count, symbolSeed, filePath);
+            if (_skipInterpolation)
+            {
+                allTicks.AddRange(rawTicks);
+                _logger.LogInformation("[REPLAY] Loaded {Count} ticks (raw, no interpolation) from {File}",
+                    rawTicks.Count, filePath);
+            }
+            else
+            {
+                var symbolSeed = _replaySeed ^ StableHash(sub.Symbol);
+                var ticks = InterpolateWithBrownianBridge(rawTicks, symbolSeed);
+                allTicks.AddRange(ticks);
+                _logger.LogInformation("[REPLAY] Loaded {Raw} bars -> {Count} ticks (Brownian bridge, seed={Seed}) from {File}",
+                    rawTicks.Count, ticks.Count, symbolSeed, filePath);
+            }
         }
 
         if (allTicks.Count == 0)
@@ -119,6 +145,22 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
 
         // Sort all ticks chronologically (interleave multi-symbol data)
         allTicks.Sort((a, b) => a.TimestampUtc.CompareTo(b.TimestampUtc));
+
+        // Apply segment time filter if specified (filter by Eastern time)
+        if (_startTimeFilter.HasValue || _endTimeFilter.HasValue)
+        {
+            var beforeCount = allTicks.Count;
+            allTicks = allTicks.Where(t =>
+            {
+                var eastern = TimeZoneInfo.ConvertTimeFromUtc(t.TimestampUtc, _easternZone);
+                var timeOfDay = TimeOnly.FromDateTime(eastern);
+                if (_startTimeFilter.HasValue && timeOfDay < _startTimeFilter.Value) return false;
+                if (_endTimeFilter.HasValue && timeOfDay > _endTimeFilter.Value) return false;
+                return true;
+            }).ToList();
+            _logger.LogInformation("[REPLAY] Segment filter applied: {Before} -> {After} ticks",
+                beforeCount, allTicks.Count);
+        }
 
         _logger.LogInformation("[REPLAY] Playing {Count} total ticks from {Start:HH:mm:ss} to {End:HH:mm:ss}",
             allTicks.Count,
@@ -156,16 +198,29 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
             _onTimeAdvance?.Invoke(tick.TimestampUtc);
 
             // Feed price to SimulatedBroker so it can fill orders at correct prices
-            _onPriceUpdate?.Invoke(tick.Symbol, tick.Price);
+            _onPriceUpdate?.Invoke(tick.Symbol, tick.Price, tick.TimestampUtc);
 
             var priceTick = new PriceTick(tick.Symbol, tick.Price, isBenchmark, tick.TimestampUtc);
-            await writer.WriteAsync(priceTick, ct);
+            
+            // In replay mode the analyst may complete the channel early (e.g. session end at 16:00 ET).
+            // TryWrite returns false if the channel is completed; for a bounded(1) channel we need
+            // to use WriteAsync but catch ChannelClosedException.
+            try
+            {
+                await writer.WriteAsync(priceTick, ct);
+            }
+            catch (System.Threading.Channels.ChannelClosedException)
+            {
+                _logger.LogInformation("[REPLAY] Channel closed by consumer (session ended). Stopping playback.");
+                break;
+            }
         }
 
         _logger.LogInformation("[REPLAY] ✓ Playback complete. {Count} ticks replayed.", allTicks.Count);
         
-        // Signal end of data — the AnalystEngine loop will detect channel completion
-        writer.Complete();
+        // Signal end of data — the AnalystEngine loop will detect channel completion.
+        // TryComplete tolerates the channel already being closed (e.g. session-end path).
+        writer.TryComplete();
     }
 
     /// <summary>

@@ -22,6 +22,10 @@ class TradingSettings
     
     public decimal StartingAmount { get; set; } = 10000m;
     public bool BullOnlyMode { get; set; } = false;
+    public int BearEntryConfirmationTicks { get; set; } = 0; // 0 = instant BEAR (legacy), >0 = ticks of sustained negative velocity required
+    public decimal DailyProfitTarget { get; set; } = 0m; // 0 = disabled, >0 = stop trading after hitting this session P/L
+    public decimal DailyProfitTargetPercent { get; set; } = 0m; // 0 = disabled, e.g. 2.0 = 2% of StartingAmount
+    public bool DailyProfitTargetRealtime { get; set; } = false; // true = check realized+unrealized on every tick
     public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade

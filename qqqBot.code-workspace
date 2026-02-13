@@ -5,7 +5,17 @@
 		},
 		{
 			"path": "../MarketBlocks"
+		},
+		{
+			"path": "../logs/qqqbot"
+		},
+		{
+			"path": "../data/market"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"git stash": true
+		}
+	}
 }

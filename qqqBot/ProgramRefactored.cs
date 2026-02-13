@@ -156,7 +156,11 @@ public static class ProgramRefactored
             }
         }
         
-        var fetcher = new HistoricalDataFetcher(alpacaSource, fmpAdapter, logger);
+        var fetchDataDir = config["TradingBot:MarketDataDirectory"];
+        if (string.IsNullOrWhiteSpace(fetchDataDir))
+            fetchDataDir = Path.Combine(@"C:\dev\TradeEcosystem", "data", "market");
+        
+        var fetcher = new HistoricalDataFetcher(alpacaSource, fmpAdapter, logger, fetchDataDir);
         var files = await fetcher.FetchAsync(date, symbols);
         
         if (files.Count > 0)
@@ -191,10 +195,39 @@ public static class ProgramRefactored
                 logging.ClearProviders();
                 logging.AddConsole();
                 
-                // Add file logging - writes to logs/qqqbot_{date}.log
-                var logDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+                // Determine log directory: prefer config, fall back to AppContext.BaseDirectory/logs
+                var configLogDir = context.Configuration["TradingBot:LogDirectory"];
+                var logDirectory = !string.IsNullOrWhiteSpace(configLogDir)
+                    ? configLogDir
+                    : Path.Combine(AppContext.BaseDirectory, "logs");
                 Directory.CreateDirectory(logDirectory);
-                var logFilePath = Path.Combine(logDirectory, $"qqqbot_{DateTime.Now:yyyyMMdd}.log");
+                
+                // Build log file name: replay gets unique per-run names; live gets daily
+                string logFileName;
+                if (IsReplayMode && CurrentOverrides != null)
+                {
+                    var replayDateStr = CurrentOverrides.ReplayDate ?? "unknown";
+                    // Normalize date string (remove dashes for filename)
+                    replayDateStr = replayDateStr.Replace("-", "");
+                    var nowStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                    
+                    // Include segment range if specified
+                    var segmentSuffix = "";
+                    if (CurrentOverrides.StartTime.HasValue || CurrentOverrides.EndTime.HasValue)
+                    {
+                        var start = CurrentOverrides.StartTime?.ToString("HHmm") ?? "open";
+                        var end = CurrentOverrides.EndTime?.ToString("HHmm") ?? "close";
+                        segmentSuffix = $"_{start}-{end}";
+                    }
+                    
+                    logFileName = $"qqqbot_replay_{replayDateStr}{segmentSuffix}_{nowStamp}.log";
+                }
+                else
+                {
+                    logFileName = $"qqqbot_{DateTime.Now:yyyyMMdd}.log";
+                }
+                
+                var logFilePath = Path.Combine(logDirectory, logFileName);
                 logging.AddProvider(new FileLoggerProvider(logFilePath));
                 
                 logging.SetMinimumLevel(LogLevel.Information);
@@ -203,6 +236,12 @@ public static class ProgramRefactored
             {
                 var configuration = context.Configuration;
                 var isReplay = IsReplayMode;
+                
+                // Resolve market data directory from config (default: C:\dev\TradeEcosystem\data\market)
+                var marketDataDir = configuration["TradingBot:MarketDataDirectory"];
+                if (string.IsNullOrWhiteSpace(marketDataDir))
+                    marketDataDir = Path.Combine(@"C:\dev\TradeEcosystem", "data", "market");
+                Directory.CreateDirectory(marketDataDir);
                 
                 // Load and validate API credentials (skip in Replay mode)
                 var apiKey = configuration["Alpaca:ApiKey"];
@@ -305,15 +344,27 @@ public static class ProgramRefactored
                     var replayDate = TryParseFlexibleDate(CurrentOverrides?.ReplayDate, out var rd)
                         ? rd : DateOnly.FromDateTime(DateTime.Now.AddDays(-1));
                     var replaySpeed = CurrentOverrides?.ReplaySpeed ?? 10.0;
-                    var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
+                    var dataDir = marketDataDir;
+                    var segmentStart = CurrentOverrides?.StartTime;
+                    var segmentEnd = CurrentOverrides?.EndTime;
                     
                     services.AddSingleton<MarketBlocks.Bots.Services.IAnalystMarketDataSource>(sp =>
                     {
                         var logger = sp.GetRequiredService<ILogger<ReplayMarketDataSource>>();
                         var simBroker = sp.GetRequiredService<SimulatedBroker>();
+                        
+                        // Auto-detect: skip Brownian bridge interpolation for recorded tick data.
+                        // Recorded data has sub-second resolution; historical API data has 60s bars.
+                        // Check the first CSV file's average tick gap to decide.
+                        var dateStr = replayDate.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+                        bool skipInterpolation = IsHighResolutionData(dataDir, dateStr, logger);
+                        
                         return new ReplayMarketDataSource(logger, dataDir, replayDate, replaySpeed,
-                            onPriceUpdate: simBroker.UpdatePrice,
-                            onTimeAdvance: utc => FileLoggerProvider.ClockOverride = utc.ToLocalTime());
+                            onPriceUpdate: (s, p, t) => simBroker.UpdatePrice(s, p, t),
+                            onTimeAdvance: null,  // Clock now advances on analyst's consumer side for determinism
+                            startTime: segmentStart,
+                            endTime: segmentEnd,
+                            skipInterpolation: skipInterpolation);
                     });
                     
                     // No historical source or FMP needed for replay (CSV has all data)
@@ -376,7 +427,11 @@ public static class ProgramRefactored
                     
                     // Register market data source for AnalystEngine (uses IAnalystMarketDataSource)
                     // Also wraps with MarketDataRecorder tap for live CSV recording
-                    services.AddSingleton<MarketDataRecorder>();
+                    services.AddSingleton<MarketDataRecorder>(sp =>
+                    {
+                        var logger = sp.GetRequiredService<ILogger<MarketDataRecorder>>();
+                        return new MarketDataRecorder(logger, marketDataDir);
+                    });
                     services.AddHostedService(sp => sp.GetRequiredService<MarketDataRecorder>());
                     
                     services.AddSingleton<MarketBlocks.Bots.Services.IAnalystMarketDataSource>(sp =>
@@ -478,7 +533,10 @@ public static class ProgramRefactored
                         () => trader.CurrentShares,
                         () => trader.LastAnalystSignal,              // Get persisted signal
                         signal => trader.SaveLastAnalystSignal(signal),  // Save signal on change
-                        timeRuleApplier);                            // Time-based phase switching
+                        timeRuleApplier,                             // Time-based phase switching
+                        onTickProcessed: IsReplayMode
+                            ? utc => FileLoggerProvider.ClockOverride = utc.ToLocalTime()
+                            : null);                                 // Clock advances at consumer side in replay
                 });
                 
                 // Register the orchestration service that wires Analyst → Trader
@@ -514,6 +572,7 @@ public static class ProgramRefactored
             MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
             TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
             StopLossCooldownSeconds = configuration.GetValue("TradingBot:StopLossCooldownSeconds", 10),
+            DirectionSwitchCooldownSeconds = configuration.GetValue("TradingBot:DirectionSwitchCooldownSeconds", 0),
             StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m),
             UseMarketableLimits = configuration.GetValue("TradingBot:UseMarketableLimits", false),
             MaxSlippagePercent = configuration.GetValue("TradingBot:MaxSlippagePercent", 0.002m),
@@ -522,6 +581,7 @@ public static class ProgramRefactored
             MinVelocityThreshold = configuration.GetValue("TradingBot:MinVelocityThreshold", 0.0001m),
             SlopeWindowSize = configuration.GetValue("TradingBot:SlopeWindowSize", 5),
             EntryConfirmationTicks = configuration.GetValue("TradingBot:EntryConfirmationTicks", 2),
+            BearEntryConfirmationTicks = configuration.GetValue("TradingBot:BearEntryConfirmationTicks", 0),
             TrendWindowSeconds = configuration.GetValue("TradingBot:TrendWindowSeconds", 1800),
             // Low-Latency Mode Settings
             LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
@@ -544,7 +604,12 @@ public static class ProgramRefactored
             TrimRatio = configuration.GetValue("TradingBot:TrimRatio", 0.33m),
             TrimTriggerPercent = configuration.GetValue("TradingBot:TrimTriggerPercent", 0.015m),
             TrimSlopeThreshold = configuration.GetValue("TradingBot:TrimSlopeThreshold", 0.000005m),
-            TrimCooldownSeconds = configuration.GetValue("TradingBot:TrimCooldownSeconds", 120)
+            TrimCooldownSeconds = configuration.GetValue("TradingBot:TrimCooldownSeconds", 120),
+            // Daily Profit Target
+            DailyProfitTarget = configuration.GetValue("TradingBot:DailyProfitTarget", 0m),
+            DailyProfitTargetPercent = configuration.GetValue("TradingBot:DailyProfitTargetPercent", 0m),
+            DailyProfitTargetRealtime = configuration.GetValue("TradingBot:DailyProfitTargetRealtime", false),
+            DailyProfitTargetTrailingStopPercent = configuration.GetValue("TradingBot:DailyProfitTargetTrailingStopPercent", 0m)
         };
         
         // Parse DynamicStopLoss (nested object with tiers)
@@ -603,6 +668,8 @@ public static class ProgramRefactored
         if (section["MinChopAbsolute"] != null) o.MinChopAbsolute = section.GetValue<decimal>("MinChopAbsolute");
         if (section["TrendWindowSeconds"] != null) o.TrendWindowSeconds = section.GetValue<int>("TrendWindowSeconds");
         if (section["EntryConfirmationTicks"] != null) o.EntryConfirmationTicks = section.GetValue<int>("EntryConfirmationTicks");
+        if (section["BearEntryConfirmationTicks"] != null) o.BearEntryConfirmationTicks = section.GetValue<int>("BearEntryConfirmationTicks");
+        if (section["BullOnlyMode"] != null) o.BullOnlyMode = section.GetValue<bool>("BullOnlyMode");
         // Exit strategy (flattened)
         if (section["ScalpWaitSeconds"] != null) o.ScalpWaitSeconds = section.GetValue<int>("ScalpWaitSeconds");
         if (section["TrendWaitSeconds"] != null) o.TrendWaitSeconds = section.GetValue<int>("TrendWaitSeconds");
@@ -639,8 +706,80 @@ public static class ProgramRefactored
         if (section["TrimCooldownSeconds"] != null) o.TrimCooldownSeconds = section.GetValue<int>("TrimCooldownSeconds");
         // Profit
         if (section["ProfitReinvestmentPercent"] != null) o.ProfitReinvestmentPercent = section.GetValue<decimal>("ProfitReinvestmentPercent");
+        // Direction switch cooldown
+        if (section["DirectionSwitchCooldownSeconds"] != null) o.DirectionSwitchCooldownSeconds = section.GetValue<int>("DirectionSwitchCooldownSeconds");
         
         return o;
+    }
+    
+    /// <summary>
+    /// Peek at the first CSV for the given date and decide whether the data is
+    /// high-resolution recorded ticks (sub-second) or low-resolution historical bars (60 s+).
+    /// Returns true when interpolation should be skipped (i.e. data is already dense enough).
+    /// </summary>
+    private static bool IsHighResolutionData(string dataDir, string dateStr, ILogger logger)
+    {
+        const int samplesToRead = 100;
+        const double highResThresholdSeconds = 10.0; // avg gap < 10s ⇒ high-res
+
+        try
+        {
+            var pattern = $"{dateStr}_market_data_*.csv";
+            var csvFiles = Directory.GetFiles(dataDir, pattern);
+            if (csvFiles.Length == 0)
+            {
+                logger.LogWarning("IsHighResolutionData: no CSV files matching {Pattern} in {Dir}", pattern, dataDir);
+                return false; // fall back to interpolation
+            }
+
+            var filePath = csvFiles[0]; // any symbol will do — they all share the same recording cadence
+            using var reader = new StreamReader(filePath);
+
+            // Skip header
+            var header = reader.ReadLine();
+            if (header == null) return false;
+
+            var timestamps = new List<DateTime>(samplesToRead);
+            string? line;
+            while (timestamps.Count < samplesToRead && (line = reader.ReadLine()) != null)
+            {
+                var comma = line.IndexOf(',');
+                if (comma <= 0) continue;
+                if (DateTime.TryParse(line.AsSpan(0, comma),
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out var ts))
+                {
+                    timestamps.Add(ts);
+                }
+            }
+
+            if (timestamps.Count < 2)
+            {
+                logger.LogWarning("IsHighResolutionData: not enough data rows in {File}", filePath);
+                return false;
+            }
+
+            // Compute average gap between consecutive timestamps
+            double totalGapSeconds = 0;
+            for (int i = 1; i < timestamps.Count; i++)
+                totalGapSeconds += (timestamps[i] - timestamps[i - 1]).TotalSeconds;
+
+            double avgGap = totalGapSeconds / (timestamps.Count - 1);
+            bool highRes = avgGap < highResThresholdSeconds;
+
+            if (highRes)
+                logger.LogInformation("High-resolution tick data detected (avg gap {Gap:F2}s). Skipping Brownian bridge interpolation.", avgGap);
+            else
+                logger.LogInformation("Low-resolution bar data detected (avg gap {Gap:F1}s). Using Brownian bridge interpolation.", avgGap);
+
+            return highRes;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "IsHighResolutionData: error checking data resolution, defaulting to interpolation");
+            return false;
+        }
     }
 }
 
@@ -798,6 +937,19 @@ public class ReplayOrchestrator : BackgroundService
     {
         _logger.LogInformation("=== QQQ Trading Bot — REPLAY MODE ===");
         _logger.LogInformation("Config File: {ConfigFile}", ProgramRefactored.ConfigFileName);
+        
+        // Replay metadata header
+        var replayOverrides = ProgramRefactored.CurrentOverrides;
+        _logger.LogInformation("Replay Date:     {Date}", replayOverrides?.ReplayDate ?? "unknown");
+        _logger.LogInformation("Wall-Clock Start: {Now}", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        _logger.LogInformation("Speed:           {Speed}x", replayOverrides?.ReplaySpeed ?? 10.0);
+        if (replayOverrides?.StartTime.HasValue == true || replayOverrides?.EndTime.HasValue == true)
+        {
+            _logger.LogInformation("Segment:         {Start} -> {End} (Eastern)",
+                replayOverrides.StartTime?.ToString("HH:mm") ?? "open",
+                replayOverrides.EndTime?.ToString("HH:mm") ?? "close");
+        }
+        _logger.LogInformation("Starting Amount: ${Amount:N2}", _settings.StartingAmount);
         _logger.LogInformation("Bull: {Bull} | Bear: {Bear} | Benchmark: {Bench}",
             _settings.BullSymbol,
             _settings.BearSymbol ?? "(none - bull-only)",
@@ -816,13 +968,23 @@ public class ReplayOrchestrator : BackgroundService
 
             _logger.LogInformation("[REPLAY] Waiting for replay to complete...");
             
-            // Wait for both engines to finish naturally:
-            //   1. ReplayMarketDataSource completes the price channel → AnalystEngine loop exits
-            //   2. AnalystEngine completes the regime channel → TraderEngine loop exits
-            // Both are BackgroundServices, so ExecuteTask tracks their running work.
+            // Wait for both engines to finish naturally, but with a safety timeout
+            // to prevent zombie processes if an engine hangs.
             var analystDone = _analyst.ExecuteTask ?? Task.CompletedTask;
             var traderDone  = _trader.ExecuteTask  ?? Task.CompletedTask;
-            await Task.WhenAll(analystDone, traderDone);
+            var bothDone = Task.WhenAll(analystDone, traderDone);
+            
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+            var winner = await Task.WhenAny(bothDone, timeoutTask);
+            
+            if (winner == timeoutTask)
+            {
+                var analystStatus = analystDone.IsCompleted ? "done" : "HANGING";
+                var traderStatus = traderDone.IsCompleted ? "done" : "HANGING";
+                _logger.LogWarning("[REPLAY] ⚠ Timeout waiting for engines to finish! " +
+                    "Analyst: {AnalystStatus}, Trader: {TraderStatus}. Forcing shutdown.",
+                    analystStatus, traderStatus);
+            }
         }
         catch (OperationCanceledException)
         {

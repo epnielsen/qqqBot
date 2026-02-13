@@ -18,6 +18,7 @@ This bot is designed **exclusively for paper trading**. It includes multiple saf
 - **Market Hours Awareness**: Only trades during market hours (9:30 AM - 4:00 PM ET)
 - **Secure Credential Storage**: Uses .NET User Secrets for API key storage
 - **State Persistence**: Survives restarts with full position and profit tracking
+- **Replay Mode**: Deterministic replay of recorded trading days for strategy tuning and validation
 
 ## Prerequisites
 
@@ -102,6 +103,8 @@ Edit `appsettings.json` to customize the bot behavior:
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `BotId` | Unique identifier for this bot instance | "main" |
+| `LogDirectory` | Directory for log files | `C:\dev\TradeEcosystem\logs\qqqbot` |
+| `MarketDataDirectory` | Directory for recorded/historical market data CSVs | `C:\dev\TradeEcosystem\data\market` |
 | `PollingIntervalSeconds` | How often to poll for price updates | 1 |
 | `BullSymbol` | ETF to buy in bullish trend | TQQQ |
 | `BearSymbol` | ETF to buy in bearish trend | SQQQ |
@@ -206,6 +209,60 @@ The bot maintains a `trading_state.json` file to persist state across restarts:
 | `WashoutLevel` | Re-entry threshold after stop-out |
 
 **Note**: To reset and start fresh, delete `trading_state.json` or set `IsInitialized` to `false`.
+
+## Replay Mode
+
+Replay recorded trading days to validate strategy changes and tune settings without risking real (paper) money.
+
+### Basic Usage
+
+```bash
+# Full day replay at max speed
+dotnet run -- --mode=replay --date=20260212 --speed=0
+
+# Segment replay (Eastern time)
+dotnet run -- --mode=replay --date=20260212 --speed=0 --start-time=09:30 --end-time=10:30
+
+# Replay at 10x real-time speed
+dotnet run -- --mode=replay --date=20260212 --speed=10
+```
+
+### How It Works
+
+- **Deterministic pipeline**: Both channels are bounded(1) in replay mode, creating a strict serialized pipeline where each tick fully processes through analyst→trader before the next enters
+- **Auto-detection**: `IsHighResolutionData()` samples the first 100 CSV rows. Recorded tick data (avg gap <10s) replays raw; historical API data (60s bars) uses Brownian bridge interpolation for tick expansion
+- **SimulatedBroker**: Fills orders with configurable slippage, tracks positions, and computes equity in real-time
+- **Replay logs**: Written to a configurable external directory (set `ReplayLogDirectory` in `appsettings.json`)
+
+### Summary Output
+
+After each replay, a summary is printed:
+
+```
+[SIM-BROKER]  R E P L A Y   S U M M A R Y
+[SIM-BROKER]  Starting Cash:  $10,000.00
+[SIM-BROKER]  Ending Cash:    $10,136.71
+[SIM-BROKER]  Ending Equity:  $10,136.71
+[SIM-BROKER]  Realized P/L:   $136.71
+[SIM-BROKER]  Net Return:     1.37 %
+[SIM-BROKER]  Total Trades:   13
+[SIM-BROKER]  Peak P/L:       +$163.50 (1.64 %) at 10:58:55 ET
+[SIM-BROKER]  Trough P/L:     -$11.60 (-0.12 %) at 09:45:15 ET
+```
+
+### Verifying Determinism
+
+Run the same replay 2-3 times and confirm identical P/L, trade count, and watermarks. The serialized pipeline guarantees identical results for the same input data and settings.
+
+### Replay CLI Options
+
+| Option | Description |
+|--------|-------------|
+| `--mode=replay` | Enable replay mode |
+| `--date=YYYYMMDD` | Date to replay |
+| `--speed=N` | Playback speed (0 = max, 1 = real-time) |
+| `--start-time=HH:MM` | Start time filter (Eastern) |
+| `--end-time=HH:MM` | End time filter (Eastern) |
 
 ## Running the Bot
 
@@ -348,8 +405,12 @@ qqqbot/
 ├── TradingSettings.cs      # Configuration model
 ├── TradingState.cs         # Persisted state model
 ├── TrailingStopEngine.cs   # Trailing stop-loss logic
+├── SimulatedBroker.cs      # Fake broker for replay mode
+├── ReplayMarketDataSource.cs # CSV replay with auto-detect interpolation
 ├── appsettings.json        # Configuration file
 ├── trading_state.json      # Runtime state (generated)
+├── EXPERIMENTS.md           # Tuning experiment history (read before changing settings)
+├── TODO.md                  # Outstanding tasks and bugs
 └── README.md               # This file
 ```
 

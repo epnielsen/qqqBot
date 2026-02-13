@@ -23,9 +23,11 @@ public class FileLoggerProvider : ILoggerProvider
     public FileLoggerProvider(string filePath)
     {
         _filePath = filePath;
-        // Open file for append, create if doesn't exist
+        // Open file for append, create if doesn't exist.
+        // FileShare.ReadWrite allows other processes (or a quick re-run) to
+        // co-exist without "file in use" errors.
         _writer = new StreamWriter(
-            new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Read),
+            new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite),
             System.Text.Encoding.UTF8)
         {
             AutoFlush = true
