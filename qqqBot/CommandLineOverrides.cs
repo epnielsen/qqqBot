@@ -18,6 +18,8 @@ public class CommandLineOverrides
     // Low-latency mode flags
     public bool LowLatencyMode { get; set; }
     public bool UseIocOrders { get; set; }
+    // Configuration file override
+    public string? ConfigFile { get; set; }
     
     public static CommandLineOverrides? Parse(string[] args)
     {
@@ -131,6 +133,16 @@ public class CommandLineOverrides
             else if (arg.Equals("-ioc", StringComparison.OrdinalIgnoreCase))
             {
                 overrides.UseIocOrders = true;
+            }
+            else if (arg.StartsWith("-config=", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg.Substring("-config=".Length).Trim();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    Console.Error.WriteLine("[ERROR] -config requires a filename. Got empty value.");
+                    return null;
+                }
+                overrides.ConfigFile = value;
             }
             // NOTE: -takeprofit has been replaced by the Hybrid Profit Management System.
             // Use ProfitReinvestmentPercent and Trimming settings in appsettings.json instead.

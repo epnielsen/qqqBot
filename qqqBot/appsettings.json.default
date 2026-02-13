@@ -50,12 +50,13 @@
     "//_COMMENT_PROFIT": "--- PROFIT MANAGEMENT (Split Allocation Model) ---",
     "ProfitReinvestmentPercent": 0.5,
     "EnableTrimming": false,
-    "TrimTriggerPercent": 0.015,
+    "TrimTriggerPercent": 0.005,
     "TrimRatio": 0.33,
-    "TrimSlopeThreshold": 0.000005,
+    "TrimSlopeThreshold": 0.000002,
     "TrimCooldownSeconds": 120,
     "//_COMMENT_PROFIT_END": "-------------------------------------------------",
 
-    "StartingAmount": 10000
+    "StartingAmount": 10176.69
+
   }
 }
