@@ -26,6 +26,9 @@ public class CommandLineOverrides
     public string? ReplayDate { get; set; }     // --date=2026-02-06
     public double ReplaySpeed { get; set; } = 10.0; // --speed=10 (multiplier)
     public string? SymbolsOverride { get; set; } // --symbols=QQQ,TQQQ,SQQQ
+    // Segment replay: restrict replay to a time window (Eastern)
+    public TimeOnly? StartTime { get; set; }    // --start-time=10:00
+    public TimeOnly? EndTime { get; set; }      // --end-time=11:30
     
     public static CommandLineOverrides? Parse(string[] args)
     {
@@ -178,6 +181,32 @@ public class CommandLineOverrides
             else if (arg.StartsWith("--symbols=", StringComparison.OrdinalIgnoreCase))
             {
                 overrides.SymbolsOverride = arg.Substring("--symbols=".Length).Trim();
+            }
+            else if (arg.StartsWith("--start-time=", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg.Substring("--start-time=".Length).Trim();
+                if (TimeOnly.TryParse(value, out var startTime))
+                {
+                    overrides.StartTime = startTime;
+                }
+                else
+                {
+                    Console.Error.WriteLine($"[ERROR] --start-time must be HH:mm format (Eastern). Got: {value}");
+                    return null;
+                }
+            }
+            else if (arg.StartsWith("--end-time=", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg.Substring("--end-time=".Length).Trim();
+                if (TimeOnly.TryParse(value, out var endTime))
+                {
+                    overrides.EndTime = endTime;
+                }
+                else
+                {
+                    Console.Error.WriteLine($"[ERROR] --end-time must be HH:mm format (Eastern). Got: {value}");
+                    return null;
+                }
             }
             // NOTE: -takeprofit has been replaced by the Hybrid Profit Management System.
             // Use ProfitReinvestmentPercent and Trimming settings in appsettings.json instead.

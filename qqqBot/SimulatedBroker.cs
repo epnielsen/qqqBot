@@ -32,6 +32,13 @@ public sealed class SimulatedBroker : IBrokerExecution
     private decimal _realizedPnL;
     private int _tradeCount;
 
+    // High/low watermarks (real-time equity including unrealized)
+    private decimal _peakEquity;
+    private DateTime _peakEquityTime;
+    private decimal _troughEquity;
+    private DateTime _troughEquityTime;
+    private bool _watermarkInitialized;
+
     private record SimulatedPosition(string Symbol, long Quantity, decimal AverageEntryPrice);
 
     public SimulatedBroker(ILogger logger, decimal initialCash = 30_000m, decimal slippagePercent = 0.0001m)
@@ -50,12 +57,46 @@ public sealed class SimulatedBroker : IBrokerExecution
 
     /// <summary>
     /// Update the latest known price for a symbol (called by the replay pipeline).
+    /// When timestampUtc is provided, also tracks equity high/low watermarks.
     /// </summary>
-    public void UpdatePrice(string symbol, decimal price)
+    public void UpdatePrice(string symbol, decimal price, DateTime timestampUtc = default)
     {
         lock (_lock)
         {
             _latestPrices[symbol] = price;
+
+            // Track equity watermarks when we have a valid timestamp (replay mode)
+            if (timestampUtc != default)
+            {
+                var equity = _cashBalance;
+                foreach (var pos in _positions.Values)
+                {
+                    var px = _latestPrices.GetValueOrDefault(pos.Symbol, pos.AverageEntryPrice);
+                    equity += px * pos.Quantity;
+                }
+
+                if (!_watermarkInitialized)
+                {
+                    _peakEquity = equity;
+                    _peakEquityTime = timestampUtc;
+                    _troughEquity = equity;
+                    _troughEquityTime = timestampUtc;
+                    _watermarkInitialized = true;
+                }
+                else
+                {
+                    if (equity > _peakEquity)
+                    {
+                        _peakEquity = equity;
+                        _peakEquityTime = timestampUtc;
+                    }
+                    if (equity < _troughEquity)
+                    {
+                        _troughEquity = equity;
+                        _troughEquityTime = timestampUtc;
+                    }
+                }
+            }
         }
     }
 
@@ -286,6 +327,19 @@ public sealed class SimulatedBroker : IBrokerExecution
             _logger.LogInformation("[SIM-BROKER]  Realized P/L:   ${PnL:N2}", _realizedPnL);
             _logger.LogInformation("[SIM-BROKER]  Net Return:     {Return:P2}", (equity - _initialCash) / _initialCash);
             _logger.LogInformation("[SIM-BROKER]  Total Trades:   {Count}", _tradeCount);
+
+            if (_watermarkInitialized)
+            {
+                var eastern = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+                var peakLocal = TimeZoneInfo.ConvertTimeFromUtc(_peakEquityTime, eastern);
+                var troughLocal = TimeZoneInfo.ConvertTimeFromUtc(_troughEquityTime, eastern);
+                var peakPnL = _peakEquity - _initialCash;
+                var troughPnL = _troughEquity - _initialCash;
+                _logger.LogInformation("[SIM-BROKER]  Peak P/L:       {PnL:+$#,##0.00;-$#,##0.00} ({Pct:P2}) at {Time:HH:mm:ss} ET",
+                    peakPnL, peakPnL / _initialCash, peakLocal);
+                _logger.LogInformation("[SIM-BROKER]  Trough P/L:     {PnL:+$#,##0.00;-$#,##0.00} ({Pct:P2}) at {Time:HH:mm:ss} ET",
+                    troughPnL, troughPnL / _initialCash, troughLocal);
+            }
 
             foreach (var pos in _positions.Values.Where(p => p.Quantity > 0))
             {

@@ -8,8 +8,22 @@
 
 ## Deterministic Replay
 
-- [ ] **Serialize analyst→trader tick processing for deterministic replays**
-  Replay results are currently non-deterministic across runs. The analyst and trader engines consume market ticks from bounded channels on separate threads. At `speed=0`, the OS thread scheduler determines which engine processes a given tick first, causing different signal/trade timing each run. Observed variance: identical replay date can produce +$135.94 (4 trades, daily target triggered) or -$47.56 (12 trades, target never reached) depending on scheduling luck. The TimeRuleApplier global-max-time fix eliminated the *settings corruption* source of non-determinism, but thread-scheduling variance remains. Fix: in replay mode only, process ticks through a single-threaded pipeline (analyst produces signal → trader acts on it) rather than parallel consumers, so every run produces identical results. Not needed for live trading where real-time parallelism is correct.
+- [x] **Serialize analyst→trader tick processing for deterministic replays**
+  ~~Replay results are currently non-deterministic across runs.~~ **DONE (2026-02-12)**: Both channels are now bounded(1) in replay mode — regime channel (analyst→trader) and price channel (replay source→analyst). This creates a serialized pipeline where each tick is fully processed through analyst→trader before the next enters. ClockOverride now advances on the analyst's consumer side (not the replay source's producer side), preventing clock desync during trader delays. Live mode unchanged (unbounded channels, real-time parallelism).
+
+- [x] **Skip Brownian bridge interpolation for recorded tick data**
+  ~~Replay of recorded trading days injected ~60K synthetic ticks via Brownian bridge, distorting SMA calculations and shifting signals by ~2 minutes vs live. This caused a $425 P/L gap (replay -$254 vs live +$171).~~ **DONE (2026-02-12)**: Added `skipInterpolation` flag to `ReplayMarketDataSource` with auto-detection via `IsHighResolutionData()` — samples the first 100 rows of the CSV and skips interpolation when avg tick gap < 10s. Recorded data (avg gap ~3s) now replays raw; historical API data (60s bars) still uses the bridge. Gap closed from $425 to ~$23.
+
+- [x] **Peak/trough P/L watermarks in replay summary**
+  **DONE (2026-02-12)**: `SimulatedBroker.UpdatePrice` now tracks real-time equity (cash + unrealized) on every tick and records the high/low watermarks with timestamps. Displayed in the replay summary as Peak P/L and Trough P/L with Eastern time.
+
+- [x] **Clean replay shutdown at session end**
+  ~~Replay hung for 30s after 16:00 ET because `ProcessMarketDataLoop` returned but `SubscribeAsync` was still blocked writing to the bounded(1) channel.~~ **DONE (2026-02-12)**: AnalystEngine now completes the price channel writer at session end in replay mode. ReplayMDS catches `ChannelClosedException` and exits cleanly. No more timeout or "HANGING" warnings.
+
+## Flaky Test
+
+- [ ] **Fix `DynamicExit_HighSlope_UsesTrendTimeout` test flakiness**
+  This test in `MarketBlocks.Bots.Tests/TraderEngineTests.cs` passes when run in isolation but frequently fails when run alongside other tests (e.g., full `dotnet test`). Likely caused by shared static state or timing sensitivity. Observed across multiple sessions (2026-02-12). Needs investigation into test isolation — possibly shared `TradingSettings`, `FileLoggerProvider.ClockOverride`, or `TimeRuleApplier` state leaking between tests.
 
 ## Settings Re-Optimization
 
