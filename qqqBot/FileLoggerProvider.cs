@@ -9,6 +9,12 @@ namespace qqqBot;
 /// </summary>
 public class FileLoggerProvider : ILoggerProvider
 {
+    /// <summary>
+    /// When set, log timestamps use this value instead of DateTime.Now.
+    /// Used in replay mode so log entries reflect the replayed tick time.
+    /// </summary>
+    public static DateTime? ClockOverride { get; set; }
+
     private readonly string _filePath;
     private readonly ConcurrentDictionary<string, FileLogger> _loggers = new();
     private readonly object _lock = new();
@@ -35,7 +41,7 @@ public class FileLoggerProvider : ILoggerProvider
     {
         lock (_lock)
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+            var timestamp = (ClockOverride ?? DateTime.Now).ToString("yyyy-MM-dd HH:mm:ss.fff");
             var levelStr = level switch
             {
                 LogLevel.Trace => "TRCE",

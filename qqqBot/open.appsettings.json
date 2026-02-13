@@ -8,7 +8,7 @@
     "CryptoBenchmarkSymbol": "BTC/USD",
     
     "//_COMMENT": "--- PHASE 1: OPEN VOLATILITY (09:30 - 10:30) ---",
-    "MinVelocityThreshold": 0.000005,
+    "MinVelocityThreshold": 0.00002,
     "SMAWindowSeconds": 120,
     "SlopeWindowSize": 20,
     "ChopThresholdPercent": 0.001,
@@ -16,14 +16,24 @@
     "TrendWindowSeconds": 900,
 
     "ExitStrategy": {
-        "ScalpWaitSeconds": 0,
+        "ScalpWaitSeconds": 30,
         "TrendWaitSeconds": 180,
-        "TrendConfidenceThreshold": 0.0002
+        "TrendConfidenceThreshold": 0.00012,
+        "HoldNeutralIfUnderwater": true
     },
     "UseMarketableLimits": false,
+    "UseIocOrders": false,
     "IocLimitOffsetCents": 20,
     "IocRetryStepCents": 10,
     "TrailingStopPercent": 0.005,
+    "DynamicStopLoss": {
+      "Enabled": true,
+      "Tiers": [
+        { "TriggerProfitPercent": 0.005, "StopPercent": 0.003 },
+        { "TriggerProfitPercent": 0.008, "StopPercent": 0.002 },
+        { "TriggerProfitPercent": 0.012, "StopPercent": 0.0015 }
+      ]
+    },
     "EnableTrimming": false,
     "TrimTriggerPercent": 0.005,
     "TrimSlopeThreshold": 0.000002,
@@ -46,7 +56,6 @@
     "MaxChaseDeviationPercent": 0.003,
     
     "LowLatencyMode": true,
-    "UseIocOrders": true,
     "IocMaxRetries": 5,    
     "IocMaxDeviationPercent": 0.005,
     "IocRemainingSharesTolerance": 2,
@@ -55,7 +64,7 @@
 
     "StatusLogIntervalSeconds": 5,
 
-    "StartingAmount": 10000
+    "StartingAmount": 9935.95
 
   }
 }
