@@ -52,13 +52,14 @@
 
 ## Current Production Settings
 
-**As of: 2026-02-14 (Systematic Re-Optimization Session)**
+**As of: 2026-02-14 (Systematic Re-Optimization + OV Extension Session)**
 
 > **NOTE**: Full phase-by-phase re-optimization using corrected replay infrastructure.
 > Swept ~200+ configs across 5 dates (Feb 9-13). Result: -$436→+$503 (+$939 improvement).
 > Base settings significantly changed. OV settings partially changed. PH unchanged.
+> OV window extended from 09:50→10:13 (+$60 improvement, $549→$609).
 
-### Base Config (09:50–14:00, also default for unspecified times)
+### Base Config (10:13–14:00, also default for unspecified times)
 
 | Setting | Value | Previous | Notes |
 |---------|-------|----------|-------|
@@ -79,9 +80,11 @@
 | DailyProfitTargetPercent | 1.75 | 1.5 | ↑ from 1.5%, +$46 improvement (Feb 12 uncapped) |
 | DailyProfitTargetTrailingStopPercent | 0.3 | 0.3 | Unchanged (never triggers at current levels) |
 
-### Open Volatility (09:30–09:50)
+### Open Volatility (09:30–10:13)
 
-> **NOTE**: Window unchanged at 09:30–09:50. Velocity lowered to match base. Trail widened for volatile open.
+> **NOTE**: Window extended from 09:30–09:50 to 09:30–10:13 (+$60 improvement).
+> Aggressive OV settings capture early-morning momentum that conservative Base settings miss.
+> Velocity lowered to match base. Trail widened for volatile open.
 
 | Setting | Value | Previous | Diff from Base |
 |---------|-------|----------|----------------|
@@ -859,7 +862,7 @@ Only minor finding: Trail=0.1% reduces loss from -$26 to -$10 (those 2 trades). 
 
 **Setting applied**: DailyProfitTargetPercent 1.5% → **1.75%** (+$46 improvement, Feb 12 +$127→+$173)
 
-**Final optimized totals**: +$549.03 (40 trades) vs original baseline -$436.23 (77 trades) = **+$985 improvement**
+**Final optimized totals (before OV extension)**: +$549.03 (40 trades) vs original baseline -$436.23 (77 trades) = **+$985 improvement**
 
 #### Low Target + Wide Trail Sweep (Unrealized Equity Capture Attempt)
 
@@ -885,4 +888,47 @@ Only minor finding: Trail=0.1% reduces loss from -$26 to -$10 (those 2 trades). 
 
 **Root cause**: The trailing stop tracks a high-water mark (running peak). Once armed, ANY pullback exceeding the trail % from ANY local peak triggers it — even if equity would recover. On volatile strong days, 5-20% pullbacks from local peaks occur during normal trading rhythm, firing the stop well before the true daily maximum.
 
-**Conclusion**: T1.75_Tr0.3 ($549) confirmed optimal for existing mechanism. Capturing Feb 9/10 unrealized peaks requires a fundamentally different approach — the **PhaseProfitTarget** feature (stop after OV if sufficient gain) as designed in TODO.md.
+**Conclusion**: T1.75_Tr0.3 ($549) confirmed optimal for existing daily target mechanism. Capturing Feb 9/10 unrealized peaks requires a fundamentally different approach.
+
+### OV Window Extension Experiment
+
+**Hypothesis**: Instead of trying to discriminate good/bad continuation days via regime signals (which showed no distinguishing features at the 09:50 transition), extend the more aggressive OV settings past 09:50 to capture early-morning momentum.
+
+**OV→Base transition state analysis** (5 days):
+- Feb 9: BULL, holding TQQQ, +$72 realized — then Base erodes to +$16
+- Feb 10: NEUTRAL, CASH, +$36 — then Base erodes to +$19
+- Feb 11: NEUTRAL, CASH, +$47 — then Base adds +$115 (good!)
+- Feb 12: BEAR, holding SQQQ, +$49 — then Base adds +$124 (good!)
+- Feb 13: NEUTRAL, CASH, +$179 — daily target already saves it
+
+**No regime signal discriminates good from bad days**: Feb 10 (BAD) and Feb 11 (GOOD) are both NEUTRAL/CASH with nearly identical QQQ-SMA spreads.
+
+**OV extension sweep** (12 end times tested, then fine-tuned to minute resolution):
+
+| OV End Time | Total P/L | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 |
+|-------------|-----------|-------|--------|--------|--------|--------|
+| 09:50 (prev) | $549 | $16 | $19 | $162 | $173 | $179 |
+| 10:05 | $566 | $14 | $19 | $188 | $165 | $179 |
+| 10:07 | $567 | $14 | $48 | $175 | $151 | $179 |
+| 10:10 | $589 | $14 | $48 | $175 | $172 | $179 |
+| **10:13** | **$609** | $14 | **$46** | **$197** | $172 | $179 |
+| **10:14** | **$609** | $14 | $46 | $197 | $172 | $179 |
+| 10:15 | $600 | $14 | $46 | $197 | $164 | $179 |
+| 10:16 | $599 | $14 | $37 | $197 | $171 | $179 |
+| 10:20 | $597 | $14 | $37 | $197 | $170 | $179 |
+| 10:30 | $581 | $14 | $24 | $197 | $167 | $179 |
+| 11:00 | $533 | -$66 | $48 | $197 | $174 | $179 |
+| 14:00 (all day) | $600 | $13 | $36 | $197 | $175 | $179 |
+
+**Key findings**:
+1. **10:13 is the sweet spot**: +$609 (+$60 over previous, +10.9%)
+2. Feb 10 jumps $19→$46 — aggressive OV settings catch a move at ~10:07 that Base misses
+3. Feb 11 jumps $162→$197 — OV-style trading captures additional early trend
+4. Feb 12 drops $173→$172 (-$1) — essentially flat
+5. Feb 9 drops $16→$14 (-$2) — essentially flat
+6. Past 10:16, returns degrade as aggressive settings overtrade quieter conditions
+7. At 11:00, Feb 9 collapses to -$66 (aggressive OV settings keep trading a reversal)
+
+**Setting applied**: OV EndTime 09:50 → **10:13** (+$60 improvement)
+
+**Final optimized totals**: +$608.90 (38 trades) vs original baseline -$436.23 (77 trades) = **+$1,045 improvement**
