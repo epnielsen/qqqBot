@@ -289,6 +289,23 @@ public sealed class SimulatedBroker : IBrokerExecution
         }
     }
 
+    public Task<decimal> GetEquityAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            // Total equity = cash + market value of all positions
+            var equity = _cashBalance;
+            foreach (var kvp in _positions)
+            {
+                if (_latestPrices.TryGetValue(kvp.Key, out var price))
+                    equity += kvp.Value.Quantity * price;
+                else
+                    equity += kvp.Value.Quantity * kvp.Value.AverageEntryPrice;
+            }
+            return Task.FromResult(equity);
+        }
+    }
+
     public Task<decimal> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
         lock (_lock)

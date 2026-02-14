@@ -1,0 +1,155 @@
+{
+    "TradingBot":  {
+                       "BotId":  "main",
+                       "LogDirectory":  "C:\\dev\\TradeEcosystem\\logs\\qqqbot",
+                       "MarketDataDirectory":  "C:\\dev\\TradeEcosystem\\data\\market",
+                       "PollingIntervalSeconds":  1,
+                       "BullSymbol":  "TQQQ",
+                       "BearSymbol":  "SQQQ",
+                       "BenchmarkSymbol":  "QQQ",
+                       "CryptoBenchmarkSymbol":  "BTC/USD",
+                       "//_COMMENT_BASE":  "--- BASE CONFIG: MID-DAY LULL defaults (10:30 - 14:00) ---",
+                       "//_COMMENT_BASE2":  "--- Open Volatility and Power Hour are overridden via TimeRules below ---",
+                       "MinVelocityThreshold":  0.000015,
+                       "SMAWindowSeconds":  180,
+                       "SlopeWindowSize":  20,
+                       "ChopThresholdPercent":  0.0011,
+                       "MinChopAbsolute":  0.02,
+                       "TrendWindowSeconds":  5400,
+                       "ExitStrategy":  {
+                                            "ScalpWaitSeconds":  30,
+                                            "TrendWaitSeconds":  180,
+                                            "TrendConfidenceThreshold":  0.00008,
+                                            "HoldNeutralIfUnderwater":  true
+                                        },
+                       "UseMarketableLimits":  true,
+                       "UseIocOrders":  true,
+                       "IocLimitOffsetCents":  8,
+                       "IocRetryStepCents":  5,
+                       "TrailingStopPercent":  0.002,
+                       "DynamicStopLoss":  {
+                                               "Enabled":  true,
+                                               "Tiers":  [
+                                                             {
+                                                                 "TriggerProfitPercent":  0.003,
+                                                                 "StopPercent":  0.0015
+                                                             },
+                                                             {
+                                                                 "TriggerProfitPercent":  0.005,
+                                                                 "StopPercent":  0.001
+                                                             },
+                                                             {
+                                                                 "TriggerProfitPercent":  0.008,
+                                                                 "StopPercent":  0.0008
+                                                             }
+                                                         ]
+                                           },
+                       "EnableTrimming":  true,
+                       "TrimTriggerPercent":  0.0025,
+                       "TrimSlopeThreshold":  0.000001,
+                       "TrimCooldownSeconds":  300,
+                       "TrimRatio":  0.75,
+                       "ProfitReinvestmentPercent":  0.5,
+                       "//_COMMENT_DAILY_TARGET":  "--- DAILY PROFIT TARGET ---",
+                       "DailyProfitTargetPercent":  0.6,
+                       "DailyProfitTargetRealtime":  true,
+                       "DailyProfitTargetTrailingStopPercent":  15,
+                       "//_COMMENT_DAILY_LOSS":  "--- DAILY LOSS LIMIT ---",
+                       "DailyLossLimit":  0,
+                       "DailyLossLimitPercent":  0,
+                       "//_COMMENT_STATIC":  "--- STATIC SETTINGS (same across all phases) ---",
+                       "SlidingBand":  false,
+                       "SlidingBandFactor":  0.75,
+                       "WatchBtc":  false,
+                       "MonitorSlippage":  true,
+                       "StopLossCooldownSeconds":  10,
+                       "MaxSlippagePercent":  0.002,
+                       "MaxChaseDeviationPercent":  0.003,
+                       "LowLatencyMode":  true,
+                       "IocMaxRetries":  5,
+                       "IocMaxDeviationPercent":  0.005,
+                       "IocRemainingSharesTolerance":  2,
+                       "KeepAlivePingSeconds":  5,
+                       "WarmUpIterations":  10000,
+                       "StatusLogIntervalSeconds":  5,
+                       "//_COMMENT_TIMERULES":  "--- TIME-BASED PHASE SWITCHING ---",
+                       "//_COMMENT_TIMERULES2":  "--- Only overrides that DIFFER from base config are specified ---",
+                       "TimeRules":  [
+                                         {
+                                             "Name":  "Open Volatility",
+                                             "StartTime":  "09:30",
+                                             "EndTime":  "09:50",
+                                             "Overrides":  {
+                                                               "MinVelocityThreshold":  0.000015,
+                                                               "SMAWindowSeconds":  120,
+                                                               "ChopThresholdPercent":  0.0015,
+                                                               "MinChopAbsolute":  0.05,
+                                                               "TrendWindowSeconds":  900,
+                                                               "TrendWaitSeconds":  180,
+                                                               "TrendConfidenceThreshold":  0.00012,
+                                                               "UseMarketableLimits":  false,
+                                                               "UseIocOrders":  false,
+                                                               "IocLimitOffsetCents":  20,
+                                                               "IocRetryStepCents":  10,
+                                                               "TrailingStopPercent":  0.005,
+                                                               "DynamicStopLossEnabled":  true,
+                                                               "DynamicStopLossTiers":  [
+                                                                                            {
+                                                                                                "TriggerProfitPercent":  0.005,
+                                                                                                "StopPercent":  0.003
+                                                                                            },
+                                                                                            {
+                                                                                                "TriggerProfitPercent":  0.008,
+                                                                                                "StopPercent":  0.002
+                                                                                            },
+                                                                                            {
+                                                                                                "TriggerProfitPercent":  0.012,
+                                                                                                "StopPercent":  0.0015
+                                                                                            }
+                                                                                        ],
+                                                               "EnableTrimming":  false,
+                                                               "TrimTriggerPercent":  0.005,
+                                                               "TrimSlopeThreshold":  0.000002,
+                                                               "TrimCooldownSeconds":  60,
+                                                               "TrimRatio":  0.33
+                                                           }
+                                         },
+                                         {
+                                             "Name":  "Power Hour",
+                                             "StartTime":  "14:00",
+                                             "EndTime":  "16:00",
+                                             "Overrides":  {
+                                                               "MinVelocityThreshold":  0.000015,
+                                                               "SMAWindowSeconds":  120,
+                                                               "SlopeWindowSize":  15,
+                                                               "ChopThresholdPercent":  0.0015,
+                                                               "TrendWaitSeconds":  60,
+                                                               "TrendConfidenceThreshold":  0.00012,
+                                                               "UseMarketableLimits":  false,
+                                                               "UseIocOrders":  false,
+                                                               "IocLimitOffsetCents":  10,
+                                                               "TrailingStopPercent":  0.0015,
+                                                               "DynamicStopLossEnabled":  true,
+                                                               "DynamicStopLossTiers":  [
+                                                                                            {
+                                                                                                "TriggerProfitPercent":  0.003,
+                                                                                                "StopPercent":  0.001
+                                                                                            },
+                                                                                            {
+                                                                                                "TriggerProfitPercent":  0.005,
+                                                                                                "StopPercent":  0.0008
+                                                                                            },
+                                                                                            {
+                                                                                                "TriggerProfitPercent":  0.008,
+                                                                                                "StopPercent":  0.0006
+                                                                                            }
+                                                                                        ],
+                                                               "TrimTriggerPercent":  0.003,
+                                                               "TrimSlopeThreshold":  0.000002,
+                                                               "TrimCooldownSeconds":  60
+                                                           }
+                                         }
+                                     ],
+                       "StartingAmount":  10000
+                   }
+}

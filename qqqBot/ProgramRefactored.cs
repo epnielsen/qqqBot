@@ -609,7 +609,11 @@ public static class ProgramRefactored
             DailyProfitTarget = configuration.GetValue("TradingBot:DailyProfitTarget", 0m),
             DailyProfitTargetPercent = configuration.GetValue("TradingBot:DailyProfitTargetPercent", 0m),
             DailyProfitTargetRealtime = configuration.GetValue("TradingBot:DailyProfitTargetRealtime", false),
-            DailyProfitTargetTrailingStopPercent = configuration.GetValue("TradingBot:DailyProfitTargetTrailingStopPercent", 0m)
+            DailyProfitTargetTrailingStopPercent = configuration.GetValue("TradingBot:DailyProfitTargetTrailingStopPercent", 0m),
+            
+            // Daily Loss Limit
+            DailyLossLimit = configuration.GetValue("TradingBot:DailyLossLimit", 0m),
+            DailyLossLimitPercent = configuration.GetValue("TradingBot:DailyLossLimitPercent", 0m)
         };
         
         // Parse DynamicStopLoss (nested object with tiers)

@@ -11,7 +11,7 @@ This bot is designed **exclusively for paper trading**. It includes multiple saf
 - **Hybrid Engine**: Combines fast velocity detection with 30-minute trend baseline for "Trend Rescue" entries
 - **Stop & Reverse**: Automatically switches between TQQQ (bullish) and SQQQ (bearish) positions
 - **Trailing Stops**: Configurable trailing stop-loss with washout latch to prevent whipsaw re-entry
-- **Split Allocation Model**: Configurable profit reinvestment for compounding with protected "Bank" for secured profits
+- **Split Allocation Model**: Configurable profit reinvestment for compounding with protected savings for secured profits
 - **Position Trimming**: Automatically trims winning positions when momentum fades (locks in gains while riding trends)
 - **Low-Latency Mode**: IOC (Immediate-or-Cancel) orders with retry logic for fast execution
 - **Hot Start Hydration**: Fetches historical data on startup for immediate trading (no warm-up period)
@@ -128,6 +128,8 @@ Edit `appsettings.json` to customize the bot behavior:
 | `StopLossCooldownSeconds` | Washout latch duration | 10 |
 | `MaxSlippagePercent` | Max acceptable slippage | 0.002 |
 | `MaxChaseDeviationPercent` | Max price chase before abort | 0.003 |
+| `DailyLossLimit` | Stop trading when session loss exceeds this dollar amount (0 = disabled) | 0 |
+| `DailyLossLimitPercent` | Stop trading when session loss exceeds this % of StartingAmount (0 = disabled) | 0 |
 
 #### Profit Management (Split Allocation Model)
 | Parameter | Description | Default |
@@ -181,7 +183,7 @@ The bot maintains a `trading_state.json` file to persist state across restarts:
 | Field | Description |
 |-------|-------------|
 | `AvailableCash` | Working capital available for trading |
-| `AccumulatedLeftover` | **Bank** - Protected profits (never used for position sizing) |
+| `AccumulatedLeftover` | Protected profits (compounded portion not reinvested for trading) |
 | `StartingAmount` | Initial capital configuration |
 | `DayStartBalance` | Balance at start of trading day (for daily P/L) |
 
@@ -389,8 +391,8 @@ THEN:
 |-------|-------------|
 | `Depl` | Deployed capital (cost basis of current position) |
 | `Avail` | Available cash for trading |
-| `Bank` | Protected profits (AccumulatedLeftover) |
-| `Reinv` | Reinvestable profit (RealizedSessionPnL × ReinvestmentPercent) |
+| `Bank` | Protected savings (AccumulatedLeftover) |
+| `Reinv` | Compounded profit (RealizedSessionPnL × ReinvestmentPercent) |
 | `Eq` | Total equity (cash + position value) |
 | `Run` | Unrealized P/L on current position |
 | `Day` | Daily realized P/L |
@@ -428,7 +430,7 @@ qqqbot/
 3. **State Persistence**: Survives crashes and restarts
 4. **Trailing Stops**: Automatic loss protection
 5. **Washout Latch**: Prevents whipsaw re-entry after stop-out
-6. **Bank Protection**: Profits in Bank are never risked on new positions
+6. **Profit Protection**: Protected profits (AccumulatedLeftover) are never risked on new positions
 
 ## Disclaimer
 

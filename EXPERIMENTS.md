@@ -52,56 +52,51 @@
 
 ## Current Production Settings
 
-**As of: 2026-02-10 evening (branch: `feature/profitability-enhancements`)**
+**As of: 2026-02-14 (Systematic Re-Optimization Session)**
 
-> **NOTE**: Settings were significantly tightened on 2026-02-10 after live trading observations.
-> BullOnlyMode in Open Vol was REMOVED. Mid-Day Lull phase override was REMOVED.
-> All tiers and thresholds were adjusted.
+> **NOTE**: Full phase-by-phase re-optimization using corrected replay infrastructure.
+> Swept ~200+ configs across 5 dates (Feb 9-13). Result: -$436→+$503 (+$939 improvement).
+> Base settings significantly changed. OV settings partially changed. PH unchanged.
 
-### Base Config (also Mid-Day Lull 10:30–16:00 minus Open Vol and Power Hour)
+### Base Config (09:50–14:00, also default for unspecified times)
 
-| Setting | Value | Notes |
-|---------|-------|-------|
-| MinVelocityThreshold | 0.000008 | ↑ from 0.000002 |
-| SMAWindowSeconds | 180 | |
-| SlopeWindowSize | 20 | |
-| ChopThresholdPercent | 0.0011 | ↑ from 0.0008 |
-| MinChopAbsolute | 0.02 | |
-| TrendWindowSeconds | 1800 | |
-| ScalpWaitSeconds | 30 | Was -1 (disabled) |
-| TrendWaitSeconds | 120 | Was -1 (disabled) |
-| TrendConfidenceThreshold | 0.00008 | ↑ from 0.00004 |
-| HoldNeutralIfUnderwater | true | |
-| TrailingStopPercent | 0.0025 | ↓ from 0.0045 (tighter) |
-| DynamicStopLoss Tiers | 0.3%→0.15%, 0.5%→0.1%, 0.8%→0.08% | Tightened from 0.5%/1%/2% triggers |
-| EnableTrimming | true | Was false |
-| TrimTriggerPercent | 0.0025 | |
-| MaxChaseDeviationPercent | 0.003 | ↑ from 0.0005 |
-| UseMarketableLimits | true | |
-| UseIocOrders | true | |
-| BullOnlyMode | false (default) | |
-| DailyProfitTarget | 0 (disabled) | |
-| DailyProfitTargetPercent | 0 (disabled) | NEW — see code changes |
-| DailyProfitTargetRealtime | false | NEW — see code changes |
+| Setting | Value | Previous | Notes |
+|---------|-------|----------|-------|
+| MinVelocityThreshold | 0.000015 | 0.000008 | ↑ 1.9×, biggest single improvement |
+| SMAWindowSeconds | 180 | 180 | Unchanged |
+| SlopeWindowSize | 20 | 20 | Unchanged |
+| ChopThresholdPercent | 0.0011 | 0.0011 | Unchanged |
+| MinChopAbsolute | 0.02 | 0.02 | Unchanged (zero effect at current price) |
+| TrendWindowSeconds | 5400 | 1800 | ↑ 3×, prevents bad entries on volatile days |
+| ScalpWaitSeconds | 30 | 30 | Unchanged (zero effect w/ higher velocity) |
+| TrendWaitSeconds | 180 | 120 | ↑ from 120, marginal improvement |
+| TrendConfidenceThreshold | 0.00008 | 0.00008 | Unchanged (zero effect in sweeps) |
+| HoldNeutralIfUnderwater | true | true | CRITICAL — false loses -$172 |
+| TrailingStopPercent | 0.002 | 0.0025 | ↓ tighter, +$12 improvement |
+| DynamicStopLoss Tiers | (unchanged) | | DSL tight catastrophic (-$613) |
+| EnableTrimming | true | true | Unchanged |
+| TrimRatio | 0.75 | 0.50 | ↑ +$38 improvement |
+| DailyProfitTargetPercent | 1.75 | 1.5 | ↑ from 1.5%, +$46 improvement (Feb 12 uncapped) |
+| DailyProfitTargetTrailingStopPercent | 0.3 | 0.3 | Unchanged (never triggers at current levels) |
 
 ### Open Volatility (09:30–09:50)
 
-> **NOTE**: Window shortened from 09:30–10:30 to 09:30–09:50. BullOnlyMode REMOVED.
+> **NOTE**: Window unchanged at 09:30–09:50. Velocity lowered to match base. Trail widened for volatile open.
 
-| Setting | Value | Diff from Base |
-|---------|-------|----------------|
-| MinVelocityThreshold | 0.000025 | 3× base (was 0.000010) |
-| SMAWindowSeconds | 120 | ⅔ base |
-| ChopThresholdPercent | 0.0015 | ↑ from 0.0008 |
-| MinChopAbsolute | 0.05 | 2.5× base |
-| TrendWindowSeconds | 900 | ½ base |
-| TrendWaitSeconds | 180 | Higher than base |
-| TrendConfidenceThreshold | 0.00012 | |
-| UseMarketableLimits | false | Direct market orders |
-| UseIocOrders | false | |
-| TrailingStopPercent | 0.003 | Wider than base (was 0.006) |
-| DynamicStopLoss Tiers | 0.5%→0.3%, 0.8%→0.2%, 1.2%→0.15% | |
-| EnableTrimming | false | |
+| Setting | Value | Previous | Diff from Base |
+|---------|-------|----------|----------------|
+| MinVelocityThreshold | 0.000015 | 0.000025 | Same as base now |
+| SMAWindowSeconds | 120 | 120 | ⅔ base |
+| ChopThresholdPercent | 0.0015 | 0.0015 | Higher than base |
+| MinChopAbsolute | 0.05 | 0.05 | 2.5× base |
+| TrendWindowSeconds | 900 | 900 | ⅙ base (unchanged) |
+| TrendWaitSeconds | 180 | 180 | Same as base now |
+| TrendConfidenceThreshold | 0.00012 | 0.00012 | |
+| UseMarketableLimits | false | false | Direct market orders |
+| UseIocOrders | false | false | |
+| TrailingStopPercent | 0.005 | 0.003 | ↑ wider for volatile open |
+| DynamicStopLoss Tiers | (unchanged) | | |
+| EnableTrimming | false | false | |
 
 ### Power Hour (14:00–16:00)
 
@@ -627,3 +622,267 @@ All were fixed and committed in `739b0f8`/`aa4b929`.
 4. Updated README.md (Configuration Reference table) and TODO.md
 
 **Verification**: Build passes (63/63 tests), replay produces same results ($136.71 P/L, 13 trades for Feb 12 full day).
+
+---
+
+## Session: 2026-02-13 (Evening) — Bug Fixes, Loss Prevention, UX Improvements
+
+**Context**: During today's live run, P/L was -$292.34 (bot) / -$293.49 (broker). Several issues were identified from the logs.
+
+**Live Run Observations (Feb 13)**:
+- Bot P/L: -$292.34 | Broker P/L: -$293.49 (~$1.15 discrepancy, likely rounding)
+- Equity check was wildly wrong: Bot $9,949 vs Broker $799,502 (margin buying power, not equity)
+- Daily Change discrepancy: broker UI showed -$223.06, bot showed -$221.91 at 10:53 ET
+- Negative trade losses exceeded positive trade gains from prior days — need loss prevention
+
+**Changes**:
+
+1. **Fix: Equity Check — BuyingPower vs Equity** (Critical bug)
+   - Root cause: `FireEquityCheck()` called `GetBuyingPowerAsync()` which returns Alpaca's margin buying power (~$800K), not actual account equity (~$10K)
+   - Added `GetEquityAsync()` to `IBrokerExecution` interface
+   - Implemented in `AlpacaExecutionAdapter` using `account.Equity`
+   - Implemented in `TradierExecutionAdapter` using `total_equity` (with fallbacks to `account_value`, `total_cash`)
+   - Implemented in `SimulatedBroker` as cash + position market values
+   - `FireEquityCheck()` now calls `GetEquityAsync()` directly instead of manually summing buying power + positions
+   - `GetBuyingPowerAsync()` kept intact for position sizing logic
+
+2. **Feature: Daily Loss Limit** (Mirrors daily profit target pattern)
+   - Added `DailyLossLimit` (dollar) and `DailyLossLimitPercent` (% of StartingAmount) to both TradingSettings
+   - Added `EffectiveDailyLossLimit` computed property (same pattern as `EffectiveDailyProfitTarget`)
+   - Wired into `BuildTradingSettings` and `appsettings.json` (disabled by default: 0)
+   - When session P/L drops below `-EffectiveDailyLossLimit`, sets `_dailyTargetReached = true` → flattens position, stops trading for day
+   - Reuses existing daily target infrastructure for liquidation / halt
+
+3. **UX: Stop Notifications — Dollar Value**
+   - Trailing stop trigger log now shows dollar distance from current price: `Stop: $105.47 (-$0.53)`
+   - Both BULL and BEAR stop trigger messages updated
+
+4. **UX: Simplified Profit Logging**
+   - Removed "Banked" from `[PROFIT]` log — was confusing and didn't reflect real P/L
+   - Renamed "Reinvest" to "Compounded"
+   - New format: `[PROFIT] Realized: +$X.XX | Compounded: $Y.YY | SessionPnL: $Z.ZZ`
+
+5. **TODO.md Updates**
+   - Added Tradier Migration plan (gradual: Phase 1 market data, Phase 2 full Tradier with safeguards, Phase 3 production)
+   - Added Barcoding/Chopping Detection research item
+   - Marked Settings Re-Optimization as HIGH PRIORITY
+
+**Settings Changes**: None (DailyLossLimit defaults to 0/disabled). Pending tuning recommendation.
+
+---
+
+## Session: 2026-02-14 — Systematic Full Re-Optimization
+
+**Context**: Highest-priority TODO item. Full phase-by-phase parameter sweep using corrected replay infrastructure with segment replay (`--start-time`/`--end-time`). First-ever systematic optimization using automated harness.
+
+**Methodology**:
+- Built `sweep.ps1` — automated parameter sweep harness supporting `baseline`, `sweep`, `custom` actions across any phase or full day
+- Tested 200+ configurations across 5 replay dates (Feb 9-13), each with deterministic recorded tick data (~3s resolution)
+- Approach: isolate each phase → sweep individual params → combine winners → verify full-day
+- Feb 6 excluded (60s bar data + Brownian bridge = non-deterministic)
+
+### Phase-Segmented Baselines
+
+| Phase | Total P/L | Trades | Per-Day (Feb 9/10/11/12/13) |
+|-------|-----------|--------|-----|
+| OV (09:30-09:50) | +$75.91 | 14 | -29/+36/+47/+74/-52 |
+| Base (09:50-14:00) | -$415.43 | 55 | -86/-14/+113/+69/-498 |
+| PH (14:00-16:00) | -$26.22 | 2 | 0/0/0/-26/0 |
+| **Full Day** | **-$436.23** | **77** | -126/+27/+153/+137/-628 |
+
+**Observations**: Feb 13 is the barcoding disaster day: 35 trades, -$628. Base phase alone: 27 trades, -$498. OV and PH also negative on Feb 13. PH essentially inert — only 2 trades on Feb 12 across all 5 days.
+
+### Base Phase Optimization (26+ signal combos, then stops/exit/trim/direction)
+
+**Signal Sweep** (top results from 26 scenarios):
+
+| Config | Total P/L | Trades | Key Finding |
+|--------|-----------|--------|-------------|
+| Vel=15+Trend=3600 | +$80.64 | 32 | Best signal pair (+$496 vs baseline) |
+| Vel=15+Trend=5400 | +$80.64 | 32 | Same P/L — plateau at ≥4800 |
+| Vel=15 alone | +$82.30 | 36 | Close but more trades |
+| TrendWindow=5400 alone | -$301.03 | 47 | Insufficient without velocity |
+| ChopThreshold swept | No improvement | | ChopThresholdPercent dominates at $530 QQQ |
+| SMA swept | All worse | | Current 180s is optimal |
+
+**Fine-Tuning**: TrendWindow tested 1800-10800. All values ≥4800 produce identical +$80.64. Selected T=5400 (within plateau, not overfit). Velocity 0.000013-0.000020 all identical with T≥3600.
+
+**Stops/Exit/Trim/Direction Sweep** (on top of Vel15+T5400):
+
+| Category | Winner | P/L | vs Signal Baseline | Finding |
+|----------|--------|-----|--------------------|---------|
+| TrailStop | 0.2% | +$93.14 | +$12.50 | Tighter stop helps |
+| TrailStop 0.5% | | -$45.37 | | Too loose |
+| DSL tight | | -$612.77 | | CATASTROPHIC — triggers barcoding |
+| TrendWait | 180s | +$86.48 | +$5.84 | Marginal improvement |
+| TrendWait 60s | | -$204.97 | | Too short — exits too early |
+| ScalpWait | all values | +$80.64 | 0 | ZERO EFFECT with higher velocity |
+| TrendConf | all values | +$80.64 | 0 | ZERO EFFECT |
+| HoldUnderwater=false | | -$91.91 | -$172 | Must keep true |
+| TrimRatio | 75% | +$118.86 | +$38.22 | Take more profit earlier |
+| Trim=OFF | | +$16.13 | | Worse |
+| BullOnly | | +$80.64 | 0 | Identical to Both — no BEAR entries at Vel15 |
+
+**Combined Base Winner**: +$131.56 (32 trades) vs -$415.43 (55 trades) = **+$547 improvement**
+
+### OV Phase Optimization
+
+**Individual Sweep** (top results):
+
+| Config | Total P/L | Trades | Key Finding |
+|--------|-----------|--------|-------------|
+| Vel=0.000015 | +$278.77 | 18 | Best single param (+$203) |
+| Chop=0.001 | +$249.52 | 16 | Lower chop = more OV trades |
+| SMA=60s | +$173.99 | 8 | Inconsistent per-day — risky |
+| Trail=0.5%+ | +$166.99 | 12 | Wider stops for volatile open |
+| BullOnly=true | $0.00 | 0 | KILLS OV — all OV trades are BEAR |
+
+**Combination Testing**:
+
+| Config | Total P/L | Trades | Per-Day |
+|--------|-----------|--------|---------|
+| Vel15+Trail05 | **+$398.10** | 16 | +62/+36/+47/+74/+179 |
+| Vel15+Chop001 | +$340.14 | 18 | +16/+63/+18/+96/+147 |
+| Vel15+Chop001+Trail05 | +$322.88 | 18 | ← Adding chop degrades Feb 9 |
+| ALL_WINNERS | +$205.20 | 26 | ← SMA60 introduces Feb 11 loss |
+
+**OV Winner**: Vel=0.000015 + Trail=0.5% → **+$398.10** vs +$75.91 baseline (+$322 improvement). Every day profitable!
+
+### PH Phase Optimization
+
+**Finding: PH is essentially inert**. Only 2 trades (Feb 12) across 5 days regardless of settings. Even PH_DISABLED produces identical results — the 2 trades carry over from Base phase. Velocity changes (0.000008 to 0.000025) all identical. TrendWindow, TrendWait changes all identical.
+
+Only minor finding: Trail=0.1% reduces loss from -$26 to -$10 (those 2 trades). Not worth changing since they're not true PH trades.
+
+### Cross-Cutting Parameter Sweep (on combined winner)
+
+| Param | Winner | P/L | Finding |
+|-------|--------|-----|---------|
+| DailyTarget=1.5% | Current | +$502.95 | Critical safeguard. OFF=-$155, 2%=-$50 on Feb 13 |
+| DailyTarget=0.5% | | +$185.78 | Too restrictive |
+| DailyTrailStop | All identical | +$502.95 | Target never triggers trail mechanism |
+| DailyLossLimit | All identical | +$502.95 | No losing days → never triggers |
+| Cooldown=10s | Current | +$502.95 | 60s catastrophic (-$145 on Feb 13) |
+| ProfitReinvest | All similar | ~$503-510 | Negligible difference (<$7) |
+
+**Conclusion**: All cross-cutting params already optimal. No changes.
+
+### Full-Day Validation
+
+| Config | Total P/L | Trades | Per-Day (Feb 9/10/11/12/13) |
+|--------|-----------|--------|-----|
+| **BASELINE** | **-$436.23** | **77** | -126/+27/+153/+137/-628 |
+| **OPTIMIZED** | **+$502.95** | **32** | +16/+19/+162/+127/+179 |
+| **Improvement** | **+$939.18** | **-45 trades** | **All 5 days profitable** |
+
+### Settings Applied to appsettings.json
+
+| Setting | Old → New | Impact |
+|---------|-----------|--------|
+| Base: MinVelocityThreshold | 0.000008 → 0.000015 | Biggest single improvement |
+| Base: TrendWindowSeconds | 1800 → 5400 | Prevents bad entries on volatile days |
+| Base: TrailingStopPercent | 0.0025 → 0.002 | Tighter stop = +$12 |
+| Base: ExitStrategy.TrendWaitSeconds | 120 → 180 | Marginal improvement |
+| Base: TrimRatio | 0.50 → 0.75 | +$38 improvement |
+| OV: MinVelocityThreshold | 0.000025 → 0.000015 | Allows more OV entries |
+| OV: TrailingStopPercent | 0.003 → 0.005 | Wider stop for volatile open |
+
+### Key Insights for Future Optimization
+
+1. **Velocity threshold is the #1 lever**: Filtering out weak signals has the biggest impact on P/L
+2. **Trend window provides safety**: Longer lookback prevents whipsaw entries, especially on barcoding days
+3. **Higher trim ratio = more profit locking**: Taking 75% off when momentum fades beats 50%
+4. **OV phase is all BEAR trades**: Morning dip pattern. BullOnly kills OV entirely
+5. **PH phase is inert with current settings**: Only produces carryover trades from Base. May need fundamentally different approach
+6. **DailyProfitTarget=1.5% is a critical safeguard**: Without it, overtrading on good days wipes gains
+7. **Barcoding mitigation**: Feb 13 went from 35 trades/-$628 to 6 trades/+$179. Higher velocity + longer trend window cut barcoding losses by 72%, partially addressing the barcoding detection TODO
+8. **ScalpWait and TrendConfidence have ZERO effect** when velocity threshold is ≥0.000015
+9. **DSL tight stops are catastrophic**: Trigger stop-outs → immediate re-entries → barcoding spiral
+10. **HoldNeutralIfUnderwater=true is non-negotiable**: Disabling it costs -$172 on these 5 days
+
+### Sweep Scripts Created
+
+| Script | Purpose |
+|--------|---------|
+| `sweep.ps1` | Main harness — baselines, signal/stops/exit/trim/direction sweeps |
+| `ov-sweep.ps1` | OV phase parameter sweep |
+| `ov-combo.ps1` | OV combination testing |
+| `ph-sweep.ps1` | PH phase parameter sweep |
+| `crosscut-sweep.ps1` | Daily targets, loss limits, cooldowns |
+| `fullday-test.ps1` | Full-day combined validation |
+| `verify-settings.ps1` | Verify applied settings match expected results |
+| `fine-tune.ps1` / `fine-tune2.ps1` | Velocity+TrendWindow fine-tuning |
+| `stops-exit-sweep.ps1` | Stops/exit/trim/direction sweep |
+| `combined-test.ps1` | Combined Base winner verification |
+
+**Verification**: All 63 unit tests pass. Full-day replay with applied settings confirms +$502.95 (32 trades).
+
+### Daily Profit Target Fine-Tuning (late session)
+
+**Context**: Investigated whether Feb 9 (+$16) and Feb 10 (+$19) had higher unrealized peaks that were given back.
+
+**Intraday Equity Peak Analysis**:
+
+| Day | Final P/L | Peak Equity | Peak Time | Gap (left on table) |
+|-----|-----------|-------------|-----------|---------------------|
+| Feb 9 | +$16 | +$81 | 09:48 | **$65** |
+| Feb 10 | +$19 | +$42 | 11:34 | **$23** |
+| Feb 11 | +$162 | +$182 | 10:12 | $20 |
+| Feb 12 | +$127 | +$155 | 10:00 | $28 |
+| Feb 13 | +$179 | +$182 | 09:45 | $3 |
+
+**Key finding**: Feb 9 peaked at +$81 during OV (TQQQ position up ~$110 unrealized) but the trailing stop realized only +$45.54, and a prior SQQQ loss of -$29.40 dragged the day down to +$16. The daily target mechanism can't help because it fires on *realized* P/L, and the unrealized peak was never realized at that level.
+
+**Per-Phase P/L Breakdown** (isolated phase runs):
+
+| Day | OV P/L | OV Peak | Base P/L | Base Peak | Full Day |
+|-----|--------|---------|----------|-----------|----------|
+| Feb 9 | +$62 | +$81 | $0 | $0 | +$16 |
+| Feb 10 | +$36 | +$38 | +$3 | +$12 | +$19 |
+| Feb 11 | +$47 | +$56 | +$150 | +$169 | +$162 |
+| Feb 12 | +$74 | +$81 | +$135 | +$156 | +$127 |
+| Feb 13 | +$179 | +$182 | -$156 | +$27 | +$179 |
+
+**Critical insight**: Feb 9 OV made +$62 but continued Base trading eroded it to +$16 (-$46). Feb 10 OV +$36, full day +$19 (-$17). On some days, **continued trading after a profitable OV phase is destructive**. This motivates a "Phase Profit Target" feature (added to TODO.md).
+
+**DailyProfitTargetPercent sweep** (32 configs tested):
+
+| Config | Total P/L | Trades | Key Finding |
+|--------|-----------|--------|-------------|
+| Target=1.5% (current) | +$502.95 | 32 | Feb 12 capped at $127 |
+| **Target=1.75%** | **+$549.03** | **40** | **Winner: Feb 12 jumps to $173** |
+| Target=2.0% | +$374.77 | 46 | Feb 13 collapses to -$50 |
+| Target=2.5% | +$74.37 | 68 | Feb 11+13 both collapse |
+| Target=OFF | -$154.75 | 92 | Overtrading disaster |
+
+**DailyProfitTargetTrailingStopPercent**: All values (0.1%-1.0%) produce identical results at Target=1.5% — the mechanism never triggers because daily P/L never pulls back enough after reaching the target. At Target=1.75%, Trail=1.0% gives a trivial +$14 extra on Feb 11 only.
+
+**Setting applied**: DailyProfitTargetPercent 1.5% → **1.75%** (+$46 improvement, Feb 12 +$127→+$173)
+
+**Final optimized totals**: +$549.03 (40 trades) vs original baseline -$436.23 (77 trades) = **+$985 improvement**
+
+#### Low Target + Wide Trail Sweep (Unrealized Equity Capture Attempt)
+
+**Hypothesis**: Since `DailyProfitTargetRealtime=true` monitors `RealizedSessionPnL + unrealized position P/L` on every tick, a LOW target (0.4-0.75%) could arm the trailing stop on Feb 9's peak unrealized equity of $81. A WIDE trail (5-20%) would then allow the equity to run on strong days (Feb 11-13) before any pullback triggers the stop.
+
+**26 configurations tested** — targets 0.4-0.75% × trails 1-20%:
+
+| Config | Total P/L | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 |
+|--------|-----------|-------|--------|--------|--------|--------|
+| **Current T1.75_Tr0.3** | **$549** | $16 | $19 | $162 | $173 | $179 |
+| T0.75_Tr5 | $316 | $64 | $19 | $88 | $71 | $74 |
+| T0.75_Tr10 | $314 | $64 | $19 | $88 | $69 | $74 |
+| T0.6_Tr5 | $257 | $60 | $19 | $32 | $71 | $74 |
+| T0.4_Tr5 | $199 | $29 | $27 | $43 | $54 | $46 |
+| T0.5_Tr5 | $186 | $35 | $19 | $32 | $54 | $46 |
+| T0.5_Tr20 | $152 | $35 | $19 | $32 | $39 | $27 |
+
+**Key findings — wide trails DON'T help:**
+1. T0.5 with trails 1-5% all give **identical** results ($186). The trail fires on the FIRST intraday pullback from any running peak, not just the ultimate peak.
+2. Trails wider than 5% actually HURT — the wider trail delays firing but the equity falls further before triggering.
+3. Best Feb 9 gain = +$48 (T0.75), but combined cost on Feb 11-13 = -$281. Net = **-$233**.
+4. Feb 10 (peak $42) essentially unreachable — even T0.4 only improves it by +$8.
+
+**Root cause**: The trailing stop tracks a high-water mark (running peak). Once armed, ANY pullback exceeding the trail % from ANY local peak triggers it — even if equity would recover. On volatile strong days, 5-20% pullbacks from local peaks occur during normal trading rhythm, firing the stop well before the true daily maximum.
+
+**Conclusion**: T1.75_Tr0.3 ($549) confirmed optimal for existing mechanism. Capturing Feb 9/10 unrealized peaks requires a fundamentally different approach — the **PhaseProfitTarget** feature (stop after OV if sufficient gain) as designed in TODO.md.
