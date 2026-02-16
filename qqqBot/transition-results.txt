@@ -1,0 +1,595 @@
+=== OV â+' Base Transition Analysis ===
+Extracting state at ~09:49-09:52 for each day
+
+=========================================
+  DATE: 20260209
+=========================================
+--- Transition window (09:45-09:55) ---
+[TIME RULES] Loaded 2 phase rule(s):
+[TIME RULES]   Open Volatility: 09:30 -> 09:50
+[TIME RULES]   Power Hour: 14:00 -> 16:00
+Γòæ  PHASE TRANSITION: Base Config -> Open Volatility
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | ChopThreshold=0.1500% | MinChop=0.05 | TrendWindow=900s | TrailingStop=0.50% | TrendWait=180s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | Trimming=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ20, Trend 5400ΓåÆ900
+[PHASE] Reconfiguration complete. SMA: 1/120, Slope ready: False, Trend: 1/900
+[09:45:04] [Open Volatility] QQQ: $610.00 | SMA: $609.37 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,044.85 | Run: +$74.25 | Day: +$44.85 (0.45%) | Slip: +3.38
+[09:45:11] [Open Volatility] QQQ: $609.97 | SMA: $609.40 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,051.78 | Run: +$81.18 | Day: +$51.78 (0.52%) | Slip: +3.38
+[09:45:16] [Open Volatility] QQQ: $609.85 | SMA: $609.45 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,043.86 | Run: +$73.26 | Day: +$43.86 (0.44%) | Slip: +3.38
+[09:45:21] [Open Volatility] QQQ: $609.71 | SMA: $609.50 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,031.98 | Run: +$61.38 | Day: +$31.98 (0.32%) | Slip: +3.38
+[09:45:26] [Open Volatility] QQQ: $609.53 | SMA: $609.51 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,026.04 | Run: +$55.44 | Day: +$26.04 (0.26%) | Slip: +3.38
+[09:45:32] [Open Volatility] QQQ: $609.53 | SMA: $609.52 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,022.08 | Run: +$51.48 | Day: +$22.08 (0.22%) | Slip: +3.38
+[09:45:37] [Open Volatility] QQQ: $609.47 | SMA: $609.54 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,026.04 | Run: +$55.44 | Day: +$26.04 (0.26%) | Slip: +3.38
+[09:45:43] [Open Volatility] QQQ: $609.62 | SMA: $609.55 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,030.00 | Run: +$59.40 | Day: +$30.00 (0.30%) | Slip: +3.38
+[09:45:49] [Open Volatility] QQQ: $609.53 | SMA: $609.57 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,028.02 | Run: +$57.42 | Day: +$28.02 (0.28%) | Slip: +3.38
+[09:45:55] [Open Volatility] QQQ: $609.35 | SMA: $609.58 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,020.10 | Run: +$49.50 | Day: +$20.10 (0.20%) | Slip: +3.38
+[09:46:01] [Open Volatility] QQQ: $609.28 | SMA: $609.58 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,020.10 | Run: +$49.50 | Day: +$20.10 (0.20%) | Slip: +3.38
+[09:46:08] [Open Volatility] QQQ: $609.87 | SMA: $609.58 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,043.86 | Run: +$73.26 | Day: +$43.86 (0.44%) | Slip: +3.38
+[09:46:14] [Open Volatility] QQQ: $609.69 | SMA: $609.59 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,041.88 | Run: +$71.28 | Day: +$41.88 (0.42%) | Slip: +3.38
+[09:46:19] [Open Volatility] QQQ: $609.96 | SMA: $609.61 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,047.82 | Run: +$77.22 | Day: +$47.82 (0.48%) | Slip: +3.38
+[09:46:25] [Open Volatility] QQQ: $610.07 | SMA: $609.63 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,055.74 | Run: +$85.14 | Day: +$55.74 (0.56%) | Slip: +3.38
+[09:46:30] [Open Volatility] QQQ: $610.11 | SMA: $609.65 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,055.74 | Run: +$85.14 | Day: +$55.74 (0.56%) | Slip: +3.38
+[09:46:37] [Open Volatility] QQQ: $610.01 | SMA: $609.67 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,059.70 | Run: +$89.10 | Day: +$59.70 (0.60%) | Slip: +3.38
+[09:46:43] [Open Volatility] QQQ: $610.04 | SMA: $609.68 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,057.72 | Run: +$87.12 | Day: +$57.72 (0.58%) | Slip: +3.38
+[09:46:49] [Open Volatility] QQQ: $609.94 | SMA: $609.68 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,049.80 | Run: +$79.20 | Day: +$49.80 (0.50%) | Slip: +3.38
+[09:46:54] [Open Volatility] QQQ: $610.12 | SMA: $609.69 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,057.72 | Run: +$87.12 | Day: +$57.72 (0.58%) | Slip: +3.38
+[09:46:59] [Open Volatility] QQQ: $610.42 | SMA: $609.73 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,071.58 | Run: +$100.98 | Day: +$71.58 (0.72%) | Slip: +3.38
+[09:47:05] [Open Volatility] QQQ: $609.56 | SMA: $609.74 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,026.04 | Run: +$55.44 | Day: +$26.04 (0.26%) | Slip: +3.38
+[09:47:11] [Open Volatility] QQQ: $610.10 | SMA: $609.75 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,053.76 | Run: +$83.16 | Day: +$53.76 (0.54%) | Slip: +3.38
+[09:47:17] [Open Volatility] QQQ: $610.03 | SMA: $609.76 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,053.76 | Run: +$83.16 | Day: +$53.76 (0.54%) | Slip: +3.38
+[09:47:23] [Open Volatility] QQQ: $610.15 | SMA: $609.77 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,059.70 | Run: +$89.10 | Day: +$59.70 (0.60%) | Slip: +3.38
+[09:47:35] [Open Volatility] QQQ: $610.07 | SMA: $609.78 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,053.76 | Run: +$83.16 | Day: +$53.76 (0.54%) | Slip: +3.38
+[09:47:42] [Open Volatility] QQQ: $610.00 | SMA: $609.78 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,052.77 | Run: +$82.17 | Day: +$52.77 (0.53%) | Slip: +3.38
+[09:47:51] [Open Volatility] QQQ: $610.08 | SMA: $609.79 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,054.75 | Run: +$84.15 | Day: +$54.75 (0.55%) | Slip: +3.38
+[09:48:05] [Open Volatility] QQQ: $610.38 | SMA: $609.80 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,071.58 | Run: +$100.98 | Day: +$71.58 (0.72%) | Slip: +3.38
+[09:48:12] [Open Volatility] QQQ: $610.39 | SMA: $609.82 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,069.60 | Run: +$99.00 | Day: +$69.60 (0.70%) | Slip: +3.38
+[09:48:23] [Open Volatility] QQQ: $610.29 | SMA: $609.84 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,065.64 | Run: +$95.04 | Day: +$65.64 (0.66%) | Slip: +3.38
+[09:48:31] [Open Volatility] QQQ: $610.42 | SMA: $609.86 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,065.64 | Run: +$95.04 | Day: +$65.64 (0.66%) | Slip: +3.38
+[09:48:38] [Open Volatility] QQQ: $610.48 | SMA: $609.92 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,075.54 | Run: +$104.94 | Day: +$75.54 (0.76%) | Slip: +3.38
+[09:48:49] [Open Volatility] QQQ: $610.17 | SMA: $609.94 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,057.72 | Run: +$87.12 | Day: +$57.72 (0.58%) | Slip: +3.38
+[09:49:03] [Open Volatility] QQQ: $610.44 | SMA: $609.95 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,073.56 | Run: +$102.96 | Day: +$73.56 (0.74%) | Slip: +3.38
+[09:49:08] [Open Volatility] QQQ: $610.57 | SMA: $609.96 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,073.56 | Run: +$102.96 | Day: +$73.56 (0.74%) | Slip: +3.38
+[09:49:20] [Open Volatility] QQQ: $610.51 | SMA: $609.97 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,071.58 | Run: +$100.98 | Day: +$71.58 (0.72%) | Slip: +3.38
+[09:49:32] [Open Volatility] QQQ: $610.30 | SMA: $610.00 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,067.62 | Run: +$97.02 | Day: +$67.62 (0.68%) | Slip: +3.38
+[09:49:41] [Open Volatility] QQQ: $610.36 | SMA: $610.03 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,071.58 | Run: +$100.98 | Day: +$71.58 (0.72%) | Slip: +3.38
+Γòæ  PHASE TRANSITION: Open Volatility -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 20ΓåÆ20, Trend 900ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: True, Trend: 650/5400
+[09:50:19] QQQ: $609.59 | SMA: $610.04 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,032.97 | Run: +$62.37 | Day: +$32.97 (0.33%) | Slip: +3.38
+[09:50:32] QQQ: $609.26 | SMA: $610.02 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:50:39] QQQ: $609.31 | SMA: $610.01 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:50:46] QQQ: $609.47 | SMA: $610.01 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:51:03] QQQ: $609.29 | SMA: $609.98 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:51:08] QQQ: $609.06 | SMA: $609.97 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:51:16] QQQ: $609.30 | SMA: $609.96 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:51:21] QQQ: $609.20 | SMA: $609.92 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:51:29] QQQ: $609.08 | SMA: $609.91 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:51:39] QQQ: $608.90 | SMA: $609.89 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:51:51] QQQ: $609.22 | SMA: $609.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:52:02] QQQ: $609.40 | SMA: $609.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:52:08] QQQ: $609.34 | SMA: $609.86 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:52:26] QQQ: $609.00 | SMA: $609.86 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:52:41] QQQ: $608.85 | SMA: $609.84 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:52:47] QQQ: $608.85 | SMA: $609.83 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:53:11] QQQ: $608.84 | SMA: $609.82 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:53:18] QQQ: $609.02 | SMA: $609.80 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:53:29] QQQ: $608.82 | SMA: $609.79 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:53:35] QQQ: $608.64 | SMA: $609.78 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:53:42] QQQ: $608.66 | SMA: $609.75 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:53:50] QQQ: $608.96 | SMA: $609.75 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:53:57] QQQ: $608.93 | SMA: $609.74 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:06] QQQ: $608.69 | SMA: $609.73 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:13] QQQ: $608.87 | SMA: $609.73 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:20] QQQ: $608.55 | SMA: $609.71 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:26] QQQ: $608.41 | SMA: $609.68 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:33] QQQ: $608.61 | SMA: $609.65 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:40] QQQ: $608.58 | SMA: $609.60 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:48] QQQ: $608.65 | SMA: $609.58 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:54:53] QQQ: $608.98 | SMA: $609.57 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:00] QQQ: $609.15 | SMA: $609.55 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:10] QQQ: $609.37 | SMA: $609.55 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:15] QQQ: $609.37 | SMA: $609.53 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:21] QQQ: $609.48 | SMA: $609.52 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:30] QQQ: $609.25 | SMA: $609.52 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:36] QQQ: $609.35 | SMA: $609.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:42] QQQ: $609.38 | SMA: $609.47 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:49] QQQ: $609.27 | SMA: $609.46 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+[09:55:57] QQQ: $609.23 | SMA: $609.45 | NEUTRAL | CASH | Depl: $0.00 | Avail: $9,993.37 | Bank: $22.77 | Reinv: $8.07 | Eq: $10,016.14 | Run: +$0.00 | Day: +$16.14 (0.16%) | Slip: +3.38
+Γòæ  PHASE TRANSITION: Base Config -> Power Hour
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | SlopeWindow=15 | ChopThreshold=0.1500% | TrailingStop=0.15% | TrendWait=60s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ15, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/120, Slope ready: True, Trend: 5400/5400
+Γòæ  PHASE TRANSITION: Power Hour -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 15ΓåÆ20, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: False, Trend: 5400/5400
+
+--- Last OV status line ---
+[09:49:41] [Open Volatility] QQQ: $610.36 | SMA: $610.03 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,071.58 | Run: +$100.98 | Day: +$71.58 (0.72%) | Slip: +3.38
+--- First Base status line ---
+[09:50:19] QQQ: $609.59 | SMA: $610.04 | BULL | TQQQ x198 | Depl: $9,951.48 | Avail: $19.12 | Bank: $0.00 | Reinv: $-14.70 | Eq: $10,032.97 | Run: +$62.37 | Day: +$32.97 (0.33%) | Slip: +3.38
+
+--- Summary ---
+[SIM-BROKER]  Realized P/L:   $16.14
+[SIM-BROKER]  Total Trades:   4
+
+--- Trades 09:45-10:05 ---
+
+=========================================
+  DATE: 20260210
+=========================================
+--- Transition window (09:45-09:55) ---
+[TIME RULES] Loaded 2 phase rule(s):
+[TIME RULES]   Open Volatility: 09:30 -> 09:50
+[TIME RULES]   Power Hour: 14:00 -> 16:00
+Γòæ  PHASE TRANSITION: Base Config -> Open Volatility
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | ChopThreshold=0.1500% | MinChop=0.05 | TrendWindow=900s | TrailingStop=0.50% | TrendWait=180s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | Trimming=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ20, Trend 5400ΓåÆ900
+[PHASE] Reconfiguration complete. SMA: 1/120, Slope ready: False, Trend: 1/900
+[09:45:06] [Open Volatility] QQQ: $613.66 | SMA: $613.41 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:45:18] [Open Volatility] QQQ: $613.63 | SMA: $613.46 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:45:26] [Open Volatility] QQQ: $613.37 | SMA: $613.47 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:45:33] [Open Volatility] QQQ: $613.34 | SMA: $613.48 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:45:40] [Open Volatility] QQQ: $613.18 | SMA: $613.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:45:50] [Open Volatility] QQQ: $613.24 | SMA: $613.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:45:55] [Open Volatility] QQQ: $613.26 | SMA: $613.50 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:01] [Open Volatility] QQQ: $613.31 | SMA: $613.50 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:07] [Open Volatility] QQQ: $613.30 | SMA: $613.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:14] [Open Volatility] QQQ: $613.37 | SMA: $613.50 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:22] [Open Volatility] QQQ: $613.38 | SMA: $613.50 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:27] [Open Volatility] QQQ: $613.39 | SMA: $613.50 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:33] [Open Volatility] QQQ: $613.43 | SMA: $613.47 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:41] [Open Volatility] QQQ: $613.55 | SMA: $613.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:47] [Open Volatility] QQQ: $613.55 | SMA: $613.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:46:54] [Open Volatility] QQQ: $613.44 | SMA: $613.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:01] [Open Volatility] QQQ: $613.58 | SMA: $613.48 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:06] [Open Volatility] QQQ: $613.35 | SMA: $613.47 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:14] [Open Volatility] QQQ: $613.39 | SMA: $613.47 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:23] [Open Volatility] QQQ: $613.16 | SMA: $613.45 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:31] [Open Volatility] QQQ: $613.19 | SMA: $613.42 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:38] [Open Volatility] QQQ: $612.96 | SMA: $613.41 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:45] [Open Volatility] QQQ: $613.04 | SMA: $613.40 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:53] [Open Volatility] QQQ: $613.12 | SMA: $613.36 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:00] [Open Volatility] QQQ: $612.88 | SMA: $613.35 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:06] [Open Volatility] QQQ: $612.98 | SMA: $613.28 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:12] [Open Volatility] QQQ: $613.17 | SMA: $613.27 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:17] [Open Volatility] QQQ: $613.25 | SMA: $613.27 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:23] [Open Volatility] QQQ: $613.27 | SMA: $613.27 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:28] [Open Volatility] QQQ: $613.24 | SMA: $613.26 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:34] [Open Volatility] QQQ: $613.23 | SMA: $613.24 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:40] [Open Volatility] QQQ: $613.21 | SMA: $613.24 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:48] [Open Volatility] QQQ: $613.07 | SMA: $613.24 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:48:56] [Open Volatility] QQQ: $612.59 | SMA: $613.21 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:02] [Open Volatility] QQQ: $612.54 | SMA: $613.14 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:11] [Open Volatility] QQQ: $612.69 | SMA: $613.12 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:20] [Open Volatility] QQQ: $612.60 | SMA: $613.09 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:26] [Open Volatility] QQQ: $612.61 | SMA: $613.06 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:32] [Open Volatility] QQQ: $612.67 | SMA: $613.03 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:38] [Open Volatility] QQQ: $612.62 | SMA: $612.98 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:43] [Open Volatility] QQQ: $612.50 | SMA: $612.94 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:49:50] [Open Volatility] QQQ: $612.48 | SMA: $612.88 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+Γòæ  PHASE TRANSITION: Open Volatility -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 20ΓåÆ20, Trend 900ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: True, Trend: 900/5400
+[09:50:00] QQQ: $612.91 | SMA: $612.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:50:08] QQQ: $613.04 | SMA: $612.88 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:50:16] QQQ: $613.30 | SMA: $612.90 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:50:25] QQQ: $613.70 | SMA: $612.92 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:50:35] QQQ: $613.76 | SMA: $612.95 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:50:42] QQQ: $613.85 | SMA: $612.97 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:50:51] QQQ: $613.76 | SMA: $613.00 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:50:56] QQQ: $613.90 | SMA: $613.04 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:08] QQQ: $613.60 | SMA: $613.09 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:14] QQQ: $613.82 | SMA: $613.11 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:19] QQQ: $613.92 | SMA: $613.16 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:26] QQQ: $613.86 | SMA: $613.18 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:33] QQQ: $613.94 | SMA: $613.20 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:38] QQQ: $613.77 | SMA: $613.21 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:45] QQQ: $613.93 | SMA: $613.22 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:51:57] QQQ: $614.03 | SMA: $613.24 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:52:02] QQQ: $614.00 | SMA: $613.25 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:52:07] QQQ: $614.14 | SMA: $613.27 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:52:17] QQQ: $614.03 | SMA: $613.28 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:52:33] QQQ: $613.80 | SMA: $613.29 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:52:42] QQQ: $613.76 | SMA: $613.31 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:52:48] QQQ: $613.95 | SMA: $613.32 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:52:57] QQQ: $614.28 | SMA: $613.32 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:07] QQQ: $614.22 | SMA: $613.39 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:19] QQQ: $614.35 | SMA: $613.45 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:26] QQQ: $614.50 | SMA: $613.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:34] QQQ: $614.45 | SMA: $613.55 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:42] QQQ: $614.40 | SMA: $613.57 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:47] QQQ: $614.54 | SMA: $613.65 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:53] QQQ: $614.49 | SMA: $613.67 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:53:59] QQQ: $614.64 | SMA: $613.70 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:06] QQQ: $614.46 | SMA: $613.76 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:12] QQQ: $614.61 | SMA: $613.83 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:18] QQQ: $614.58 | SMA: $613.86 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:30] QQQ: $614.76 | SMA: $613.89 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:35] QQQ: $614.91 | SMA: $613.94 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:43] QQQ: $614.88 | SMA: $613.95 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:49] QQQ: $614.91 | SMA: $613.96 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:54:56] QQQ: $615.07 | SMA: $614.01 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:55:04] QQQ: $615.09 | SMA: $614.04 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:55:11] QQQ: $615.07 | SMA: $614.06 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:55:19] QQQ: $614.94 | SMA: $614.10 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:55:28] QQQ: $615.10 | SMA: $614.11 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:55:36] QQQ: $615.44 | SMA: $614.15 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:55:41] QQQ: $615.45 | SMA: $614.23 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:55:52] QQQ: $615.61 | SMA: $614.29 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+Γòæ  PHASE TRANSITION: Base Config -> Power Hour
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | SlopeWindow=15 | ChopThreshold=0.1500% | TrailingStop=0.15% | TrendWait=60s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ15, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/120, Slope ready: True, Trend: 5400/5400
+Γòæ  PHASE TRANSITION: Power Hour -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 15ΓåÆ20, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: False, Trend: 5400/5400
+
+--- Last OV status line ---
+[09:49:50] [Open Volatility] QQQ: $612.48 | SMA: $612.88 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+--- First Base status line ---
+[09:50:00] QQQ: $612.91 | SMA: $612.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,018.13 | Bank: $18.13 | Reinv: $18.13 | Eq: $10,036.25 | Run: +$0.00 | Day: +$36.25 (0.36%) | Slip: +1.45
+
+--- Summary ---
+[SIM-BROKER]  Realized P/L:   $18.79
+[SIM-BROKER]  Total Trades:   6
+
+--- Trades 09:45-10:05 ---
+
+=========================================
+  DATE: 20260211
+=========================================
+--- Transition window (09:45-09:55) ---
+[TIME RULES] Loaded 2 phase rule(s):
+[TIME RULES]   Open Volatility: 09:30 -> 09:50
+[TIME RULES]   Power Hour: 14:00 -> 16:00
+Γòæ  PHASE TRANSITION: Base Config -> Open Volatility
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | ChopThreshold=0.1500% | MinChop=0.05 | TrendWindow=900s | TrailingStop=0.50% | TrendWait=180s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | Trimming=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ20, Trend 5400ΓåÆ900
+[PHASE] Reconfiguration complete. SMA: 1/120, Slope ready: False, Trend: 1/900
+[09:45:00] [Open Volatility] QQQ: $615.74 | SMA: $615.26 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:45:08] [Open Volatility] QQQ: $615.73 | SMA: $615.31 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:45:13] [Open Volatility] QQQ: $615.81 | SMA: $615.34 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:45:19] [Open Volatility] QQQ: $616.22 | SMA: $615.37 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:45:28] [Open Volatility] QQQ: $616.03 | SMA: $615.38 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:45:35] [Open Volatility] QQQ: $616.12 | SMA: $615.40 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:45:47] [Open Volatility] QQQ: $616.16 | SMA: $615.43 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:00] [Open Volatility] QQQ: $616.50 | SMA: $615.45 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:09] [Open Volatility] QQQ: $616.69 | SMA: $615.50 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:17] [Open Volatility] QQQ: $616.70 | SMA: $615.60 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:23] [Open Volatility] QQQ: $616.44 | SMA: $615.61 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:33] [Open Volatility] QQQ: $616.09 | SMA: $615.66 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:39] [Open Volatility] QQQ: $616.03 | SMA: $615.70 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:45] [Open Volatility] QQQ: $615.71 | SMA: $615.72 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:46:52] [Open Volatility] QQQ: $615.25 | SMA: $615.72 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:47:01] [Open Volatility] QQQ: $615.43 | SMA: $615.73 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:47:13] [Open Volatility] QQQ: $615.78 | SMA: $615.75 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:47:18] [Open Volatility] QQQ: $615.79 | SMA: $615.78 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:47:25] [Open Volatility] QQQ: $615.46 | SMA: $615.78 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:47:32] [Open Volatility] QQQ: $615.43 | SMA: $615.77 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:47:43] [Open Volatility] QQQ: $615.49 | SMA: $615.77 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:47:53] [Open Volatility] QQQ: $615.63 | SMA: $615.76 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:48:01] [Open Volatility] QQQ: $615.52 | SMA: $615.76 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:48:22] [Open Volatility] QQQ: $615.69 | SMA: $615.76 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:48:30] [Open Volatility] QQQ: $615.87 | SMA: $615.77 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:48:37] [Open Volatility] QQQ: $615.95 | SMA: $615.77 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:48:45] [Open Volatility] QQQ: $615.98 | SMA: $615.78 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:48:51] [Open Volatility] QQQ: $616.08 | SMA: $615.79 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:48:57] [Open Volatility] QQQ: $616.10 | SMA: $615.80 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:49:03] [Open Volatility] QQQ: $616.18 | SMA: $615.81 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:49:13] [Open Volatility] QQQ: $615.78 | SMA: $615.81 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:49:22] [Open Volatility] QQQ: $615.55 | SMA: $615.82 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:49:28] [Open Volatility] QQQ: $615.60 | SMA: $615.83 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:49:35] [Open Volatility] QQQ: $615.71 | SMA: $615.84 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:49:46] [Open Volatility] QQQ: $615.75 | SMA: $615.85 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:49:56] [Open Volatility] QQQ: $615.95 | SMA: $615.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+Γòæ  PHASE TRANSITION: Open Volatility -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 20ΓåÆ20, Trend 900ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: True, Trend: 607/5400
+[09:50:02] QQQ: $616.19 | SMA: $615.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:50:10] QQQ: $615.96 | SMA: $615.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:50:31] QQQ: $615.47 | SMA: $615.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:50:37] QQQ: $615.20 | SMA: $615.85 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:50:46] QQQ: $615.35 | SMA: $615.83 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:50:56] QQQ: $615.14 | SMA: $615.82 | BEAR | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+[09:51:04] QQQ: $615.09 | SMA: $615.82 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,020.76 | Run: -$26.28 | Day: +$20.76 (0.21%) | Slip: +1.47
+[09:51:36] QQQ: $615.79 | SMA: $615.82 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $9,994.48 | Run: -$52.56 | Day: -$5.52 (-0.06%) | Slip: +1.47
+[09:51:53] QQQ: $615.72 | SMA: $615.81 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,000.32 | Run: -$46.72 | Day: +$0.32 (0.00%) | Slip: +1.47
+[09:52:08] QQQ: $615.42 | SMA: $615.81 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,013.46 | Run: -$33.58 | Day: +$13.46 (0.13%) | Slip: +1.47
+[09:52:17] QQQ: $615.58 | SMA: $615.80 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,006.16 | Run: -$40.88 | Day: +$6.16 (0.06%) | Slip: +1.47
+[09:52:29] QQQ: $615.20 | SMA: $615.80 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,014.92 | Run: -$32.12 | Day: +$14.92 (0.15%) | Slip: +1.47
+[09:52:30] QQQ: $615.08 | SMA: $615.79 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,014.92 | Run: -$32.12 | Day: +$14.92 (0.15%) | Slip: +1.47
+[09:52:37] QQQ: $615.19 | SMA: $615.78 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,026.60 | Run: -$20.44 | Day: +$26.60 (0.27%) | Slip: +1.47
+[09:52:50] QQQ: $615.29 | SMA: $615.75 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,020.76 | Run: -$26.28 | Day: +$20.76 (0.21%) | Slip: +1.47
+[09:52:57] QQQ: $615.43 | SMA: $615.74 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,019.30 | Run: -$27.74 | Day: +$19.30 (0.19%) | Slip: +1.47
+[09:53:19] QQQ: $614.88 | SMA: $615.74 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,036.82 | Run: -$10.22 | Day: +$36.82 (0.37%) | Slip: +1.47
+[09:53:26] QQQ: $614.95 | SMA: $615.73 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,041.20 | Run: -$5.84 | Day: +$41.20 (0.41%) | Slip: +1.47
+[09:53:33] QQQ: $615.05 | SMA: $615.72 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,035.36 | Run: -$11.68 | Day: +$35.36 (0.35%) | Slip: +1.47
+[09:53:42] QQQ: $615.24 | SMA: $615.72 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,025.14 | Run: -$21.90 | Day: +$25.14 (0.25%) | Slip: +1.47
+[09:53:50] QQQ: $615.16 | SMA: $615.71 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,028.06 | Run: -$18.98 | Day: +$28.06 (0.28%) | Slip: +1.47
+[09:54:03] QQQ: $615.26 | SMA: $615.70 | BEAR | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,022.22 | Run: -$24.82 | Day: +$22.22 (0.22%) | Slip: +1.47
+[09:54:12] QQQ: $615.43 | SMA: $615.70 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,012.73 | Run: -$34.31 | Day: +$12.73 (0.13%) | Slip: +1.47
+[09:54:22] QQQ: $615.31 | SMA: $615.70 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,019.30 | Run: -$27.74 | Day: +$19.30 (0.19%) | Slip: +1.47
+[09:54:34] QQQ: $615.27 | SMA: $615.70 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,017.84 | Run: -$29.20 | Day: +$17.84 (0.18%) | Slip: +1.47
+[09:55:01] QQQ: $615.55 | SMA: $615.70 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,007.62 | Run: -$39.42 | Day: +$7.62 (0.08%) | Slip: +1.47
+[09:55:19] QQQ: $615.43 | SMA: $615.70 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,009.08 | Run: -$37.96 | Day: +$9.08 (0.09%) | Slip: +1.47
+[09:55:25] QQQ: $615.41 | SMA: $615.70 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,009.08 | Run: -$37.96 | Day: +$9.08 (0.09%) | Slip: +1.47
+[09:55:31] QQQ: $615.29 | SMA: $615.69 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,017.84 | Run: -$29.20 | Day: +$17.84 (0.18%) | Slip: +1.47
+[09:55:36] QQQ: $615.30 | SMA: $615.69 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,019.30 | Run: -$27.74 | Day: +$19.30 (0.19%) | Slip: +1.47
+[09:55:42] QQQ: $615.21 | SMA: $615.68 | NEUTRAL | SQQQ x146 | Depl: $9,970.34 | Avail: $53.18 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,026.60 | Run: -$20.44 | Day: +$26.60 (0.27%) | Slip: +1.47
+Γòæ  PHASE TRANSITION: Base Config -> Power Hour
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | SlopeWindow=15 | ChopThreshold=0.1500% | TrailingStop=0.15% | TrendWait=60s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ15, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/120, Slope ready: True, Trend: 5280/5400
+Γòæ  PHASE TRANSITION: Power Hour -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 15ΓåÆ20, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: False, Trend: 5400/5400
+
+--- Last OV status line ---
+[09:49:56] [Open Volatility] QQQ: $615.95 | SMA: $615.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+--- First Base status line ---
+[09:50:02] QQQ: $616.19 | SMA: $615.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,023.52 | Bank: $23.52 | Reinv: $23.52 | Eq: $10,047.04 | Run: +$0.00 | Day: +$47.04 (0.47%) | Slip: +1.47
+
+--- Summary ---
+[DAILY TARGET] Γÿà P/L $176.26 reached target $175.00. Trailing stop ARMED at $175.73 (0.3% trail). Continuing to trade.
+[DAILY TARGET] Γÿà Trailing stop TRIGGERED. P/L $174.81 dropped below stop $175.73 (peak was $176.26). Liquidating.
+[TRADER] Daily profit target trailing stop triggered - liquidating to CASH
+[SIM-BROKER]  Realized P/L:   $161.76
+[SIM-BROKER]  Total Trades:   11
+
+--- Trades 09:45-10:05 ---
+
+=========================================
+  DATE: 20260212
+=========================================
+--- Transition window (09:45-09:55) ---
+[TIME RULES] Loaded 2 phase rule(s):
+[TIME RULES]   Open Volatility: 09:30 -> 09:50
+[TIME RULES]   Power Hour: 14:00 -> 16:00
+Γòæ  PHASE TRANSITION: Base Config -> Open Volatility
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | ChopThreshold=0.1500% | MinChop=0.05 | TrendWindow=900s | TrailingStop=0.50% | TrendWait=180s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | Trimming=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ20, Trend 5400ΓåÆ900
+[PHASE] Reconfiguration complete. SMA: 3/120, Slope ready: False, Trend: 3/900
+[09:45:07] [Open Volatility] QQQ: $614.01 | SMA: $614.90 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $9,994.20 | Run: -$5.80 | Day: -$5.80 (-0.06%) | Slip: +1.45
+[09:45:14] [Open Volatility] QQQ: $614.15 | SMA: $614.84 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $9,998.55 | Run: -$1.45 | Day: -$1.45 (-0.01%) | Slip: +1.45
+[09:45:22] [Open Volatility] QQQ: $613.83 | SMA: $614.82 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $9,992.75 | Run: -$7.25 | Day: -$7.25 (-0.07%) | Slip: +1.45
+[09:45:28] [Open Volatility] QQQ: $613.60 | SMA: $614.73 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,014.50 | Run: +$14.50 | Day: +$14.50 (0.15%) | Slip: +1.45
+[09:45:35] [Open Volatility] QQQ: $613.41 | SMA: $614.72 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,021.75 | Run: +$21.75 | Day: +$21.75 (0.22%) | Slip: +1.45
+[09:45:46] [Open Volatility] QQQ: $613.37 | SMA: $614.62 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,026.10 | Run: +$26.10 | Day: +$26.10 (0.26%) | Slip: +1.45
+[09:45:52] [Open Volatility] QQQ: $613.10 | SMA: $614.53 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,035.53 | Run: +$35.53 | Day: +$35.53 (0.36%) | Slip: +1.45
+[09:46:02] [Open Volatility] QQQ: $612.79 | SMA: $614.46 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,047.85 | Run: +$47.85 | Day: +$47.85 (0.48%) | Slip: +1.45
+[09:46:07] [Open Volatility] QQQ: $612.69 | SMA: $614.31 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,058.73 | Run: +$58.73 | Day: +$58.73 (0.59%) | Slip: +1.45
+[09:46:12] [Open Volatility] QQQ: $612.84 | SMA: $614.18 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,050.75 | Run: +$50.75 | Day: +$50.75 (0.51%) | Slip: +1.45
+[09:46:17] [Open Volatility] QQQ: $612.85 | SMA: $614.05 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,052.20 | Run: +$52.20 | Day: +$52.20 (0.52%) | Slip: +1.45
+[09:46:25] [Open Volatility] QQQ: $612.94 | SMA: $613.91 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,047.85 | Run: +$47.85 | Day: +$47.85 (0.48%) | Slip: +1.45
+[09:46:31] [Open Volatility] QQQ: $613.35 | SMA: $613.73 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,026.10 | Run: +$26.10 | Day: +$26.10 (0.26%) | Slip: +1.45
+[09:46:40] [Open Volatility] QQQ: $613.37 | SMA: $613.68 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,023.20 | Run: +$23.20 | Day: +$23.20 (0.23%) | Slip: +1.45
+[09:46:47] [Open Volatility] QQQ: $613.39 | SMA: $613.67 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,023.93 | Run: +$23.93 | Day: +$23.93 (0.24%) | Slip: +1.45
+[09:46:52] [Open Volatility] QQQ: $613.30 | SMA: $613.57 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,027.55 | Run: +$27.55 | Day: +$27.55 (0.28%) | Slip: +1.45
+[09:46:58] [Open Volatility] QQQ: $613.34 | SMA: $613.52 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,027.55 | Run: +$27.55 | Day: +$27.55 (0.28%) | Slip: +1.45
+[09:47:04] [Open Volatility] QQQ: $613.12 | SMA: $613.44 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,037.70 | Run: +$37.70 | Day: +$37.70 (0.38%) | Slip: +1.45
+[09:47:09] [Open Volatility] QQQ: $613.09 | SMA: $613.37 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,039.15 | Run: +$39.15 | Day: +$39.15 (0.39%) | Slip: +1.45
+[09:47:14] [Open Volatility] QQQ: $613.09 | SMA: $613.36 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,036.25 | Run: +$36.25 | Day: +$36.25 (0.36%) | Slip: +1.45
+[09:47:24] [Open Volatility] QQQ: $613.37 | SMA: $613.32 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,026.10 | Run: +$26.10 | Day: +$26.10 (0.26%) | Slip: +1.45
+[09:47:43] [Open Volatility] QQQ: $612.99 | SMA: $613.25 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,044.23 | Run: +$44.23 | Day: +$44.23 (0.44%) | Slip: +1.45
+[09:47:50] [Open Volatility] QQQ: $613.24 | SMA: $613.24 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,040.60 | Run: +$40.60 | Day: +$40.60 (0.41%) | Slip: +1.45
+[09:47:56] [Open Volatility] QQQ: $613.18 | SMA: $613.23 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,034.80 | Run: +$34.80 | Day: +$34.80 (0.35%) | Slip: +1.45
+[09:48:01] [Open Volatility] QQQ: $613.04 | SMA: $613.21 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,042.05 | Run: +$42.05 | Day: +$42.05 (0.42%) | Slip: +1.45
+[09:48:11] [Open Volatility] QQQ: $612.70 | SMA: $613.15 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,058.00 | Run: +$58.00 | Day: +$58.00 (0.58%) | Slip: +1.45
+[09:48:17] [Open Volatility] QQQ: $612.61 | SMA: $613.13 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,058.00 | Run: +$58.00 | Day: +$58.00 (0.58%) | Slip: +1.45
+[09:48:22] [Open Volatility] QQQ: $612.56 | SMA: $613.11 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,058.00 | Run: +$58.00 | Day: +$58.00 (0.58%) | Slip: +1.45
+[09:48:32] [Open Volatility] QQQ: $612.69 | SMA: $613.10 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,059.45 | Run: +$59.45 | Day: +$59.45 (0.59%) | Slip: +1.45
+[09:48:46] [Open Volatility] QQQ: $612.89 | SMA: $613.08 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,055.83 | Run: +$55.83 | Day: +$55.83 (0.56%) | Slip: +1.45
+[09:48:54] [Open Volatility] QQQ: $613.06 | SMA: $613.08 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,042.05 | Run: +$42.05 | Day: +$42.05 (0.42%) | Slip: +1.45
+[09:49:08] [Open Volatility] QQQ: $612.88 | SMA: $613.07 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,044.95 | Run: +$44.95 | Day: +$44.95 (0.45%) | Slip: +1.45
+[09:49:18] [Open Volatility] QQQ: $613.04 | SMA: $613.07 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,044.95 | Run: +$44.95 | Day: +$44.95 (0.45%) | Slip: +1.45
+[09:49:24] [Open Volatility] QQQ: $613.13 | SMA: $613.07 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,040.60 | Run: +$40.60 | Day: +$40.60 (0.41%) | Slip: +1.45
+[09:49:31] [Open Volatility] QQQ: $613.10 | SMA: $613.09 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,033.35 | Run: +$33.35 | Day: +$33.35 (0.33%) | Slip: +1.45
+[09:49:48] [Open Volatility] QQQ: $612.92 | SMA: $613.09 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,050.75 | Run: +$50.75 | Day: +$50.75 (0.51%) | Slip: +1.45
+[09:49:56] [Open Volatility] QQQ: $612.94 | SMA: $613.10 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,048.58 | Run: +$48.58 | Day: +$48.58 (0.49%) | Slip: +1.45
+Γòæ  PHASE TRANSITION: Open Volatility -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 20ΓåÆ20, Trend 900ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: True, Trend: 652/5400
+[09:50:03] QQQ: $612.16 | SMA: $613.04 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,077.22 | Run: +$19.98 | Day: +$77.22 (0.77%) | Slip: +1.45
+[09:50:10] QQQ: $612.17 | SMA: $613.02 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,077.22 | Run: +$19.98 | Day: +$77.22 (0.77%) | Slip: +1.45
+[09:50:16] QQQ: $612.28 | SMA: $612.91 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,079.44 | Run: +$22.20 | Day: +$79.44 (0.79%) | Slip: +1.45
+[09:50:22] QQQ: $612.37 | SMA: $612.90 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,076.85 | Run: +$19.61 | Day: +$76.85 (0.77%) | Slip: +1.45
+[09:50:30] QQQ: $612.36 | SMA: $612.89 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,077.59 | Run: +$20.35 | Day: +$77.59 (0.78%) | Slip: +1.45
+[09:50:37] QQQ: $612.34 | SMA: $612.86 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,074.26 | Run: +$17.02 | Day: +$74.26 (0.74%) | Slip: +1.45
+[09:50:46] QQQ: $612.68 | SMA: $612.86 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,072.60 | Run: +$15.36 | Day: +$72.60 (0.73%) | Slip: +1.45
+[09:50:55] QQQ: $612.74 | SMA: $612.86 | BEAR | CASH | Depl: $0.00 | Avail: $10,034.54 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,069.08 | Run: +$0.00 | Day: +$69.08 (0.69%) | Slip: +1.45
+[09:51:04] QQQ: $612.83 | SMA: $612.85 | BEAR | CASH | Depl: $0.00 | Avail: $10,034.54 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,069.08 | Run: +$0.00 | Day: +$69.08 (0.69%) | Slip: +1.45
+[09:51:13] QQQ: $612.78 | SMA: $612.85 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,058.93 | Run: -$10.15 | Day: +$58.93 (0.59%) | Slip: +1.45
+[09:51:20] QQQ: $612.93 | SMA: $612.85 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,042.98 | Run: -$26.10 | Day: +$42.98 (0.43%) | Slip: +1.45
+[09:51:26] QQQ: $613.06 | SMA: $612.86 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,035.73 | Run: -$33.35 | Day: +$35.73 (0.36%) | Slip: +1.45
+[09:51:36] QQQ: $613.03 | SMA: $612.87 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,045.88 | Run: -$23.20 | Day: +$45.88 (0.46%) | Slip: +1.45
+[09:51:43] QQQ: $613.08 | SMA: $612.87 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,038.63 | Run: -$30.45 | Day: +$38.63 (0.39%) | Slip: +1.45
+[09:51:55] QQQ: $612.76 | SMA: $612.86 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,048.78 | Run: -$20.30 | Day: +$48.78 (0.49%) | Slip: +1.45
+[09:52:15] QQQ: $612.70 | SMA: $612.85 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,056.03 | Run: -$13.05 | Day: +$56.03 (0.56%) | Slip: +1.45
+[09:52:26] QQQ: $612.80 | SMA: $612.84 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,048.78 | Run: -$20.30 | Day: +$48.78 (0.49%) | Slip: +1.45
+[09:52:36] QQQ: $612.78 | SMA: $612.83 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,054.58 | Run: -$14.50 | Day: +$54.58 (0.55%) | Slip: +1.45
+[09:52:42] QQQ: $612.62 | SMA: $612.81 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,054.58 | Run: -$14.50 | Day: +$54.58 (0.55%) | Slip: +1.45
+[09:52:49] QQQ: $612.53 | SMA: $612.81 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,054.58 | Run: -$14.50 | Day: +$54.58 (0.55%) | Slip: +1.45
+[09:52:55] QQQ: $612.53 | SMA: $612.78 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,063.28 | Run: -$5.80 | Day: +$63.28 (0.63%) | Slip: +1.45
+[09:53:01] QQQ: $612.76 | SMA: $612.78 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,053.86 | Run: -$15.23 | Day: +$53.86 (0.54%) | Slip: +1.45
+[09:53:10] QQQ: $613.28 | SMA: $612.78 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,029.93 | Run: -$39.15 | Day: +$29.93 (0.30%) | Slip: +1.45
+[09:53:22] QQQ: $613.13 | SMA: $612.78 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,035.73 | Run: -$33.35 | Day: +$35.73 (0.36%) | Slip: +1.45
+[09:53:27] QQQ: $613.27 | SMA: $612.78 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,025.58 | Run: -$43.50 | Day: +$25.58 (0.26%) | Slip: +1.45
+[09:53:33] QQQ: $613.25 | SMA: $612.78 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,025.58 | Run: -$43.50 | Day: +$25.58 (0.26%) | Slip: +1.45
+[09:53:42] QQQ: $613.25 | SMA: $612.78 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,028.48 | Run: -$40.60 | Day: +$28.48 (0.28%) | Slip: +1.45
+[09:53:47] QQQ: $613.05 | SMA: $612.77 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,040.08 | Run: -$29.00 | Day: +$40.08 (0.40%) | Slip: +1.45
+[09:53:54] QQQ: $613.04 | SMA: $612.77 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,040.08 | Run: -$29.00 | Day: +$40.08 (0.40%) | Slip: +1.45
+[09:54:00] QQQ: $612.71 | SMA: $612.75 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,040.08 | Run: -$29.00 | Day: +$40.08 (0.40%) | Slip: +1.45
+[09:54:07] QQQ: $612.82 | SMA: $612.74 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,050.23 | Run: -$18.85 | Day: +$50.23 (0.50%) | Slip: +1.45
+[09:54:15] QQQ: $612.88 | SMA: $612.73 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,044.43 | Run: -$24.65 | Day: +$44.43 (0.44%) | Slip: +1.45
+[09:54:22] QQQ: $613.02 | SMA: $612.73 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,038.63 | Run: -$30.45 | Day: +$38.63 (0.39%) | Slip: +1.45
+[09:54:31] QQQ: $613.05 | SMA: $612.74 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,038.63 | Run: -$30.45 | Day: +$38.63 (0.39%) | Slip: +1.45
+[09:54:39] QQQ: $612.96 | SMA: $612.74 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,042.98 | Run: -$26.10 | Day: +$42.98 (0.43%) | Slip: +1.45
+[09:54:47] QQQ: $613.17 | SMA: $612.75 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,040.81 | Run: -$28.28 | Day: +$40.81 (0.41%) | Slip: +1.45
+[09:55:00] QQQ: $612.97 | SMA: $612.75 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,044.43 | Run: -$24.65 | Day: +$44.43 (0.44%) | Slip: +1.45
+[09:55:07] QQQ: $612.87 | SMA: $612.76 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,047.33 | Run: -$21.75 | Day: +$47.33 (0.47%) | Slip: +1.45
+[09:55:12] QQQ: $612.75 | SMA: $612.75 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,050.23 | Run: -$18.85 | Day: +$50.23 (0.50%) | Slip: +1.45
+[09:55:22] QQQ: $612.74 | SMA: $612.75 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,050.23 | Run: -$18.85 | Day: +$50.23 (0.50%) | Slip: +1.45
+[09:55:44] QQQ: $612.78 | SMA: $612.74 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,051.68 | Run: -$17.40 | Day: +$51.68 (0.52%) | Slip: +1.45
+[09:55:53] QQQ: $612.59 | SMA: $612.74 | BEAR | SQQQ x145 | Depl: $10,019.50 | Avail: $15.04 | Bank: $34.54 | Reinv: $34.54 | Eq: $10,056.03 | Run: -$13.05 | Day: +$56.03 (0.56%) | Slip: +1.45
+Γòæ  PHASE TRANSITION: Base Config -> Power Hour
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | SlopeWindow=15 | ChopThreshold=0.1500% | TrailingStop=0.15% | TrendWait=60s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ15, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/120, Slope ready: True, Trend: 5400/5400
+Γòæ  PHASE TRANSITION: Power Hour -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 15ΓåÆ20, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: False, Trend: 5400/5400
+
+--- Last OV status line ---
+[09:49:56] [Open Volatility] QQQ: $612.94 | SMA: $613.10 | BEAR | SQQQ x145 | Depl: $9,948.45 | Avail: $51.55 | Bank: $0.00 | Reinv: $0.00 | Eq: $10,048.58 | Run: +$48.58 | Day: +$48.58 (0.49%) | Slip: +1.45
+--- First Base status line ---
+[09:50:03] QQQ: $612.16 | SMA: $613.04 | BEAR | SQQQ x37 | Depl: $2,538.57 | Avail: $7,490.05 | Bank: $28.62 | Reinv: $28.62 | Eq: $10,077.22 | Run: +$19.98 | Day: +$77.22 (0.77%) | Slip: +1.45
+
+--- Summary ---
+[DAILY TARGET] Γÿà P/L $181.68 reached target $175.00. Trailing stop ARMED at $181.13 (0.3% trail). Continuing to trade.
+[DAILY TARGET] Γÿà Trailing stop TRIGGERED. P/L $185.94 dropped below stop $186.80 (peak was $187.36). Liquidating.
+[TRADER] Daily profit target trailing stop triggered - liquidating to CASH
+[SIM-BROKER]  Realized P/L:   $173.16
+[SIM-BROKER]  Total Trades:   13
+
+--- Trades 09:45-10:05 ---
+
+=========================================
+  DATE: 20260213
+=========================================
+--- Transition window (09:45-09:55) ---
+[TIME RULES] Loaded 2 phase rule(s):
+[TIME RULES]   Open Volatility: 09:30 -> 09:50
+[TIME RULES]   Power Hour: 14:00 -> 16:00
+Γòæ  PHASE TRANSITION: Base Config -> Open Volatility
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | ChopThreshold=0.1500% | MinChop=0.05 | TrendWindow=900s | TrailingStop=0.50% | TrendWait=180s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | Trimming=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ20, Trend 5400ΓåÆ900
+[PHASE] Reconfiguration complete. SMA: 0/120, Slope ready: False, Trend: 0/900
+[09:45:05] [Open Volatility] QQQ: $600.16 | SMA: $599.18 | NEUTRAL | TQQQ x209 | Depl: $9,986.02 | Avail: $32.88 | Bank: $20.25 | Reinv: $19.58 | Eq: $10,099.76 | Run: +$60.61 | Day: +$99.76 (1.00%) | Slip: +2.70
+[09:45:15] [Open Volatility] QQQ: $600.16 | SMA: $599.18 | NEUTRAL | TQQQ x209 | Depl: $9,986.02 | Avail: $32.88 | Bank: $20.25 | Reinv: $19.58 | Eq: $10,103.94 | Run: +$64.79 | Day: +$103.94 (1.04%) | Slip: +2.70
+[09:45:30] [Open Volatility] QQQ: $600.68 | SMA: $599.26 | NEUTRAL | TQQQ x209 | Depl: $9,986.02 | Avail: $32.88 | Bank: $20.25 | Reinv: $19.58 | Eq: $10,129.02 | Run: +$89.87 | Day: +$129.02 (1.29%) | Slip: +2.70
+[09:45:40] [Open Volatility] QQQ: $600.62 | SMA: $599.67 | NEUTRAL | TQQQ x209 | Depl: $9,986.02 | Avail: $32.88 | Bank: $20.25 | Reinv: $19.58 | Eq: $10,120.66 | Run: +$81.51 | Day: +$120.66 (1.21%) | Slip: +2.70
+[09:45:45] [Open Volatility] QQQ: $600.70 | SMA: $599.69 | NEUTRAL | TQQQ x209 | Depl: $9,986.02 | Avail: $32.88 | Bank: $20.25 | Reinv: $19.58 | Eq: $10,132.16 | Run: +$93.01 | Day: +$132.16 (1.32%) | Slip: +2.70
+[09:45:50] [Open Volatility] QQQ: $600.76 | SMA: $599.72 | NEUTRAL | TQQQ x209 | Depl: $9,986.02 | Avail: $32.88 | Bank: $20.25 | Reinv: $19.58 | Eq: $10,137.38 | Run: +$98.23 | Day: +$137.38 (1.37%) | Slip: +2.70
+[09:45:53] [Open Volatility] QQQ: $601.56 | SMA: $599.91 | BULL | TQQQ x209 | Depl: $9,986.02 | Avail: $32.88 | Bank: $20.25 | Reinv: $19.58 | Eq: $10,169.78 | Run: +$130.63 | Day: +$169.78 (1.70%) | Slip: +2.70
+[09:45:59] [Open Volatility] QQQ: $601.82 | SMA: $600.21 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:04] [Open Volatility] QQQ: $601.54 | SMA: $600.71 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:09] [Open Volatility] QQQ: $601.37 | SMA: $600.94 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:18] [Open Volatility] QQQ: $601.73 | SMA: $601.00 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:24] [Open Volatility] QQQ: $601.33 | SMA: $601.06 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:30] [Open Volatility] QQQ: $601.44 | SMA: $601.15 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:35] [Open Volatility] QQQ: $602.09 | SMA: $601.33 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:40] [Open Volatility] QQQ: $601.84 | SMA: $601.53 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:48] [Open Volatility] QQQ: $602.04 | SMA: $601.61 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:53] [Open Volatility] QQQ: $601.94 | SMA: $601.66 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:46:59] [Open Volatility] QQQ: $602.12 | SMA: $601.69 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:08] [Open Volatility] QQQ: $601.63 | SMA: $601.75 | BULL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:09] [Open Volatility] QQQ: $601.27 | SMA: $601.69 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:16] [Open Volatility] QQQ: $601.73 | SMA: $601.69 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:23] [Open Volatility] QQQ: $601.55 | SMA: $601.71 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:29] [Open Volatility] QQQ: $601.79 | SMA: $601.72 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:34] [Open Volatility] QQQ: $602.04 | SMA: $601.75 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:40] [Open Volatility] QQQ: $602.04 | SMA: $601.76 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:47] [Open Volatility] QQQ: $602.12 | SMA: $601.83 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:47:55] [Open Volatility] QQQ: $602.20 | SMA: $601.85 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:01] [Open Volatility] QQQ: $602.18 | SMA: $601.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:06] [Open Volatility] QQQ: $602.75 | SMA: $602.03 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:12] [Open Volatility] QQQ: $602.72 | SMA: $602.21 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:21] [Open Volatility] QQQ: $602.64 | SMA: $602.27 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:27] [Open Volatility] QQQ: $602.86 | SMA: $602.33 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:34] [Open Volatility] QQQ: $602.64 | SMA: $602.40 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:51] [Open Volatility] QQQ: $602.53 | SMA: $602.43 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:48:56] [Open Volatility] QQQ: $602.52 | SMA: $602.48 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:03] [Open Volatility] QQQ: $602.36 | SMA: $602.49 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:10] [Open Volatility] QQQ: $601.83 | SMA: $602.48 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:18] [Open Volatility] QQQ: $602.40 | SMA: $602.47 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:23] [Open Volatility] QQQ: $602.19 | SMA: $602.48 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:29] [Open Volatility] QQQ: $602.04 | SMA: $602.47 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:34] [Open Volatility] QQQ: $601.73 | SMA: $602.46 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:39] [Open Volatility] QQQ: $601.90 | SMA: $602.44 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:44] [Open Volatility] QQQ: $601.71 | SMA: $602.42 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:50] [Open Volatility] QQQ: $601.52 | SMA: $602.35 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:49:55] [Open Volatility] QQQ: $601.48 | SMA: $602.27 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+Γòæ  PHASE TRANSITION: Open Volatility -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 20ΓåÆ20, Trend 900ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: True, Trend: 900/5400
+[09:50:01] QQQ: $601.16 | SMA: $602.19 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:07] QQQ: $600.59 | SMA: $602.01 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:15] QQQ: $600.49 | SMA: $601.94 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:21] QQQ: $599.80 | SMA: $601.79 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:26] QQQ: $600.15 | SMA: $601.60 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:34] QQQ: $600.06 | SMA: $601.54 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:40] QQQ: $599.67 | SMA: $601.46 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:41] QQQ: $599.34 | SMA: $601.44 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:48] QQQ: $599.68 | SMA: $601.17 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:50:54] QQQ: $599.78 | SMA: $601.10 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:00] QQQ: $599.79 | SMA: $600.78 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:06] QQQ: $599.53 | SMA: $600.68 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:11] QQQ: $599.49 | SMA: $600.64 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:16] QQQ: $599.55 | SMA: $600.55 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:21] QQQ: $599.78 | SMA: $600.49 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:27] QQQ: $599.69 | SMA: $600.43 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:38] QQQ: $599.64 | SMA: $600.39 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:45] QQQ: $600.18 | SMA: $600.33 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:51:50] QQQ: $600.16 | SMA: $600.31 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:52:00] QQQ: $600.38 | SMA: $600.24 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:52:07] QQQ: $599.95 | SMA: $600.19 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:52:19] QQQ: $599.22 | SMA: $600.11 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:52:27] QQQ: $599.46 | SMA: $599.96 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:52:40] QQQ: $599.28 | SMA: $599.94 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:52:47] QQQ: $599.26 | SMA: $599.90 | BEAR | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:52:56] QQQ: $599.70 | SMA: $599.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:53:02] QQQ: $600.15 | SMA: $599.83 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:53:08] QQQ: $599.94 | SMA: $599.82 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:53:13] QQQ: $600.77 | SMA: $599.82 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:53:20] QQQ: $600.79 | SMA: $599.83 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:53:26] QQQ: $600.78 | SMA: $599.85 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:53:43] QQQ: $600.38 | SMA: $599.85 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:53:55] QQQ: $600.38 | SMA: $599.86 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:00] QQQ: $600.36 | SMA: $599.87 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:06] QQQ: $600.68 | SMA: $599.91 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:13] QQQ: $600.74 | SMA: $599.93 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:27] QQQ: $600.59 | SMA: $599.95 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:36] QQQ: $600.83 | SMA: $599.98 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:44] QQQ: $600.37 | SMA: $600.00 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:50] QQQ: $600.26 | SMA: $600.01 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:54:55] QQQ: $600.12 | SMA: $600.03 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:01] QQQ: $600.45 | SMA: $600.05 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:09] QQQ: $600.81 | SMA: $600.06 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:15] QQQ: $601.55 | SMA: $600.09 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:23] QQQ: $601.63 | SMA: $600.12 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:30] QQQ: $601.57 | SMA: $600.17 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:36] QQQ: $601.52 | SMA: $600.20 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:42] QQQ: $601.76 | SMA: $600.23 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:49] QQQ: $601.68 | SMA: $600.25 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+[09:55:55] QQQ: $601.64 | SMA: $600.29 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+Γòæ  PHASE TRANSITION: Base Config -> Power Hour
+[TIME RULES] Overrides: MinVelocity=0.000015 | SMAWindow=120s | SlopeWindow=15 | ChopThreshold=0.1500% | TrailingStop=0.15% | TrendWait=60s | TrendConfidence=0.00012 | MarketableLimits=False | IOC=False | StopTiers=3
+[PHASE] Reconfiguring indicators: SMA 180ΓåÆ120, Slope 20ΓåÆ15, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/120, Slope ready: True, Trend: 5400/5400
+Γòæ  PHASE TRANSITION: Power Hour -> Base Config
+[TIME RULES] Restored to base config values.
+[PHASE] Reconfiguring indicators: SMA 120ΓåÆ180, Slope 15ΓåÆ20, Trend 5400ΓåÆ5400
+[PHASE] Reconfiguration complete. SMA: 120/180, Slope ready: False, Trend: 5400/5400
+
+--- Last OV status line ---
+[09:49:55] [Open Volatility] QQQ: $601.48 | SMA: $602.27 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+--- First Base status line ---
+[09:50:01] QQQ: $601.16 | SMA: $602.19 | NEUTRAL | CASH | Depl: $0.00 | Avail: $10,088.92 | Bank: $90.27 | Reinv: $89.59 | Eq: $10,179.18 | Run: +$0.00 | Day: +$179.18 (1.79%) | Slip: +2.70
+
+--- Summary ---
+[DAILY TARGET] Γÿà P/L $182.32 reached target $175.00. Trailing stop ARMED at $181.77 (0.3% trail). Continuing to trade.
+[DAILY TARGET] Γÿà Trailing stop TRIGGERED. P/L $179.18 dropped below stop $181.77 (peak was $182.32). Liquidating.
+[TRADER] Daily profit target trailing stop triggered - liquidating to CASH
+[SIM-BROKER]  Realized P/L:   $179.18
+[SIM-BROKER]  Total Trades:   6
+
+--- Trades 09:45-10:05 ---
+
