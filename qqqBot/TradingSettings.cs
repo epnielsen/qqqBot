@@ -51,6 +51,11 @@ class TradingSettings
     public int KeepAlivePingSeconds { get; set; } = 5;    // HTTP connection keep-alive ping interval
     public int WarmUpIterations { get; set; } = 10000;    // JIT warm-up iterations before market open
     
+    // MACD MOMENTUM LAYER
+    // When enabled, adds MACD-based momentum analysis for barcoding detection and trend confirmation.
+    // Disabled by default — zero cost when off.
+    public MacdConfig Macd { get; set; } = new();
+    
     // Derived: Calculate queue size dynamically from window and interval
     public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
     
@@ -83,4 +88,21 @@ class DynamicExitConfig
     /// Recommended: 0.00015 (adjust based on your instrument volatility).
     /// </summary>
     public double TrendConfidenceThreshold { get; set; } = 0.00015;
+}
+
+/// <summary>
+/// Configuration for MACD momentum layer (mirrors MarketBlocks.Bots.Domain.MacdConfig).
+/// </summary>
+class MacdConfig
+{
+    public bool Enabled { get; set; } = false;
+    public int FastPeriod { get; set; } = 300;
+    public int SlowPeriod { get; set; } = 720;
+    public int SignalPeriod { get; set; } = 120;
+    public bool TrendBoostEnabled { get; set; } = false;
+    public decimal TrendBoostThreshold { get; set; } = 0.03m;
+    public bool ExitAcceleratorEnabled { get; set; } = false;
+    public int ExitAcceleratorWaitSeconds { get; set; } = 15;
+    public bool EntryGateEnabled { get; set; } = false;
+    public decimal EntryGateDeadZone { get; set; } = 0.02m;
 }

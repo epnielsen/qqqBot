@@ -20,6 +20,8 @@ public class CommandLineOverrides
     public bool UseIocOrders { get; set; }
     // Configuration file override
     public string? ConfigFile { get; set; }
+    // MACD flags
+    public bool EnableMacd { get; set; }
     // Replay & data recording
     public string? Mode { get; set; }          // "replay" or null (live)
     public bool FetchHistory { get; set; }      // --fetch-history flag
@@ -142,6 +144,10 @@ public class CommandLineOverrides
             else if (arg.Equals("-ioc", StringComparison.OrdinalIgnoreCase))
             {
                 overrides.UseIocOrders = true;
+            }
+            else if (arg.Equals("--macd", StringComparison.OrdinalIgnoreCase) || arg.Equals("-macd", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.EnableMacd = true;
             }
             else if (arg.StartsWith("-config=", StringComparison.OrdinalIgnoreCase))
             {

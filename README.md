@@ -327,6 +327,7 @@ dotnet run -- -botid=rklb
 | `-lowlatency` | Enable low-latency mode |
 | `-ioc` | Enable IOC sniper orders |
 | `-monitor` | Enable slippage monitoring |
+| `--macd` | Enable MACD momentum layer (all 3 roles: trend boost, exit accelerator, entry gate) |
 
 ## Strategy Logic
 

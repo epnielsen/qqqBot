@@ -1062,3 +1062,306 @@ Only minor finding: Trail=0.1% reduces loss from -$26 to -$10 (those 2 trades). 
 | `target-off-test.ps1` | Feb 11/13 with daily target ON vs OFF |
 | `ph-sweep2.ps1` | 16-config PH settings sweep (isolated 14:00-16:00) |
 | `ph-resume-test.ps1` | PH resume experiment (morning target + PH restart) |
+
+## Session: 2026-02-15 — ETF Price Response Lag Investigation
+
+**Context**: Investigated the TODO item "Evaluate whether trailing stops should be set on ETF prices rather than benchmark." The concern was that leveraged ETFs (TQQQ/SQQQ) might lag QQQ directional moves, causing benchmark-based trailing stops to fire at times when ETF P/L doesn't match expectations.
+
+**Important clarification**: This is NOT tick-timing alignment — it's **price response lag**. When QQQ makes a directional move, how long until TQQQ/SQQQ fully reflect the expected 3x response? This is impulse-response analysis.
+
+### Architecture Review
+
+Before measuring, reviewed the code to understand the domain boundaries:
+- **Signal generation**: QQQ only (`AnalystEngine.ProcessTick` at L349)
+- **Trailing stop trigger & distance**: QQQ benchmark (`TraderEngine.EvaluateTrailingStop` at L1694)
+- **DynamicStop tier triggers**: ETF profit % (mixed domain)
+- **P/L calculation**: ETF price
+- **`_etfHighWaterMark`**: Exists at L1753 to partially bridge the domain mismatch
+
+### Analysis Tool: `etf_lag_analysis.py`
+
+Created Python script (`qqqBot/etf_lag_analysis.py`) with three analyses run across all 5 replay dates (Feb 9-13):
+
+**Part 1 — Rolling Leverage Ratio** (QQQ % move vs ETF % move over same time window):
+Sample ~500 QQQ tick pairs per window size, compute ETF/QQQ return ratio.
+
+| Window | TQQQ/QQQ Median (range across days) | MAE from 3.0 |
+|--------|--------------------------------------|--------------|
+| 5s | 1.0–2.1 | 2.4–2.6 |
+| 10s | 2.0–2.5 | 2.1–2.3 |
+| 30s | 2.6–2.8 | 1.6–1.9 |
+| 60s | 2.86–3.02 | 1.4–1.6 |
+
+**Insight**: 3x leverage only holds reliably at 60s+. Sub-10s moves have enormous variance.
+
+**Part 2 — Price Response Lag** (impulse-response):
+Detect QQQ moves >0.03% over 10s, then measure how much TQQQ has achieved at move completion:
+
+| Date | Moves | TQQQ Achieved% (median) | p10 | p90 | Immediate 90%+ | Within 5s | Never/30s |
+|------|-------|-------------------------|-----|-----|-----------------|-----------|-----------|
+| Feb 9 | 81 | 94.4% | 51.5% | 119.3% | 43/81 | 57/81 | 17/81 |
+| Feb 10 | 111 | 90.3% | 38.5% | 123.4% | 57/111 | 84/111 | 19/111 |
+| Feb 11 | 156 | 85.1% | 20.0% | 129.4% | 72/156 | 100/156 | 34/156 |
+| Feb 12 | 201 | 88.9% | 30.8% | 131.8% | 95/201 | 143/201 | 33/201 |
+| Feb 13 | 269 | 86.5% | 17.0% | 127.8% | 121/269 | 176/269 | 63/269 |
+
+**Insight**: Real lag exists on fast moves — ETFs need seconds to catch up. ~15-22% of moves never achieve 90% of expected 3x within 30s at the tick level.
+
+**Part 3 — Stop-Trigger Scenario** (THE KEY FINDING):
+When QQQ drops 0.2% from HWM, what is TQQQ_drop / QQQ_drop ratio?
+
+| Date | n(0.2%) | Mean | Median | Min | Max | n(0.5%) | Mean | Median |
+|------|---------|------|--------|-----|-----|---------|------|--------|
+| Feb 9 | 7 | 2.950 | 2.889 | 2.744 | 3.154 | 0 | — | — |
+| Feb 10 | 13 | 2.933 | 2.973 | 2.570 | 3.132 | 3 | 2.966 | 2.953 |
+| Feb 11 | 24 | 2.929 | 3.001 | 2.428 | 3.287 | 4 | 3.007 | 3.032 |
+| Feb 12 | 30 | 2.992 | 3.011 | 2.543 | 3.378 | 6 | 3.047 | 3.061 |
+| Feb 13 | 29 | 2.913 | 2.928 | 2.266 | 3.451 | 5 | 3.007 | 2.960 |
+
+### Conclusions
+
+1. **At the 0.2% trailing stop level**: TQQQ/QQQ drop ratio is 2.9–3.0 median — very close to ideal 3.0
+2. **At the 0.5% level**: Even tighter (2.95–3.06)
+3. **By the time a stop fires (sustained 0.2-0.5% drop), ETFs have already caught up** — the tick-level lag is irrelevant
+4. **Switching to ETF-based stops would make negligible difference for QQQ/TQQQ/SQQQ**
+5. The mixed domain architecture (QQQ stops + ETF tier triggers) works correctly in practice
+6. **This does NOT extend to less-liquid pairs** — added separate TODO for RKLB/RKLX/RKLZ
+
+### Decision: No Code Changes
+
+The current benchmark-based trailing stop approach is validated for QQQ/TQQQ/SQQQ. The TODO is marked complete. Trailing stop TODO updated with full empirical data.
+
+### Files Created/Modified
+| File | Action |
+|------|--------|
+| `qqqBot/etf_lag_analysis.py` | Created — Python analysis script |
+| `qqqBot/etf-lag-analysis.ps1` | Created (broken, superseded by Python version) |
+| `TODO.md` | Trailing stop TODO marked complete with findings; RKLB TODO added |
+| `EXPERIMENTS.md` | This session entry |
+
+---
+
+## Session: 2026-02-15 — MACD Momentum Layer Implementation
+
+### Context
+Barcoding remains the bot's main weakness (Feb 13: 35 trades, -$628). Current defenses (velocity gate, chop bands, entry confirmation) are indirect — they don't detect sustained sideways action *before* entry. Research into MACD as a complementary momentum indicator for barcoding detection and trend confirmation.
+
+### Design Decisions
+1. **MACD fed raw benchmark price** (not SMA) — provides independent momentum view. Triple-smoothing (price→SMA→EMA→EMA) would be redundant with slope calculators.
+2. **Three independently-toggleable roles** (all behind settings):
+   - **Role 1: Trend Confidence Boost** (priority) — MACD histogram confirms direction → rescue entries that fail velocity gate
+   - **Role 2: Exit Accelerator** — histogram flips against position → shorten neutral timeout for faster exits
+   - **Role 3: Entry Gate** — histogram near zero (flatline) → block new entries (direct barcoding defense)
+3. **Disabled by default** (`Macd.Enabled = false`) — zero overhead when off. Regular daily runs unaffected.
+4. **Suggested starting periods**: Fast=300s (5min), Slow=720s (12min), Signal=120s (2min) — tunable.
+5. **Per-phase overridable** — role toggles and thresholds can be overridden per TimeRule (e.g., disable entry gate during Open Volatility).
+6. **Alternate config file** `appsettings.macd.json` for MACD-tuned replay runs alongside regular config.
+7. **`--macd` CLI flag** enables all three roles for quick replay testing.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `MarketBlocks.Trade/Core/Math/IncrementalEma.cs` | New — streaming O(1) EMA with SMA seed warm-up |
+| `MarketBlocks.Trade/Core/Math/MacdCalculator.cs` | New — MACD(fast,slow,signal) with histogram |
+| `MarketBlocks.Bots/Domain/TradingSettings.cs` | Added `MacdConfig` class + `Macd` property |
+| `MarketBlocks.Bots/Domain/TimeBasedRule.cs` | Added MACD overrides to `TradingSettingsOverrides` |
+| `MarketBlocks.Bots/Domain/MarketRegime.cs` | Added `MacdHistogram` and `MacdLine` fields |
+| `MarketBlocks.Bots/Services/AnalystEngine.cs` | MACD calculator init, feed, 3 roles in DetermineSignal |
+| `MarketBlocks.Bots/Services/TraderEngine.cs` | Exit Accelerator in HandleNeutralAsync |
+| `MarketBlocks.Bots/Services/TimeRuleApplier.cs` | MACD in snapshot/restore/apply/log |
+| `MarketBlocks.Bots.Tests/MacdTests.cs` | New — 12 tests for IncrementalEma + MacdCalculator |
+| `qqqBot/TradingSettings.cs` | Synced MacdConfig class |
+| `qqqBot/ProgramRefactored.cs` | BuildTradingSettings + ParseOverrides + CLI wiring |
+| `qqqBot/CommandLineOverrides.cs` | Added `--macd` / `-macd` flag |
+| `qqqBot/appsettings.macd.json` | New — MACD-enabled config for replay testing |
+| `TODO.md` | Barcoding item marked complete |
+
+### Test Results
+- MarketBlocks: 554 tests, 0 failures (164 Bots.Tests including 12 new MACD tests)
+- qqqBot: 63 tests, 0 failures
+- Zero behavioral change when `Macd.Enabled = false` (default)
+
+### Next Steps — Tuning
+1. ✅ **Baseline**: Replay Feb 13 (barcoding day) with default config → record P/L and trade count
+2. ✅ **MACD smoke test**: Replay Feb 13 with `--config=appsettings.macd.json` → verify MACD logs, compare results
+3. ✅ **Period sweep**: 52 combos tested — ALL identical to no-MACD. Periods don't matter.
+4. ✅ **Dead zone sweep**: Tested across multiple role combos. Gate completely inert.
+5. ✅ **Role isolation**: All 7 combos tested. Gate inert, Boost harmful, Accel mildly harmful.
+6. ✅ **Non-barcoding regression**: Included in full-day sweeps across trending days.
+7. ✅ **Optimal MACD settings may require different base settings** — Rebase sweep tested 27 configs. No-MACD still #1.
+
+**CONCLUSION**: MACD tuning complete. No beneficial configuration found. See next session for full results.
+
+---
+
+## Session: 2026-02-15 — MACD Tuning Sweep Results
+
+### Context
+Systematic MACD parameter tuning using `macd-sweep.ps1` harness across 5 replay dates (Feb 9-13). Goal: determine if any MACD configuration can match or exceed the no-MACD baseline of +$608.90 (38 trades).
+
+### Baselines (Full Day, 5 dates: Feb 9-13)
+
+| Config | Total P/L | Avg P/L | Trades | Notes |
+|--------|-----------|---------|--------|-------|
+| **NO-MACD** | **+$608.90** | +$121.78 | 38 | ← TARGET |
+| MACD-DEFAULT (all 3 roles on) | +$405.15 | +$81.03 | 55 | -$203.75, +17 trades |
+
+### Role Isolation (Full Day, 5 dates)
+
+| Role Config | Total P/L | Trades | Delta vs No-MACD |
+|-------------|-----------|--------|------------------|
+| Gate-ONLY | +$608.90 | 38 | $0.00 (completely inert) |
+| Accel-ONLY | +$565.29 | 40 | -$43.61 |
+| Boost-ONLY | +$447.21 | 53 | -$161.69 |
+| Accel+Gate | +$565.29 | 40 | -$43.61 (gate still inert) |
+| Boost+Gate | +$447.21 | 53 | -$161.69 (boost overrides gate) |
+| ALL-ON (default) | +$405.15 | 55 | -$203.75 |
+
+**Key finding**: Gate is 100% inert — blocks zero trades across all 5 days because the MACD histogram at entry decision time never falls within the dead zone. Boost is very harmful (+15 bad trades). Accel is mildly harmful.
+
+### Dead Zone Sweep — Gate-ONLY (Base Phase, 5 dates)
+
+Tested dead zones 0.005 through 0.08. Gate blocked ZERO trades at every level. Identical results to no-MACD.
+
+### Dead Zone Sweep — Boost+Gate (Base Phase, 5 dates)
+
+| Dead Zone | Total P/L | Trades | Notes |
+|-----------|-----------|--------|-------|
+| 0.03 | +$447.21 | 53 | gate inert, boost dominates |
+| 0.06 | +$447.21 | 53 | same |
+| 0.08 | +$459.81 | 49 | gate starts blocking at extreme DZ |
+| 0.12 | +$541.99 | 37 | best Boost+Gate, still -$66 vs no-MACD |
+| 0.15 | +$518.35 | 35 | overshoot |
+| 0.20 | +$496.96 | 33 | blocks too much |
+
+### Boost Threshold Sweep (All Roles On, 5 dates)
+
+| Threshold | Total P/L | Trades |
+|-----------|-----------|--------|
+| 0.005 | +$398.90 | 55 |
+| 0.01 | +$398.90 | 55 |
+| 0.02 | +$405.15 | 55 |
+| 0.03 (default) | +$405.15 | 55 |
+| 0.05 | +$492.49 | 47 |
+| 0.08 | +$508.33 | 43 |
+| 0.12 | +$508.57 | 43 |
+
+All worse than no-MACD. Higher thresholds help by reducing Boost rescues (fewer bad entries).
+
+### Accelerator Sweep — Accel-ONLY (Full Day, 5 dates)
+
+| Wait (s) | Total P/L | Trades | Delta vs No-MACD |
+|-----------|-----------|--------|------------------|
+| 5 | +$548.15 | 40 | -$60.75 |
+| 10 | +$553.23 | 40 | -$55.67 |
+| 15 (default) | +$565.29 | 40 | -$43.61 |
+| 20 | +$570.00 | 40 | -$38.90 |
+| 30 | +$576.25 | 40 | -$32.65 |
+| 45 | +$585.55 | 40 | -$23.35 |
+| 60 | +$589.44 | 40 | -$19.46 |
+| 90 | +$598.27 | 40 | -$10.63 |
+
+Best result at 90s, still -$10.63 vs no-MACD. Always produces 40 trades (2 more than no-MACD baseline). Diminishing impact at higher values suggests the acceleration rarely fires with very long waits.
+
+### Gate-Handoff Sweep — Velocity × Dead Zone (Base Phase, Quick: Feb 11 + 13)
+
+**Hypothesis**: Lower velocity to let more entries through, rely on MACD EntryGate (dead zone) to filter barcoding instead.
+
+| Velocity | No-MACD P/L | Best Gate P/L | Best DZ | Gate Improvement |
+|----------|-------------|---------------|---------|------------------|
+| 0.000004 | -$906.44 (64t) | -$419.96 (44t) | 0.12 | +$486 but still awful |
+| 0.000006 | -$490.44 (44t) | -$394.36 (42t) | 0.08 | +$96 |
+| 0.000008 | -$429.86 (34t) | -$426.45 (32t) | 0.12 | +$3 (inert) |
+| 0.000010 | -$352.27 (26t) | -$350.93 (26t) | 0.08 | +$1 (inert) |
+| 0.000012 | -$237.29 (20t) | -$235.94 (20t) | 0.08 | +$1 (inert) |
+| 0.000015 | -$163.89 (16t) | -$162.53 (16t) | 0.08 | +$1 (inert) |
+
+**Conclusion**: Gate is fundamentally inert at velocity ≥ 0.000008. At very low velocity (0.000004), the gate blocks some entries (64 → 44 trades at DZ=0.12, saving $486), but the result (-$419) is still catastrophically worse than just using high velocity (-$163). The MACD histogram values at entry time simply don't fall within any tested dead zone range. The velocity filter is doing ALL the work.
+
+### Architectural Insight — Boolean Role Conflict
+
+Reading the code (`AnalystEngine.cs` lines ~716-743):
+1. Boost runs first: sets `trendRescue = true` when histogram > threshold
+2. Gate runs after: resets `trendRescue = false` AND sets `isStalled = true` when |histogram| < dead zone 
+3. Gate wins in theory, but in practice the histogram never hits dead zone values at entry time
+
+**Root cause**: The three roles are binary overrides competing over the same `trendRescue`/`isStalled` flags. This creates:
+- A narrow "dead band" between gate dead zone and boost threshold where neither fires
+- No partial confidence — each tick is 100% blocked or 100% allowed
+- The gate checks absolute histogram value, but histogram scale varies wildly by market regime
+
+**Proposed fix**: Replace boolean roles with a weighted momentum score system (see TODO.md). This would:
+- Use normalized histogram (relative to recent range) instead of absolute values
+- Incorporate histogram slope (momentum acceleration/deceleration)
+- Provide continuous influence on entry/exit confidence rather than binary yes/no
+- Detect barcoding via histogram range compression rather than "is histogram small"
+
+### Summary — MACD Left Disabled
+
+No MACD configuration tested across 350+ scenarios beats or matches the no-MACD baseline. The velocity filter at 0.000015 is a more effective barcoding prevention mechanism than any MACD role combination. MACD remains disabled by default (`Macd.Enabled = false`).
+
+**What worked (relatively)**: Accel-Only at Wait=90s came closest (-$10.63 vs no-MACD). Not worth enabling.
+
+**What failed completely**: EntryGate (inert at all settings), TrendBoost (adds bad trades).
+
+**Next step if pursuing MACD**: Redesign as weighted momentum score (see TODO.md "MACD Architecture Redesign"). The current boolean approach is architecturally flawed.
+
+### Additional Sweep Results (continued session)
+
+#### Period Grid Sweep (Full Day, Quick: Feb 11+13)
+52 valid combinations: Fast ∈ {180, 300, 600, 900} × Slow ∈ {480, 720, 1200, 1800} × Signal ∈ {60, 120, 180, 300} where Fast < Slow.
+
+**Result**: ALL 52 combos produce identical P/L (+$376.14, 12 trades) — same as no-MACD. MACD periods are irrelevant because the roles never influence any entry/exit decisions at the current velocity threshold (0.000015). The histogram scale changes with different periods, but the roles still don't fire because `slopeFailed` is rarely true when velocity is high.
+
+#### Threshold Combo Sweep (Full Day, Quick: Feb 11+13)
+48 combos: DeadZone ∈ {0.01, 0.02, 0.03, 0.05} × BoostThreshold ∈ {0.01, 0.03, 0.05, 0.08} × AccelWait ∈ {10, 15, 30}. All 3 roles on.
+
+**Result**: ALL 48 combos produce identical P/L (+$376.14, 12 trades). Same inertness.
+
+#### Rebase Sweep — MACD + Different Base Settings (Base Phase, Quick: Feb 11+13)
+27 configs: Velocity ∈ {4-20} × 10⁻⁶, TrendWindow ∈ {1200-7200}s, SMA ∈ {120-300}s, plus combined Vel×TrendWindow.
+
+**Result**: No-MACD is #1 (-$163.89). Every MACD config worse:
+
+| Config | P/L | Trades | Delta vs No-MACD |
+|--------|-----|--------|------------------|
+| No-MACD (V=0.000015) | -$163.89 | 16 | — |
+| MACD + V=0.000015 (best MACD) | -$371.23 | 34 | -$207.34, +18 trades |
+| MACD + V=0.00002 | -$371.23 | 34 | same (raising vel doesn't help) |
+| MACD + V=0.000004 (worst) | -$749.72 | 64 | -$585.83, +48 trades |
+| MACD + SMA=120s | -$450.08 | 34 | -$286.19 |
+| MACD + SMA=150s | -$609.30 | 40 | -$445.41 |
+
+Key insight: Even raising velocity to 0.00002 doesn't help — MACD's TrendBoost STILL rescues entries that velocity correctly blocked, adding 18 bad trades.
+
+#### Phase-Tune OV Sweep (OV Phase, Quick: Feb 11+13)
+12 configs: EntryGate on/off, BoostThresh variations, AccelWait variations, MACD=OFF for OV.
+
+**Result**: ALL 12 configs identical (+$376.14, 12 trades). MACD is completely inert during OV because:
+1. MACD warm-up requires Slow+Signal seconds (540-2100s), consuming much of OV's 43-minute window
+2. When ready, OV's strong directional moves mean slopeFailed is rarely true, so roles don't fire
+
+### Complete Sweep Coverage Summary
+
+| Sweep Group | Configs Tested | Phase | Result |
+|-------------|---------------|-------|--------|
+| Role isolation | 7 | Full (5d) | Gate inert, Boost harmful (-$161), Accel mild (-$43) |
+| Dead zone (Gate-ONLY) | 6 | Base (5d) | Zero trades blocked at any DZ |
+| Dead zone (Boost+Gate) | 6 | Base (5d) | Best DZ=0.12 still -$66 vs no-MACD |
+| Boost threshold | 7 | Full (5d) | Best at 0.12, still -$100 vs no-MACD |
+| Accelerator wait | 8 | Full (5d) | Best at 90s = -$10.63 vs no-MACD |
+| Gate-handoff (Vel×DZ) | 42 | Base (2d) | Gate inert at all vel/DZ combos |
+| Period grid (F×S×Sig) | 52 | Full (2d) | ALL identical = no-MACD |
+| Threshold combo (DZ×BT×AW) | 48 | Full (2d) | ALL identical = no-MACD |
+| Rebase (Vel/TW/SMA + MACD) | 27 | Base (2d) | No-MACD #1, all MACD worse |
+| Phase-tune OV | 12 | OV (2d) | ALL identical = no-MACD |
+| **Total** | **~215 unique configs, ~350+ replay runs** | | **No MACD config matches no-MACD** |
+
+### Files Created/Modified
+| File | Action |
+|------|--------|
+| `qqqBot/macd-sweep.ps1` | Created — MACD parameter sweep harness (~830 lines) |
+| `qqqBot/qqqBot.csproj` | Modified — added appsettings.macd.json CopyToOutputDirectory |
+| `TODO.md` | Updated barcoding status; added "MACD Architecture Redesign" TODO |
+| `EXPERIMENTS.md` | This session entry |

@@ -288,6 +288,13 @@ public static class ProgramRefactored
                     if (overrides.MaxSlippagePercentOverride.HasValue) settings.MaxSlippagePercent = overrides.MaxSlippagePercentOverride.Value;
                     if (overrides.LowLatencyMode) settings.LowLatencyMode = true;
                     if (overrides.UseIocOrders) settings.UseIocOrders = true;
+                    if (overrides.EnableMacd)
+                    {
+                        settings.Macd.Enabled = true;
+                        settings.Macd.TrendBoostEnabled = true;
+                        settings.Macd.ExitAcceleratorEnabled = true;
+                        settings.Macd.EntryGateEnabled = true;
+                    }
                 }
                 
                 services.AddSingleton(settings);
@@ -616,6 +623,25 @@ public static class ProgramRefactored
             DailyLossLimitPercent = configuration.GetValue("TradingBot:DailyLossLimitPercent", 0m)
         };
         
+        // Parse MACD config (nested object)
+        var macdSection = configuration.GetSection("TradingBot:Macd");
+        if (macdSection.Exists())
+        {
+            settings.Macd = new MarketBlocks.Bots.Domain.MacdConfig
+            {
+                Enabled = macdSection.GetValue("Enabled", false),
+                FastPeriod = macdSection.GetValue("FastPeriod", 300),
+                SlowPeriod = macdSection.GetValue("SlowPeriod", 720),
+                SignalPeriod = macdSection.GetValue("SignalPeriod", 120),
+                TrendBoostEnabled = macdSection.GetValue("TrendBoostEnabled", false),
+                TrendBoostThreshold = macdSection.GetValue("TrendBoostThreshold", 0.03m),
+                ExitAcceleratorEnabled = macdSection.GetValue("ExitAcceleratorEnabled", false),
+                ExitAcceleratorWaitSeconds = macdSection.GetValue("ExitAcceleratorWaitSeconds", 15),
+                EntryGateEnabled = macdSection.GetValue("EntryGateEnabled", false),
+                EntryGateDeadZone = macdSection.GetValue("EntryGateDeadZone", 0.02m)
+            };
+        }
+        
         // Parse DynamicStopLoss (nested object with tiers)
         var dynamicStopSection = configuration.GetSection("TradingBot:DynamicStopLoss");
         if (dynamicStopSection.Exists())
@@ -712,6 +738,14 @@ public static class ProgramRefactored
         if (section["ProfitReinvestmentPercent"] != null) o.ProfitReinvestmentPercent = section.GetValue<decimal>("ProfitReinvestmentPercent");
         // Direction switch cooldown
         if (section["DirectionSwitchCooldownSeconds"] != null) o.DirectionSwitchCooldownSeconds = section.GetValue<int>("DirectionSwitchCooldownSeconds");
+        // MACD overrides
+        if (section["MacdEnabled"] != null) o.MacdEnabled = section.GetValue<bool>("MacdEnabled");
+        if (section["MacdTrendBoostEnabled"] != null) o.MacdTrendBoostEnabled = section.GetValue<bool>("MacdTrendBoostEnabled");
+        if (section["MacdTrendBoostThreshold"] != null) o.MacdTrendBoostThreshold = section.GetValue<decimal>("MacdTrendBoostThreshold");
+        if (section["MacdExitAcceleratorEnabled"] != null) o.MacdExitAcceleratorEnabled = section.GetValue<bool>("MacdExitAcceleratorEnabled");
+        if (section["MacdExitAcceleratorWaitSeconds"] != null) o.MacdExitAcceleratorWaitSeconds = section.GetValue<int>("MacdExitAcceleratorWaitSeconds");
+        if (section["MacdEntryGateEnabled"] != null) o.MacdEntryGateEnabled = section.GetValue<bool>("MacdEntryGateEnabled");
+        if (section["MacdEntryGateDeadZone"] != null) o.MacdEntryGateDeadZone = section.GetValue<decimal>("MacdEntryGateDeadZone");
         
         return o;
     }

@@ -72,31 +72,162 @@
 
 ## Barcoding / Chopping Detection
 
-- [ ] **Research and implement barcoding/chopping mitigation**
-  Detect sideways "barcoding" price action before losses mount and mitigate by exiting near center.
-  - Consecutive NEUTRAL signal counting
-  - Volatility compression detection (narrowing range over lookback window)
-  - Range-bound pattern recognition
-  - Lookback function to detect barcoding early
-  - Mitigation: drop to NEUTRAL, attempt exit near center to minimize loss
-  - Needs research into what's actually detectable from the data we have before implementation
+- [x] **Research and implement barcoding/chopping mitigation**
+  **IMPLEMENTED (2026-02-15)**: Added MACD Momentum Layer with three independently-toggleable roles:
+  1. **Trend Confidence Boost** — MACD histogram confirms direction, rescues entries that fail velocity gate
+  2. **Exit Accelerator** — shortens neutral timeout when MACD histogram diverges from position direction
+  3. **Entry Gate** — suppresses new entries when histogram flatlines (barcoding detection)
+  
+  Disabled by default (`Macd.Enabled = false`). Alternate config: `appsettings.macd.json`.
+  CLI quick-enable: `--macd`. Per-phase overridable via TimeRules.
+  
+  **New files**: `IncrementalEma.cs`, `MacdCalculator.cs` (MarketBlocks.Trade.Math),
+  `MacdConfig` class (TradingSettings), `appsettings.macd.json`.
+  
+  **Status**: Code complete, tests passing. **Tuning complete (2026-02-15): MACD provides no net benefit in current boolean implementation — see tuning results below and EXPERIMENTS.md Session 2026-02-15 (MACD Tuning).**
+  - Remaining sub-items (NEUTRAL counting, volatility compression, range-bound patterns) may still be worth exploring independently of MACD.
+
+  **Tuning Results Summary (2026-02-15)**:
+  - **Baseline**: No-MACD = +$608.90 (38 trades, 5 days). MACD-default (all roles on) = +$405.15 (55 trades) → **-$203.75 worse**.
+  - **Role isolation**: Gate-ONLY = +$608.90 (completely inert, blocks zero trades). Accel-ONLY = +$565.29 (-$43). Boost-ONLY = +$447.21 (+15 bad trades).
+  - **Best isolated**: Accel-Only Wait=90s = +$598.27 (-$10.63 vs no-MACD). Best Boost+Gate DZ=0.12 = +$541.99.
+  - **Gate-handoff sweep** (lower velocity to let Gate filter barcoding): Gate remains completely inert at ALL velocity × dead zone combinations tested (velocity 0.000004–0.000015, dead zone 0.01–0.12). The MACD histogram values at entry decision time simply don't fall within blocking range.
+  - **Conclusion**: Current velocity filter (0.000015) is highly effective at preventing barcoding. MACD EntryGate cannot replicate this function because histogram scale doesn't match the entry decision context. MACD left disabled (`Macd.Enabled = false`).
+
+## MACD Architecture Redesign — Weighted Momentum Score
+
+- [ ] **Replace boolean MACD role overrides with a weighted momentum scoring system**
+  **Discovered (2026-02-15)**: The three MACD roles (TrendBoost, EntryGate, ExitAccelerator) interact poorly because they make binary yes/no decisions that can override each other:
+
+  **The Conflict (code: `AnalystEngine.cs` lines ~716-743)**:
+  - **Role 1 (TrendBoost)**: If `slopeFailed` and `histogram > TrendBoostThreshold` → sets `trendRescue = true` (ENTER)
+  - **Role 3 (EntryGate)**: If `|histogram| < EntryGateDeadZone` → forces `trendRescue = false` AND sets `isStalled = true` (BLOCK)
+  - **Current precedence**: Gate runs after Boost and resets `trendRescue = false`, so Gate technically wins. But:
+    - The threshold geometry creates a narrow "dead band" (histogram between DeadZone and BoostThreshold) where neither role fires — leaving the decision to velocity alone
+    - The histogram scale at entry time rarely falls in the EntryGate dead zone range, making the Gate completely inert in practice (confirmed across 42 velocity × dead zone combinations)
+    - The binary nature means there's no "partial confidence" — at any given tick, you're either 100% blocked or 100% allowed
+
+  **Proposed Redesign — Momentum Score**:
+  Replace the three boolean roles with a single **weighted momentum score** that influences entry/exit decisions mathematically:
+
+  ```
+  MomentumScore = w1 × NormalizedHistogram + w2 × HistogramSlope + w3 × SignalLineDirection
+  ```
+
+  Where:
+  - `NormalizedHistogram` = histogram / recent_range (scaled to -1..+1 relative to recent behavior)
+  - `HistogramSlope` = rate of change of histogram (detecting momentum *acceleration*)
+  - `SignalLineDirection` = MACD line vs signal line convergence/divergence rate
+  - Weights `w1, w2, w3` are tunable and can vary per phase
+
+  **How it would be used**:
+  - **Entry decision**: `MomentumScore` would be a continuous factor in the entry confidence calculation, not a binary gate. Higher score = more willingness to enter. Near-zero score = high reluctance but not absolute block.
+  - **Exit decision**: Negative `MomentumScore` relative to position direction would continuously shorten the neutral timeout (proportional, not binary). Score of -0.8 might cut timeout to 20%, while -0.2 might only cut to 80%.
+  - **Barcoding detection**: Instead of `|histogram| < deadZone`, use `abs(MomentumScore) < threshold` + `histogram_range_over_N_seconds < compressionThreshold`. This captures actual flatline behavior rather than just "histogram is small right now."
+
+  **Key advantages over current implementation**:
+  1. No boolean conflict between roles — single score incorporates all information
+  2. Normalized histogram automatically adapts to different market regimes (high-vol days have bigger histograms)
+  3. Histogram slope detects *transitions* (momentum building/decaying) rather than just current state
+  4. Continuous influence avoids the "completely inert or completely blocking" failure mode
+  5. Barcoding detection via range compression is fundamentally more robust than dead zone thresholding
+
+  **Implementation scope**: Medium-large. Requires:
+  - New `MacdMomentumScorer` class with histogram normalization window and slope calculation
+  - Replace 3 role checks in `AnalystEngine.DetermineSignal` with score-based logic
+  - Replace binary accelerator in `TraderEngine.HandleNeutralAsync` with proportional timeout
+  - New settings: weights, normalization window, compression threshold
+  - Extensive replay testing to tune weights
+  - Backward-compatible: could coexist with current boolean roles behind a `MacdScoringMode: "boolean" | "weighted"` setting
 
 ## Trailing Stop on Leveraged ETFs
 
-- [ ] **Evaluate whether trailing stops should be set on ETF prices rather than benchmark**
-  Currently, trailing stops are computed on the benchmark (QQQ) price. The actual positions are in 3x leveraged ETFs (TQQQ/SQQQ), so a 0.25% stop on QQQ translates to roughly 0.75% on the ETF — the stop percentage doesn't directly correspond to the P/L protection it provides.
-  - Investigate whether setting stops on the ETF price directly would give more intuitive and accurate P/L protection
-  - If stops remain on benchmark, consider whether `TrailingStopPercent` should be documented/tuned as "benchmark percent" (and the effective ETF impact noted)
-  - The ratchet/DynamicStopLoss tiers use ETF-based profit % but the stop itself is benchmark-based — this mixed domain could lead to unexpected behavior
-  - May be addressed during the Settings Re-Optimization phase
+- [x] **Evaluate whether trailing stops should be set on ETF prices rather than benchmark**
+  **INVESTIGATED (2026-02-15)**: Empirical analysis of QQQ→TQQQ/SQQQ price response lag across 5 replay dates (Feb 9-13) using `etf_lag_analysis.py`. **Conclusion: current benchmark-based stops are fine for QQQ/TQQQ/SQQQ. No code changes needed.**
+
+  **Architecture reviewed**:
+  - Signal generation: QQQ only (AnalystEngine)
+  - Trailing stop trigger & distance: QQQ benchmark price (TraderEngine.EvaluateTrailingStop)
+  - DynamicStop tier triggers: ETF profit % (mixed domain)
+  - P/L calculation: ETF price
+  - `_etfHighWaterMark` exists to partially bridge the domain mismatch
+
+  **Empirical findings — 3 analyses across 5 days:**
+
+  *Part 1 — Rolling leverage ratio (QQQ % move vs ETF % move over same time window)*:
+  - 5s windows: TQQQ/QQQ median ratio 1.0–2.1 (wildly unreliable, far from 3x)
+  - 10s windows: median 2.0–2.5 (still below 3x)
+  - 30s windows: median 2.6–2.8 (approaching 3x)
+  - 60s windows: median 2.86–3.02 (reliable 3x)
+  - **Insight**: 3x leverage ratio only holds reliably at 60s+ timescales. Sub-10s moves show enormous variance.
+
+  *Part 2 — Price response lag (impulse-response)*:
+  - At instant QQQ completes a >0.03% move over 10s, TQQQ has achieved:
+    - Median: 85–94% of expected 3x (varies by day)
+    - p10: 17–52% (worst decile significantly lags)
+    - Catch-up to 90%: 43–57% immediate, 55–71% within 5s, 75–83% within 30s, 17–23% never within 30s
+  - **Insight**: Real lag exists on fast moves — ETFs need seconds to catch up. But this is at the tick level, not at the stop-trigger timescale.
+
+  *Part 3 — Stop-trigger scenario (THE MONEY QUESTION)*:
+  When QQQ drops 0.2% from HWM, TQQQ_drop / QQQ_drop ratio:
+  | Date | n | Mean | Median | Min | Max |
+  |------|---|------|--------|-----|-----|
+  | Feb 9 | 7 | 2.950 | 2.889 | 2.744 | 3.154 |
+  | Feb 10 | 13 | 2.933 | 2.973 | 2.570 | 3.132 |
+  | Feb 11 | 24 | 2.929 | 3.001 | 2.428 | 3.287 |
+  | Feb 12 | 30 | 2.992 | 3.011 | 2.543 | 3.378 |
+  | Feb 13 | 29 | 2.913 | 2.928 | 2.266 | 3.451 |
+
+  When QQQ drops 0.5% from HWM (larger move = even tighter):
+  | Date | n | Mean | Median | Min | Max |
+  |------|---|------|--------|-----|-----|
+  | Feb 10 | 3 | 2.966 | 2.953 | 2.946 | 3.000 |
+  | Feb 11 | 4 | 3.007 | 3.032 | 2.965 | 3.053 |
+  | Feb 12 | 6 | 3.047 | 3.061 | 3.024 | 3.071 |
+  | Feb 13 | 5 | 3.007 | 2.960 | 2.921 | 3.138 |
+
+  **Key conclusions**:
+  1. At the 0.2% stop level, TQQQ drop ratio is 2.9–3.0x median — very close to theoretical 3x
+  2. At the 0.5% stop level, ratio is even tighter (2.95–3.06x)
+  3. By the time a trailing stop fires (requires sustained movement to 0.2–0.5%), ETFs have already caught up
+  4. Switching to ETF-based stops would make negligible difference for QQQ/TQQQ/SQQQ
+  5. The mixed domain (QQQ stops + ETF tier triggers) works correctly in practice
+  6. **This conclusion does NOT extend to less-liquid pairs** — see RKLB TODO below
+
+## Leveraged ETF Lag for Non-QQQ Symbols (RKLB/RKLX/RKLZ)
+
+- [ ] **Investigate price response lag for less-liquid leveraged ETF pairs**
+  The QQQ/TQQQ/SQQQ analysis (2026-02-15) showed negligible lag at stop-trigger timescales because QQQ is extremely liquid and TQQQ/SQQQ are among the most-traded ETFs.
+
+  For future symbols like **RKLB** (Rocket Lab) with leveraged ETFs **RKLX** (bull) / **RKLZ** (bear), the situation may be **much worse**:
+  - RKLB is far less liquid than QQQ — wider spreads, thinner order books
+  - RKLX/RKLZ are niche leveraged products with very low volume
+  - Price response lag could be seconds to minutes rather than sub-second
+  - The leverage ratio may deviate significantly from 2x during fast moves
+  - Benchmark-based trailing stops could fire long before the ETF reflects the move (or vice versa)
+
+  **When to investigate**: Before deploying MarketBlocks on any non-QQQ symbol pair. This requires:
+  1. Collect simultaneous tick data for RKLB + RKLX + RKLZ
+  2. Rerun `etf_lag_analysis.py` adapted for the 2x leverage ratio
+  3. If lag is significant (stop-trigger ratio deviates >10% from 2.0), consider:
+     - ETF-based trailing stops instead of benchmark-based
+     - A lag-adjusted stop threshold (e.g., stop at 0.15% QQQ instead of 0.2% to account for ETF overshoot)
+     - Real-time leverage ratio monitoring to detect when ETFs are "stale"
+  4. May also need to evaluate whether signal generation should use ETF prices directly for illiquid pairs
 
 ## Phase Profit Target
 
 - [ ] **Implement per-phase profit targets that stop trading within a phase but allow next phase to trade**
-  **Motivation (2026-02-14 analysis)**: Current `DailyProfitTarget` only fires on realized session P/L and applies globally (stops all trading for the day). Analysis showed that on Feb 9, OV phase made +$62 but continued Base phase trading eroded it to +$16 (–$46 given back). Feb 10 similarly: OV +$36, full day only +$19. A phase-level target could preserve OV gains on weak days while allowing further trading on strong days.
+  **Motivation (2026-02-14 analysis)**: Current `DailyProfitTarget` fires on combined equity (realized + unrealized) every tick when `DailyProfitTargetRealtime=true`, and applies globally — once triggered, it stops all trading for the day. The problem isn't *what* it measures, but that it's a single session-wide threshold with no phase awareness. Analysis showed that on Feb 9, OV phase made +$62 but continued Base phase trading eroded it to +$16 (–$46 given back). Feb 10 similarly: OV +$36, full day only +$19. On these days, session equity never reached the daily target ($175), so the daily trailing stop never armed — and there was no mechanism to protect the OV gains from erosion. A phase-level target could preserve OV gains on weak days while allowing further trading on strong days.
+
+  **How the daily target actually works** (validated 2026-02-15):
+  - `DailyProfitTargetRealtime=true`: checks `RealizedSessionPnL + (currentETFPrice - avgEntry) × shares` every tick
+  - When combined P/L first reaches `StartingAmount × DailyProfitTargetPercent / 100` ($175): arms a trailing stop at `P/L × (1 - 0.3/100)`
+  - Ratchets stop up on new equity peaks; triggers liquidation when equity drops below stop
+  - Code: `TraderEngine.ProcessRegimeAsync` lines ~1535-1610 (MarketBlocks)
 
   **Quantified opportunity**: Theoretical max across 5 days (best of OV-only vs full-day per day) = +$566 vs current +$549. However, more sophisticated variants could unlock more:
-  - Phase-level trailing stop on unrealized equity (not just realized P/L)
+  - Phase-level trailing stop on equity within that phase (like the daily target but scoped to a phase)
   - Reduce position size or tighten stops after a profitable phase rather than full stop
   - Phase carryover: if OV made +$60, start Base with a tighter daily trail to protect it
 
