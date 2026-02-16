@@ -81,22 +81,66 @@
   - Mitigation: drop to NEUTRAL, attempt exit near center to minimize loss
   - Needs research into what's actually detectable from the data we have before implementation
 
+  **MACD attempt (2026-02-15)**: A boolean MACD momentum layer with three roles (Trend Boost, Exit Accelerator, Entry Gate) was implemented and tested across ~215 configs / ~350+ replay runs. **No MACD configuration matched or exceeded the no-MACD baseline** (+$608.90, 38 trades). The Entry Gate was completely inert at all settings; Trend Boost was harmful (+15 bad trades); Accel-Only at Wait=90s came closest (-$10.63). Root cause: boolean role overrides competing over shared flags cannot provide nuanced momentum assessment. The velocity filter at 0.000015 already prevents barcoding more effectively. Full code and sweep results preserved on branch `feature/macd_addition_and_tests`. See EXPERIMENTS.md "Session: 2026-02-15 — MACD Momentum Layer Evaluation".
+  - Remaining sub-items (NEUTRAL counting, volatility compression, range-bound patterns) are still worth exploring independently of MACD.
+  - A fundamentally different MACD approach (weighted momentum scoring with normalized histogram) could also be revisited — see branch for architectural analysis.
+
 ## Trailing Stop on Leveraged ETFs
 
-- [ ] **Evaluate whether trailing stops should be set on ETF prices rather than benchmark**
-  Currently, trailing stops are computed on the benchmark (QQQ) price. The actual positions are in 3x leveraged ETFs (TQQQ/SQQQ), so a 0.25% stop on QQQ translates to roughly 0.75% on the ETF — the stop percentage doesn't directly correspond to the P/L protection it provides.
-  - Investigate whether setting stops on the ETF price directly would give more intuitive and accurate P/L protection
-  - If stops remain on benchmark, consider whether `TrailingStopPercent` should be documented/tuned as "benchmark percent" (and the effective ETF impact noted)
-  - The ratchet/DynamicStopLoss tiers use ETF-based profit % but the stop itself is benchmark-based — this mixed domain could lead to unexpected behavior
-  - May be addressed during the Settings Re-Optimization phase
+- [x] **Evaluate whether trailing stops should be set on ETF prices rather than benchmark**
+  **INVESTIGATED (2026-02-15)**: Empirical analysis of QQQ→TQQQ/SQQQ price response lag across 5 replay dates (Feb 9-13) using `etf_lag_analysis.py`. **Conclusion: current benchmark-based stops are fine for QQQ/TQQQ/SQQQ. No code changes needed.**
+
+  **Architecture reviewed**:
+  - Signal generation: QQQ only (AnalystEngine)
+  - Trailing stop trigger & distance: QQQ benchmark price (TraderEngine.EvaluateTrailingStop)
+  - DynamicStop tier triggers: ETF profit % (mixed domain)
+  - P/L calculation: ETF price
+  - `_etfHighWaterMark` exists to partially bridge the domain mismatch
+
+  **Empirical findings — 3 analyses across 5 days:**
+
+  *Part 1 — Rolling leverage ratio*: 3x leverage ratio only holds reliably at 60s+ timescales. Sub-10s moves show enormous variance (median 1.0–2.1 at 5s windows vs 2.86–3.02 at 60s).
+
+  *Part 2 — Price response lag (impulse-response)*: At instant QQQ completes a >0.03% move, TQQQ has achieved 85–94% of expected 3x (median). 17–23% of moves never reach 90% within 30s. Real lag exists at tick level.
+
+  *Part 3 — Stop-trigger scenario (THE MONEY QUESTION)*: When QQQ drops 0.2% from HWM, TQQQ_drop/QQQ_drop ratio is 2.9–3.0x median — very close to theoretical 3x. At 0.5%, even tighter (2.95–3.06x). **By the time a trailing stop fires, ETFs have already caught up.**
+
+  **Key conclusions**: Switching to ETF-based stops would make negligible difference for QQQ/TQQQ/SQQQ. The mixed domain architecture works correctly in practice. **This does NOT extend to less-liquid pairs** — see RKLB TODO below.
+
+## Leveraged ETF Lag for Non-QQQ Symbols (RKLB/RKLX/RKLZ)
+
+- [ ] **Investigate price response lag for less-liquid leveraged ETF pairs**
+  The QQQ/TQQQ/SQQQ analysis (2026-02-15) showed negligible lag at stop-trigger timescales because QQQ is extremely liquid and TQQQ/SQQQ are among the most-traded ETFs.
+
+  For future symbols like **RKLB** (Rocket Lab) with leveraged ETFs **RKLX** (bull) / **RKLZ** (bear), the situation may be **much worse**:
+  - RKLB is far less liquid than QQQ — wider spreads, thinner order books
+  - RKLX/RKLZ are niche leveraged products with very low volume
+  - Price response lag could be seconds to minutes rather than sub-second
+  - The leverage ratio may deviate significantly from 2x during fast moves
+  - Benchmark-based trailing stops could fire long before the ETF reflects the move (or vice versa)
+
+  **When to investigate**: Before deploying MarketBlocks on any non-QQQ symbol pair. This requires:
+  1. Collect simultaneous tick data for RKLB + RKLX + RKLZ
+  2. Rerun `etf_lag_analysis.py` adapted for the 2x leverage ratio
+  3. If lag is significant (stop-trigger ratio deviates >10% from 2.0), consider:
+     - ETF-based trailing stops instead of benchmark-based
+     - A lag-adjusted stop threshold
+     - Real-time leverage ratio monitoring to detect when ETFs are "stale"
+  4. May also need to evaluate whether signal generation should use ETF prices directly for illiquid pairs
 
 ## Phase Profit Target
 
 - [ ] **Implement per-phase profit targets that stop trading within a phase but allow next phase to trade**
-  **Motivation (2026-02-14 analysis)**: Current `DailyProfitTarget` only fires on realized session P/L and applies globally (stops all trading for the day). Analysis showed that on Feb 9, OV phase made +$62 but continued Base phase trading eroded it to +$16 (–$46 given back). Feb 10 similarly: OV +$36, full day only +$19. A phase-level target could preserve OV gains on weak days while allowing further trading on strong days.
+  **Motivation (2026-02-14 analysis)**: Current `DailyProfitTarget` fires on combined equity (realized + unrealized) every tick when `DailyProfitTargetRealtime=true`, and applies globally — once triggered, it stops all trading for the day. The problem isn't *what* it measures, but that it's a single session-wide threshold with no phase awareness. Analysis showed that on Feb 9, OV phase made +$62 but continued Base phase trading eroded it to +$16 (–$46 given back). Feb 10 similarly: OV +$36, full day only +$19. On these days, session equity never reached the daily target ($175), so the daily trailing stop never armed — and there was no mechanism to protect the OV gains from erosion. A phase-level target could preserve OV gains on weak days while allowing further trading on strong days.
+
+  **How the daily target actually works** (validated 2026-02-15):
+  - `DailyProfitTargetRealtime=true`: checks `RealizedSessionPnL + (currentETFPrice - avgEntry) × shares` every tick
+  - When combined P/L first reaches `StartingAmount × DailyProfitTargetPercent / 100` ($175): arms a trailing stop at `P/L × (1 - 0.3/100)`
+  - Ratchets stop up on new equity peaks; triggers liquidation when equity drops below stop
+  - Code: `TraderEngine.ProcessRegimeAsync` lines ~1535-1610 (MarketBlocks)
 
   **Quantified opportunity**: Theoretical max across 5 days (best of OV-only vs full-day per day) = +$566 vs current +$549. However, more sophisticated variants could unlock more:
-  - Phase-level trailing stop on unrealized equity (not just realized P/L)
+  - Phase-level trailing stop on equity within that phase (like the daily target but scoped to a phase)
   - Reduce position size or tighten stops after a profitable phase rather than full stop
   - Phase carryover: if OV made +$60, start Base with a tighter daily trail to protect it
 

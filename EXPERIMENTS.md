@@ -1062,3 +1062,132 @@ Only minor finding: Trail=0.1% reduces loss from -$26 to -$10 (those 2 trades). 
 | `target-off-test.ps1` | Feb 11/13 with daily target ON vs OFF |
 | `ph-sweep2.ps1` | 16-config PH settings sweep (isolated 14:00-16:00) |
 | `ph-resume-test.ps1` | PH resume experiment (morning target + PH restart) |
+
+---
+
+## Session: 2026-02-15 — ETF Price Response Lag Investigation
+
+**Context**: Investigated the TODO item "Evaluate whether trailing stops should be set on ETF prices rather than benchmark." The concern was that leveraged ETFs (TQQQ/SQQQ) might lag QQQ directional moves, causing benchmark-based trailing stops to fire at times when ETF P/L doesn't match expectations.
+
+**Important clarification**: This is NOT tick-timing alignment — it's **price response lag**. When QQQ makes a directional move, how long until TQQQ/SQQQ fully reflect the expected 3x response? This is impulse-response analysis.
+
+### Architecture Review
+
+Before measuring, reviewed the code to understand the domain boundaries:
+- **Signal generation**: QQQ only (`AnalystEngine.ProcessTick` at L349)
+- **Trailing stop trigger & distance**: QQQ benchmark (`TraderEngine.EvaluateTrailingStop` at L1694)
+- **DynamicStop tier triggers**: ETF profit % (mixed domain)
+- **P/L calculation**: ETF price
+- **`_etfHighWaterMark`**: Exists at L1753 to partially bridge the domain mismatch
+
+### Analysis Tool: `etf_lag_analysis.py`
+
+Created Python script (`qqqBot/etf_lag_analysis.py`) with three analyses run across all 5 replay dates (Feb 9-13):
+
+**Part 1 — Rolling Leverage Ratio** (QQQ % move vs ETF % move over same time window):
+Sample ~500 QQQ tick pairs per window size, compute ETF/QQQ return ratio.
+
+| Window | TQQQ/QQQ Median (range across days) | MAE from 3.0 |
+|--------|--------------------------------------|--------------|
+| 5s | 1.0–2.1 | 2.4–2.6 |
+| 10s | 2.0–2.5 | 2.1–2.3 |
+| 30s | 2.6–2.8 | 1.6–1.9 |
+| 60s | 2.86–3.02 | 1.4–1.6 |
+
+**Insight**: 3x leverage only holds reliably at 60s+. Sub-10s moves have enormous variance.
+
+**Part 2 — Price Response Lag** (impulse-response):
+Detect QQQ moves >0.03% over 10s, then measure how much TQQQ has achieved at move completion:
+
+| Date | Moves | TQQQ Achieved% (median) | p10 | p90 | Immediate 90%+ | Within 5s | Never/30s |
+|------|-------|-------------------------|-----|-----|-----------------|-----------|-----------|
+| Feb 9 | 81 | 94.4% | 51.5% | 119.3% | 43/81 | 57/81 | 17/81 |
+| Feb 10 | 111 | 90.3% | 38.5% | 123.4% | 57/111 | 84/111 | 19/111 |
+| Feb 11 | 156 | 85.1% | 20.0% | 129.4% | 72/156 | 100/156 | 34/156 |
+| Feb 12 | 201 | 88.9% | 30.8% | 131.8% | 95/201 | 143/201 | 33/201 |
+| Feb 13 | 269 | 86.5% | 17.0% | 127.8% | 121/269 | 176/269 | 63/269 |
+
+**Insight**: Real lag exists on fast moves — ETFs need seconds to catch up. ~15-22% of moves never achieve 90% of expected 3x within 30s at the tick level.
+
+**Part 3 — Stop-Trigger Scenario** (THE KEY FINDING):
+When QQQ drops 0.2% from HWM, what is TQQQ_drop / QQQ_drop ratio?
+
+| Date | n(0.2%) | Mean | Median | Min | Max | n(0.5%) | Mean | Median |
+|------|---------|------|--------|-----|-----|---------|------|--------|
+| Feb 9 | 7 | 2.950 | 2.889 | 2.744 | 3.154 | 0 | — | — |
+| Feb 10 | 13 | 2.933 | 2.973 | 2.570 | 3.132 | 3 | 2.966 | 2.953 |
+| Feb 11 | 24 | 2.929 | 3.001 | 2.428 | 3.287 | 4 | 3.007 | 3.032 |
+| Feb 12 | 30 | 2.992 | 3.011 | 2.543 | 3.378 | 6 | 3.047 | 3.061 |
+| Feb 13 | 29 | 2.913 | 2.928 | 2.266 | 3.451 | 5 | 3.007 | 2.960 |
+
+### Conclusions
+
+1. **At the 0.2% trailing stop level**: TQQQ/QQQ drop ratio is 2.9–3.0 median — very close to ideal 3.0
+2. **At the 0.5% level**: Even tighter (2.95–3.06)
+3. **By the time a stop fires (sustained 0.2-0.5% drop), ETFs have already caught up** — the tick-level lag is irrelevant
+4. **Switching to ETF-based stops would make negligible difference for QQQ/TQQQ/SQQQ**
+5. The mixed domain architecture (QQQ stops + ETF tier triggers) works correctly in practice
+6. **This does NOT extend to less-liquid pairs** — added separate TODO for RKLB/RKLX/RKLZ
+
+### Decision: No Code Changes
+
+The current benchmark-based trailing stop approach is validated for QQQ/TQQQ/SQQQ. The TODO is marked complete. Trailing stop TODO updated with full empirical data.
+
+### Files Created/Modified
+| File | Action |
+|------|--------|
+| `qqqBot/etf_lag_analysis.py` | Created — Python analysis script |
+| `TODO.md` | Trailing stop TODO marked complete with findings; RKLB TODO added |
+| `EXPERIMENTS.md` | This session entry |
+
+---
+
+## Session: 2026-02-15 — MACD Momentum Layer Evaluation (Failed)
+
+**Context**: Barcoding remains the bot's main weakness (Feb 13: 35 trades, -$628). Current defenses (velocity gate, chop bands, entry confirmation) are indirect. Investigated MACD as a complementary momentum indicator for barcoding detection and trend confirmation.
+
+**Full implementation and test results**: See branch `feature/macd_addition_and_tests` (both qqqBot and MarketBlocks repos) for complete MACD code, sweep scripts, and detailed CSV results.
+
+### Implementation Summary
+
+MACD fed raw benchmark price (not SMA) with three independently-toggleable roles:
+1. **Trend Confidence Boost** — MACD histogram confirms direction → rescue entries that fail velocity gate
+2. **Exit Accelerator** — histogram flips against position → shorten neutral timeout for faster exits
+3. **Entry Gate** — histogram near zero (flatline) → block new entries (direct barcoding defense)
+
+Disabled by default (`Macd.Enabled = false`). Per-phase overridable. Alternate config `appsettings.macd.json`. CLI flag `--macd`.
+
+Changes spanned both repos: `IncrementalEma.cs`, `MacdCalculator.cs`, `MacdConfig` class, `AnalystEngine`, `TraderEngine`, `TimeRuleApplier`, plus qqqBot wiring (`TradingSettings`, `ProgramRefactored`, `CommandLineOverrides`). All tests passed (554 MarketBlocks + 63 qqqBot). Zero behavioral change when disabled.
+
+### Sweep Results Summary (~215 configs, ~350+ replay runs)
+
+**Baseline**: No-MACD = **+$608.90** (38 trades, 5 days Feb 9-13). This is the target.
+
+| Sweep Group | Configs | Result |
+|-------------|---------|--------|
+| Role isolation (7) | Full (5d) | Gate completely inert ($0 delta). Boost harmful (-$161, +15 trades). Accel mildly harmful (-$43). |
+| Dead zone — Gate-ONLY (6) | Base (5d) | Zero trades blocked at any dead zone level |
+| Dead zone — Boost+Gate (6) | Base (5d) | Best DZ=0.12 still -$66 vs no-MACD |
+| Boost threshold (7) | Full (5d) | Best at 0.12, still -$100 vs no-MACD |
+| Accelerator wait (8) | Full (5d) | Best at 90s = -$10.63 vs no-MACD (closest approach) |
+| Gate-handoff Vel×DZ (42) | Base (2d) | Gate inert at all velocity × dead zone combos |
+| Period grid F×S×Sig (52) | Full (2d) | ALL 52 identical to no-MACD |
+| Threshold combo DZ×BT×AW (48) | Full (2d) | ALL 48 identical to no-MACD |
+| Rebase Vel/TW/SMA + MACD (27) | Base (2d) | No-MACD #1; all MACD configs worse |
+| Phase-tune OV (12) | OV (2d) | ALL 12 identical to no-MACD |
+
+### Root Cause Analysis
+
+The three boolean roles compete over the same `trendRescue`/`isStalled` flags:
+- **Gate** checks absolute histogram value, but histogram scale varies wildly by market regime — the values at entry decision time never fall within blocking range
+- **Boost** rescues entries that velocity correctly blocked, adding bad trades
+- **Accel** shortens timeouts marginally but always generates 2 extra trades vs baseline
+- The velocity filter at 0.000015 is already a more effective barcoding prevention mechanism than any MACD configuration
+
+### Conclusion
+
+**MACD disabled. No configuration tested matches the no-MACD baseline.** This specific boolean-role implementation is architecturally flawed — binary overrides competing over the same flags cannot provide the nuanced momentum assessment needed.
+
+**This does NOT rule out MACD entirely.** A fundamentally different approach (e.g., weighted momentum scoring with normalized histogram, histogram slope, and range compression for barcoding detection) could potentially succeed. See the `feature/macd_addition_and_tests` branch for the full implementation, `macd-sweep.ps1` harness, and detailed CSV results that informed this conclusion.
+
+**No settings changes applied.**
