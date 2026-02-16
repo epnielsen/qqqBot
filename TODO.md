@@ -131,6 +131,41 @@
 ## Phase Profit Target
 
 - [ ] **Implement per-phase profit targets that stop trading within a phase but allow next phase to trade**
+
+## PH Resume Mode
+
+- [ ] **Implement PH Resume Mode in TraderEngine**
+  When the daily profit target fires before Power Hour, go flat and stop trading — then at 14:00 ET, resume trading with Base settings (no daily target) for the PH session. Currently this has only been tested via two separate replay runs stitched together by a PowerShell script (`ph-resume-test.ps1`, `opex-ph-test.ps1`). **This is NOT yet implemented in the bot.**
+
+  **Evidence (5-day test, Feb 9-13)**:
+  - 3 of 5 days the target fired → PH resume tested
+  - Net improvement: +$112.52 (+18.5%), from $608.90 → $721.42
+  - Best day: Feb 13 +$117 (17 PH trades with Base settings)
+  - Worst day: Feb 12 -$4.50 (11 PH trades, small acceptable drag)
+  - See EXPERIMENTS.md "Session: 2026-02-14 — Power Hour Resume Experiment"
+
+  **OpEx Friday investigation (2026-02-16)**:
+  - Hypothesis that weekly OpEx pinning drives PH trends was **weakened** — Feb 6 (Friday) had 0 PH trades while Feb 13 (Friday) had 17
+  - Monthly OpEx proximity remains plausible — Feb 20 (actual 3rd-Friday OpEx) data needed
+  - See EXPERIMENTS.md "Session: 2026-02-16 — OpEx Friday PH Investigation"
+
+  **Implementation requirements**:
+  - New state in TraderEngine: `PH_PAUSED` (between daily target fire and 14:00 ET)
+  - At 14:00 ET: reset daily target state, switch to Base settings, resume trading
+  - Config: `ResumeInPowerHour: true/false` (default false)
+  - Must integrate with existing `TimeRuleApplier` phase switching
+  - Must integrate with existing `DailyProfitTarget` trailing stop mechanism
+  - Optional: separate PH-specific profit target for the resumed session
+  - Add to `TradingSettings.cs` in BOTH repos, `ProgramRefactored.cs` (`BuildTradingSettings` + `ParseOverrides`), `TimeRuleApplier.cs`
+
+  **Data collection priority**:
+  - [ ] Collect Feb 20 data (actual monthly OpEx Friday) — critical test date for OpEx hypothesis
+  - [ ] Collect additional Friday data over coming weeks to build larger PH sample
+
+  **Related**: Current PH TimeRule settings (OV-lite) are confirmed inert — 0 trades on both tested Fridays. Consider switching PH TimeRule to Base settings regardless of PH Resume implementation.
+
+- [ ] **Switch PH TimeRule overrides from OV-lite to Base settings**
+  Confirmed in both 2026-02-14 PH sweep and 2026-02-16 OpEx investigation: current PH settings (SMA=120, Trail=0.15%, TrendWait=60, ChopThreshold=0.0015) produce exactly 0 trades in isolated PH segments, even when the market is clearly trending. Base settings produce 17 trades and +$117 on the same data (Feb 13). This is a settings change in `appsettings.json` only — no code needed. Should be validated with a full 5-day replay before applying.
   **Motivation (2026-02-14 analysis)**: Current `DailyProfitTarget` fires on combined equity (realized + unrealized) every tick when `DailyProfitTargetRealtime=true`, and applies globally — once triggered, it stops all trading for the day. The problem isn't *what* it measures, but that it's a single session-wide threshold with no phase awareness. Analysis showed that on Feb 9, OV phase made +$62 but continued Base phase trading eroded it to +$16 (–$46 given back). Feb 10 similarly: OV +$36, full day only +$19. On these days, session equity never reached the daily target ($175), so the daily trailing stop never armed — and there was no mechanism to protect the OV gains from erosion. A phase-level target could preserve OV gains on weak days while allowing further trading on strong days.
 
   **How the daily target actually works** (validated 2026-02-15):
