@@ -1191,3 +1191,109 @@ The three boolean roles compete over the same `trendRescue`/`isStalled` flags:
 **This does NOT rule out MACD entirely.** A fundamentally different approach (e.g., weighted momentum scoring with normalized histogram, histogram slope, and range compression for barcoding detection) could potentially succeed. See the `feature/macd_addition_and_tests` branch for the full implementation, `macd-sweep.ps1` harness, and detailed CSV results that informed this conclusion.
 
 **No settings changes applied.**
+
+---
+
+## Session: 2026-02-16 — OpEx Friday PH Investigation
+
+**Context**: The PH Resume experiment (2026-02-14) showed Feb 13 (Friday) had outstanding PH performance (+$117 from 17 trades with Base settings). Hypothesis: weekly OpEx pinning on Fridays creates exploitable PH trends due to options gamma exposure driving directional moves into close.
+
+**Method**: Compare PH behavior on two Fridays with different data resolutions:
+- **Feb 6** (Friday): Low-resolution 60s bar data (390 bars), uses Brownian bridge interpolation (~1 tick/sec, seed = `_replayDate.DayNumber ^ StableHash(symbol)`)
+- **Feb 13** (Friday): High-resolution recorded tick data (11,014 ticks), replays raw
+
+Three tests per date:
+- **(A)** Isolated PH (14:00–16:00) with current PH settings (OV-lite: SMA=120, Trail=0.15%, TrendWait=60, ChopThreshold=0.0015)
+- **(B)** Isolated PH (14:00–16:00) with Base settings (SMA=180, Trail=0.2%, TrendWait=180, TrendWindow=5400)
+- **(C)** Full PH-resume strategy: morning w/target → if fired, resume PH w/Base settings, no target
+
+Plus a determinism check: re-run Feb 6 PH Base to confirm Brownian bridge produces identical results.
+
+**Branch**: `experiment/opex-friday-ph`
+**Script**: `opex-ph-test.ps1`
+
+### Results
+
+**Test A — Isolated PH with CURRENT PH settings (OV-lite):**
+
+| Date | Resolution | P/L | Trades | Peak | Trough |
+|------|-----------|------|--------|------|--------|
+| Feb 6 | LOW-RES | $0.00 | 0 | N/A | N/A |
+| Feb 13 | HIGH-RES | $0.00 | 0 | N/A | N/A |
+
+**Test B — Isolated PH with BASE settings:**
+
+| Date | Resolution | P/L | Trades | Peak | Trough |
+|------|-----------|------|--------|------|--------|
+| Feb 6 | LOW-RES | $0.00 | 0 | N/A | N/A |
+| Feb 13 | HIGH-RES | **+$117.02** | 17 | N/A | — |
+
+**Test C — PH-Resume strategy (morning w/target → resume PH w/Base, no target):**
+
+| Date | Resolution | Full-Day P/L | FD Trades | Target? | PH P/L | PH Trades | Combined | Delta |
+|------|-----------|-------------|-----------|---------|--------|-----------|----------|-------|
+| Feb 6 | LOW-RES | -$46.24 | 4 | no | — | — | -$46.24 | $0 |
+| Feb 13 | HIGH-RES | +$179.18 | 6 | YES (09:45) | **+$117.02** | 17 | **$296.20** | +$117.02 |
+
+**Determinism check**: PASSED — Feb 6 PH Base returned $0.00 on both runs (trivially deterministic since 0 trades).
+
+### PH Price Action Comparison
+
+| | Feb 6 (LOW-RES) | Feb 13 (HIGH-RES) |
+|---|---|---|
+| Data points in PH | 120 bars (→ ~7,200 bridge ticks) | 3,642 raw ticks |
+| PH open price | $607.55 | $605.21 |
+| PH close price | $609.59 | $601.86 |
+| PH high | $611.30 | $605.80 |
+| PH low | $607.55 | $600.14 |
+| Net PH move | +$2.04 (+0.34%) | -$3.35 (-0.55%) |
+| PH range | $3.75 (0.617%) | $5.66 (0.943%) |
+| Price character | Meandering up, no clear trend | Sustained downtrend |
+| Regime detected | NEUTRAL throughout | Trending (17 trades) |
+
+### Analysis
+
+1. **Hypothesis WEAKENED**: Feb 6 (Friday, weekly OpEx) showed zero PH trending behavior. The market was choppy/directionless during PH with no trades under any settings configuration. Weekly OpEx alone does NOT guarantee PH trends.
+
+2. **Current PH settings (OV-lite) are inert**: Zero trades on BOTH Fridays, including Feb 13 which clearly trended. The ChopThreshold=0.0015 and/or SMA=120 combination blocks all entries during PH. This confirms the Feb 14 finding that PH settings should be Base, not OV-lite.
+
+3. **Feb 6 vs Feb 13 difference is market-driven, not data-driven**:
+   - Feb 6 PH had only 0.617% range with no directional bias — genuinely choppy
+   - Feb 13 PH had 0.943% range with a sustained $5.66 downtrend — clearly trending
+   - The Brownian bridge processed the full 120 PH bars correctly (verified in logs: data ran 14:00–15:59 ET)
+   - Feb 6 was a losing day overall (-$46.24, 4 trades) — weak market conditions
+
+4. **Brownian bridge assessment**: Adequate for this test. Deterministic, processed all PH data, and the 0-trade result aligns with the genuinely choppy price action — not a bridge artifact. However, the determinism check was trivial (both runs had 0 trades). A proper bridge stress test would require a date where bridge data actually produces trades.
+
+5. **Calendar context**:
+   - Feb 6: Regular Friday (2 weeks before monthly OpEx)
+   - Feb 13: Friday before monthly OpEx week (Feb 20 is 3rd-Friday OpEx)
+   - Both have weekly options expiration, but only Feb 13 showed PH trends
+   - Feb 13's PH behavior may relate to monthly OpEx proximity rather than weekly
+
+6. **Replay log timezone note**: The replay logger timestamps show a ~1 hour offset from the bracket display times (e.g., log says `14:00:02`, bracket shows `[15:00:00]`). This appears to be an EST vs EDT conversion issue in the logging pipeline. P/L and trade counts are unaffected; the target fire time displays as `08:45:56` in the log but was actually ~09:45 ET (during OV phase).
+
+### Conclusions
+
+- **Weekly OpEx pinning is NOT sufficient** to explain Feb 13's PH trends (Feb 6 is a counter-example)
+- **Monthly OpEx proximity** remains a plausible factor — need Feb 20 (actual OpEx Friday) data to test
+- **Need more Friday data points**:, especially Feb 20 (actual monthly OpEx) and future Fridays
+- **Current PH settings confirmed dead** — OV-lite produces 0 trades even when the market trends
+- **PH Resume strategy confirmed** — still +$117 on Feb 13, $0 impact on Feb 6 (acceptable)
+- **No settings changes applied** — research only
+
+### Next Steps
+
+1. **Collect Feb 20 data** (actual 3rd-Friday monthly OpEx) — this is the critical test date
+2. **Collect more Friday data** over coming weeks to build a larger sample
+3. **Revisit PH settings**: Consider permanently switching PH TimeRule to Base settings (OV-lite is provably inert)
+4. **Implement PH Resume Mode** in TraderEngine (currently only testable via two-replay-run script)
+5. If Feb 20 shows PH trending: strengthen monthly-OpEx hypothesis; if not: likely just market conditions
+
+**Files created/modified**:
+
+| File | Change |
+|------|--------|
+| `opex-ph-test.ps1` | New script — OpEx Friday PH comparison (Feb 6 vs Feb 13) |
+| `EXPERIMENTS.md` | This session entry |
+| `TODO.md` | Added PH Resume Mode implementation TODO |
