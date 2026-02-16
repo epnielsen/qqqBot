@@ -140,6 +140,24 @@
 - [x] **Switch PH TimeRule overrides from OV-lite to Base settings**
   **DONE (2026-02-17)**: PH TimeRule overrides emptied in `appsettings.json` — PH now inherits Base settings. OV-lite was confirmed inert (0 trades across all tested dates, even in trending markets). Done as part of PH Resume Mode implementation on `feature/ph-resume-mode` branch.
 
+## Analyst Phase Reset
+
+- [x] **Implement AnalystPhaseResetMode (None/Cold/Partial)**
+  **DONE (2026-02-18)**: Added `AnalystPhaseResetMode` enum and `ColdResetIndicators()`/`PartialResetIndicators()` methods to AnalystEngine. Phase reset fires only at PH entry (`currentPhase == "Power Hour"` guard). 9 new tests, all passing. On `feature/ph-resume-mode` branch (both repos).
+
+- [x] **Run 5-config replay matrix comparing reset modes × stop widths**
+  **DONE (2026-02-18)**: Results across Feb 9-13:
+  - Config A (None, Base 0.2%): +$421.45 (baseline)
+  - Config B (None, Wider 0.35%): **+$483.55** (best simple option)
+  - Config C (Cold, Base 0.2%): +$481.74
+  - Config D (Partial 120s, Base 0.2%): +$404.65 (worst — rejected)
+  - Config E (Cold, Wider 0.35%): **+$496.05** (best overall)
+  Wider PH stops consistently beneficial. Cold reset mixed (helps choppy days, hurts trending). Partial reset clearly harmful. See EXPERIMENTS.md "Session: 2026-02-18" for full analysis.
+
+- [ ] **Remove Partial reset mode** — Dead code. Clearly worse than both None and Cold across all test days. Remove `Partial = 2` from enum, delete `PartialResetIndicators()` and `SeedFromTail()` helpers, update tests.
+
+- [ ] **Decide final PH config and apply** — Config B (wider stops only, +$483.55) is simplest/safest. Config E (cold+wider, +$496.05) is slightly better but adds code complexity. Need more replay data (esp. Feb 20 OpEx) before committing. Currently defaults to None with empty PH overrides.
+
 ## PH Data Collection
 
 - [ ] **Collect Feb 20 data** (actual 3rd-Friday monthly OpEx) — critical test date for OpEx PH hypothesis

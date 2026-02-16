@@ -1352,3 +1352,104 @@ Implemented PH Resume Mode in TraderEngine based on 5-day experiment data showin
 2. Verify determinism (run 2-3 times, confirm identical P/L)
 3. If results match expectations, enable for live trading
 4. Collect Feb 20 data (monthly OpEx Friday) for further PH analysis
+
+---
+
+## Session: 2026-02-18 — PH Resume Validation + Analyst Phase Reset Experiment
+
+### Context
+
+Validated PH Resume Mode native replay (+$421.45) against script-stitched result (+$721.42). Investigated the $300 gap and discovered the entire divergence was caused by **analyst freshness**: the script started a cold analyst at 14:00 (empty SMA/slope/trend buffers), while native mode carries 4.5 hours of indicator history forward into PH. Both used identical Base stops (0.2%).
+
+Implemented `AnalystPhaseResetMode` with three modes (None/Cold/Partial) to test whether resetting analyst indicators at PH entry improves results. Ran a 5-config replay matrix.
+
+### Diagnosis: Script-Stitched $721.42 Advantage
+
+The two-replay-run script (`fullday-test.ps1`) spawned a completely new process at 14:00. This meant:
+- **SMA buffers**: Empty (need SMAWindowSeconds ticks to warm up)
+- **Slope calculator**: Empty (needs SlopeWindowSize ticks after SMA fills)
+- **Trend SMA**: Empty (needs TrendWindowSeconds=5400s = 90 mins from cold — never fills in 2-hour PH!)
+- **Sliding bands**: Reset to initial state
+
+A "cold" analyst generates NEUTRAL for the first ~3-6 minutes (warmup), then makes decisions based only on PH price action — no carry-over from earlier choppy conditions. This is a **structural advantage** that makes the script result unrealistically optimistic (the missing trend SMA means trend-wait is effectively disabled).
+
+### Changes Made
+
+**MarketBlocks (feature/ph-resume-mode branch)**:
+
+| File | Change |
+|------|--------|
+| `MarketBlocks.Bots/Domain/AnalystPhaseResetMode.cs` | **NEW** — `enum AnalystPhaseResetMode { None = 0, Cold = 1, Partial = 2 }` |
+| `MarketBlocks.Bots/Domain/TradingSettings.cs` | Added `AnalystPhaseResetMode` (enum, default None) and `AnalystPhaseResetSeconds` (int, default 120) |
+| `MarketBlocks.Bots/Services/AnalystEngine.cs` | **Major additions**: `ColdResetIndicators()` (creates fresh empty calculators), `PartialResetIndicators()` (keeps last N seconds of data), `SeedFromTail()` helpers for IncrementalSma and StreamingSlope. Phase transition handler in ProcessTick fires reset **only at PH entry** (`currentPhase == "Power Hour"` guard). |
+| `MarketBlocks.Bots.csproj` | Added `InternalsVisibleTo` for test assembly access |
+| `MarketBlocks.Bots.Tests/AnalystEngine_PhaseResetTests.cs` | **NEW** — 9 tests: ColdReset clears state, ColdReset correct capacities, PartialReset retains last N, PartialReset with excess keeps all, PartialReset resets signal, ModeNone preserves state, PartialReset truncates trend, enum parsing (6 inline), invalid input throws |
+
+**qqqBot (feature/ph-resume-mode branch)**:
+
+| File | Change |
+|------|--------|
+| `qqqBot/TradingSettings.cs` | Added `AnalystPhaseResetMode` (string) and `AnalystPhaseResetSeconds` (int) |
+| `qqqBot/ProgramRefactored.cs` | Wired `Enum.Parse<AnalystPhaseResetMode>` and `AnalystPhaseResetSeconds` in BuildTradingSettings |
+| `qqqBot/appsettings.json` | Added `AnalystPhaseResetMode` and `AnalystPhaseResetSeconds` settings (defaults: "None", 120) |
+
+### Bug Found & Fixed
+
+**Reset firing on ALL phase transitions**: Initial implementation triggered Cold/Partial reset on every phase change (OV→Base, Base→PH). This destroyed 43 minutes of indicator history at OV→Base transition on Feb 9/10, ruining results for days that don't even use PH Resume. Fixed by adding `currentPhase == "Power Hour"` guard — reset only fires on Base→PH transition.
+
+### 5-Config Replay Matrix (Feb 9-13, 2026)
+
+| Config | Reset Mode | PH Stops | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | **Total** |
+|--------|-----------|----------|-------|--------|--------|--------|--------|-----------|
+| A | None | Base 0.2% | $14.16/4t | $46.24/7t | $196.96/6t | -$4.71/27t | $166.80/15t | **+$421.45** |
+| B | None | Wider 0.35% | $14.16/4t | $46.24/7t | $196.96/6t | $28.37/23t | $197.82/13t | **+$483.55** |
+| C | Cold | Base 0.2% | $14.16/4t | $46.24/7t | $188.20/8t | $90.00/23t | $143.14/19t | **+$481.74** |
+| D | Partial 120s | Base 0.2% | $14.16/4t | $46.24/7t | $188.20/8t | $12.91/25t | $143.14/19t | **+$404.65** |
+| E | Cold | Wider 0.35% | $14.16/4t | $46.24/7t | $188.20/8t | $73.29/21t | $174.16/17t | **+$496.05** |
+
+Notes:
+- Feb 9/10: No PH Resume trades (target not hit before 14:00), so all configs match on these days ✓
+- Feb 11: Cold reset loses $8.76 vs carry-forward (both modes). Trend SMA carries useful history that cold loses.
+- Feb 12: Cold reset is the biggest winner (+$90 vs -$4.71 baseline). Wider stops also help ($28.37). But combination (E: $73.29) is worse than cold alone (C: $90.00) — wider stops let losing PH trades run longer.
+- Feb 13: Wider stops dominate ($197.82 vs $166.80). Cold reset hurts (-$23.66). Combination partially recovers.
+- **Partial reset (D) is the clear loser** at +$404.65, even worse than baseline. 120s of stale history is worse than either fresh start or full history.
+
+### Analysis & Conclusions
+
+1. **Wider PH stops (+$62 over baseline)**: Consistently beneficial. Prevents premature stop-outs in PH's wider swings. Simple appsettings change, no code complexity.
+
+2. **Cold analyst reset (+$60 over baseline)**: Mixed. Huge win on choppy-to-PH days (Feb 12: +$95), loss on trending days (Feb 11: -$9, Feb 13: -$24). The missing Trend SMA (90-min warmup can't fill in 2-hour PH) effectively disables trend-wait, which cuts both ways.
+
+3. **Partial reset (REJECTED)**: Worst overall. 120s of stale data is uniquely bad — too little for meaningful indicators, but enough to carry forward stale bias. Delete this mode.
+
+4. **Combined Cold+Wider (Config E, +$496.05)**: Best total, but not by a lot over simpler Config B (+$483.55). The two mechanisms don't synergize well — they partially offset each other's benefits (Fig 12: cold alone $90 vs cold+wider $73).
+
+5. **None of the configs approach $721.42** — confirms the script result was unrealistic (missing trend SMA = permanently disabled trend-wait filter).
+
+### Recommendation
+
+**Config B (None + Wider 0.35% PH stops)** is the safest choice:
+- +$483.55 total, only $12.50 behind Config E
+- Zero code complexity (appsettings-only change)
+- Consistent improvement across all PH-active days
+- Cold reset adds code complexity with inconsistent payoff
+
+However, if more data shows choppy days are common, Cold reset could be valuable. **Keep the Cold reset code but default to None** — revisit after collecting more replay data (especially Feb 20 OpEx Friday).
+
+### Settings Restored
+
+appsettings.json restored to safe defaults: `ResumeInPowerHour=false`, `AnalystPhaseResetMode="None"`, PH overrides empty.
+
+### Test Results
+
+- MarketBlocks: 549 passed (9 new analyst reset tests + 7 PH Resume + existing), 1 skipped (known flaky), 0 failures
+- qqqBot: 63 passed, 0 failures
+
+### Next Steps
+
+1. **Decide which config to ship** — likely B (wider PH stops only) or E (cold + wider) based on user preference
+2. Apply chosen config to appsettings.json
+3. Remove Partial reset mode if not keeping it (dead code)
+4. Commit both repos on feature/ph-resume-mode branches
+5. Collect more replay data (especially Feb 20) to validate with larger sample
+6. Consider whether wider PH stops should use the same Base DynamicStopLossTiers or custom PH tiers

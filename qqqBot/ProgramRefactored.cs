@@ -616,7 +616,12 @@ public static class ProgramRefactored
             DailyLossLimitPercent = configuration.GetValue("TradingBot:DailyLossLimitPercent", 0m),
             
             // PH Resume Mode
-            ResumeInPowerHour = configuration.GetValue("TradingBot:ResumeInPowerHour", false)
+            ResumeInPowerHour = configuration.GetValue("TradingBot:ResumeInPowerHour", false),
+            
+            // Analyst Phase Reset
+            AnalystPhaseResetMode = Enum.Parse<MarketBlocks.Bots.Domain.AnalystPhaseResetMode>(
+                configuration.GetValue("TradingBot:AnalystPhaseResetMode", "None")!, ignoreCase: true),
+            AnalystPhaseResetSeconds = configuration.GetValue("TradingBot:AnalystPhaseResetSeconds", 120)
         };
         
         // Parse DynamicStopLoss (nested object with tiers)
