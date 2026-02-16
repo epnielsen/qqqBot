@@ -134,45 +134,49 @@
 
 ## PH Resume Mode
 
-- [ ] **Implement PH Resume Mode in TraderEngine**
-  When the daily profit target fires before Power Hour, go flat and stop trading — then at 14:00 ET, resume trading with Base settings (no daily target) for the PH session. Currently this has only been tested via two separate replay runs stitched together by a PowerShell script (`ph-resume-test.ps1`, `opex-ph-test.ps1`). **This is NOT yet implemented in the bot.**
+- [x] **Implement PH Resume Mode in TraderEngine**
+  **DONE (2026-02-17)**: Implemented on `feature/ph-resume-mode` branches (both repos). `HaltReason` enum replaces volatile `_dailyTargetReached` bool (fixes crash-safety gap). `SetHaltReason()` centralizes halt transitions and arms PH Resume when profit target fires before 14:00 ET. `CheckPhResume()` clears halt on PH phase transition, resets daily target state, and disables `DailyProfitTargetPercent` for the PH session. 7 new unit tests. Feature gated by `ResumeInPowerHour: false` (default off). Replay validation pending.
 
-  **Evidence (5-day test, Feb 9-13)**:
-  - 3 of 5 days the target fired → PH resume tested
-  - Net improvement: +$112.52 (+18.5%), from $608.90 → $721.42
-  - Best day: Feb 13 +$117 (17 PH trades with Base settings)
-  - Worst day: Feb 12 -$4.50 (11 PH trades, small acceptable drag)
-  - See EXPERIMENTS.md "Session: 2026-02-14 — Power Hour Resume Experiment"
+- [x] **Switch PH TimeRule overrides from OV-lite to Base settings**
+  **DONE (2026-02-17)**: PH TimeRule overrides emptied in `appsettings.json` — PH now inherits Base settings. OV-lite was confirmed inert (0 trades across all tested dates, even in trending markets). Done as part of PH Resume Mode implementation on `feature/ph-resume-mode` branch.
 
-  **OpEx Friday investigation (2026-02-16)**:
-  - Hypothesis that weekly OpEx pinning drives PH trends was **weakened** — Feb 6 (Friday) had 0 PH trades while Feb 13 (Friday) had 17
-  - Monthly OpEx proximity remains plausible — Feb 20 (actual 3rd-Friday OpEx) data needed
-  - See EXPERIMENTS.md "Session: 2026-02-16 — OpEx Friday PH Investigation"
+## Analyst Phase Reset
 
-  **Implementation requirements**:
-  - New state in TraderEngine: `PH_PAUSED` (between daily target fire and 14:00 ET)
-  - At 14:00 ET: reset daily target state, switch to Base settings, resume trading
-  - Config: `ResumeInPowerHour: true/false` (default false)
-  - Must integrate with existing `TimeRuleApplier` phase switching
-  - Must integrate with existing `DailyProfitTarget` trailing stop mechanism
-  - Optional: separate PH-specific profit target for the resumed session
-  - Add to `TradingSettings.cs` in BOTH repos, `ProgramRefactored.cs` (`BuildTradingSettings` + `ParseOverrides`), `TimeRuleApplier.cs`
+- [x] **Implement AnalystPhaseResetMode (None/Cold/Partial)**
+  **DONE (2026-02-18)**: Added `AnalystPhaseResetMode` enum and `ColdResetIndicators()`/`PartialResetIndicators()` methods to AnalystEngine. Phase reset fires only at PH entry (`currentPhase == "Power Hour"` guard). 9 new tests, all passing. On `feature/ph-resume-mode` branch (both repos).
 
-  **Data collection priority**:
-  - [ ] Collect Feb 20 data (actual monthly OpEx Friday) — critical test date for OpEx hypothesis
-  - [ ] Collect additional Friday data over coming weeks to build larger PH sample
+- [x] **Run 5-config replay matrix comparing reset modes × stop widths**
+  **DONE (2026-02-18)**: Results across Feb 9-13:
+  - Config A (None, Base 0.2%): +$421.45 (baseline)
+  - Config B (None, Wider 0.35%): **+$483.55** (best simple option)
+  - Config C (Cold, Base 0.2%): +$481.74
+  - Config D (Partial 120s, Base 0.2%): +$404.65 (worst — rejected)
+  - Config E (Cold, Wider 0.35%): **+$496.05** (best overall)
+  Wider PH stops consistently beneficial. Cold reset mixed (helps choppy days, hurts trending). Partial reset clearly harmful. See EXPERIMENTS.md "Session: 2026-02-18" for full analysis.
 
-  **Related**: Current PH TimeRule settings (OV-lite) are confirmed inert — 0 trades on both tested Fridays. Consider switching PH TimeRule to Base settings regardless of PH Resume implementation.
+- [ ] **Remove Partial reset mode** — Dead code. Clearly worse than both None and Cold across all test days. Remove `Partial = 2` from enum, delete `PartialResetIndicators()` and `SeedFromTail()` helpers, update tests.
 
-- [ ] **Switch PH TimeRule overrides from OV-lite to Base settings**
-  Confirmed in both 2026-02-14 PH sweep and 2026-02-16 OpEx investigation: current PH settings (SMA=120, Trail=0.15%, TrendWait=60, ChopThreshold=0.0015) produce exactly 0 trades in isolated PH segments, even when the market is clearly trending. Base settings produce 17 trades and +$117 on the same data (Feb 13). This is a settings change in `appsettings.json` only — no code needed. Should be validated with a full 5-day replay before applying.
-  **Motivation (2026-02-14 analysis)**: Current `DailyProfitTarget` fires on combined equity (realized + unrealized) every tick when `DailyProfitTargetRealtime=true`, and applies globally — once triggered, it stops all trading for the day. The problem isn't *what* it measures, but that it's a single session-wide threshold with no phase awareness. Analysis showed that on Feb 9, OV phase made +$62 but continued Base phase trading eroded it to +$16 (–$46 given back). Feb 10 similarly: OV +$36, full day only +$19. On these days, session equity never reached the daily target ($175), so the daily trailing stop never armed — and there was no mechanism to protect the OV gains from erosion. A phase-level target could preserve OV gains on weak days while allowing further trading on strong days.
+- [x] **Decide final PH config and apply**
+  **DECIDED (2026-02-18)**: Keep PH Resume **dormant** (`ResumeInPowerHour=false`, `AnalystPhaseResetMode=None`). The $608.90 baseline WITHOUT PH Resume outperforms EVERY PH Resume config (best was $496.05 = -$113). The daily profit target stopping trading for the day is *protecting* morning gains — PH Resume gives back profits on every day it activates. Regression verified: dormant feature still produces exact $608.90. All code stays for potential future re-evaluation with different PH strategies.
 
-  **How the daily target actually works** (validated 2026-02-15):
-  - `DailyProfitTargetRealtime=true`: checks `RealizedSessionPnL + (currentETFPrice - avgEntry) × shares` every tick
-  - When combined P/L first reaches `StartingAmount × DailyProfitTargetPercent / 100` ($175): arms a trailing stop at `P/L × (1 - 0.3/100)`
-  - Ratchets stop up on new equity peaks; triggers liquidation when equity drops below stop
-  - Code: `TraderEngine.ProcessRegimeAsync` lines ~1535-1610 (MarketBlocks)
+## Choppy Session Strategy (Future Research)
+
+- [ ] **Research fundamentally different strategies for choppy/afternoon sessions**
+  The PH Resume experiment proved that the current trend/momentum bot **cannot profitably trade choppy sessions** — not with any combination of settings, stop widths, or analyst reset modes. The daily profit target stopping for the day is the correct behavior for this bot architecture.
+
+  Potential approaches worth researching (these are NOT settings tweaks — they require different strategy logic):
+  - **Mean-reversion**: Trade against moves in range-bound conditions (buy dips, sell rips within a band)
+  - **Range-bound detection + sit-out**: Detect chop early and refuse to trade until conditions change
+  - **Volatility regime switching**: Use realized vol to switch between trend-following and mean-reversion
+  - **Reduced position sizing**: Trade PH with smaller positions to limit downside while capturing rare trends
+  - **Options-based approaches**: Use spreads that benefit from range-bound conditions (iron condors, etc.)
+
+  This is a significant architectural undertaking — the current AnalystEngine is fundamentally a trend/momentum detector. A choppy-session strategy would likely need a separate engine or a multi-strategy framework.
+
+## PH Data Collection
+
+- [ ] **Collect Feb 20 data** (actual 3rd-Friday monthly OpEx) — critical test date for OpEx PH hypothesis
+- [ ] **Collect additional Friday data** over coming weeks to build larger PH sample
 
   **Quantified opportunity**: Theoretical max across 5 days (best of OV-only vs full-day per day) = +$566 vs current +$549. However, more sophisticated variants could unlock more:
   - Phase-level trailing stop on equity within that phase (like the daily target but scoped to a phase)

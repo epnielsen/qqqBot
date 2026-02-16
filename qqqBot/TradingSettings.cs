@@ -28,6 +28,9 @@ class TradingSettings
     public bool DailyProfitTargetRealtime { get; set; } = false; // true = check realized+unrealized on every tick
     public decimal DailyLossLimit { get; set; } = 0m; // 0 = disabled, >0 = stop trading when session loss exceeds this dollar amount
     public decimal DailyLossLimitPercent { get; set; } = 0m; // 0 = disabled, e.g. 2.0 = 2% of StartingAmount
+    public bool ResumeInPowerHour { get; set; } = false; // true = resume trading in PH after daily target fires
+    public string AnalystPhaseResetMode { get; set; } = "None"; // None, Cold, or Partial — controls indicator reset at phase boundaries
+    public int AnalystPhaseResetSeconds { get; set; } = 120; // Seconds of history to keep in Partial mode
     public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
