@@ -1453,3 +1453,29 @@ appsettings.json restored to safe defaults: `ResumeInPowerHour=false`, `AnalystP
 4. Commit both repos on feature/ph-resume-mode branches
 5. Collect more replay data (especially Feb 20) to validate with larger sample
 6. Consider whether wider PH stops should use the same Base DynamicStopLossTiers or custom PH tiers
+
+### Post-Matrix Reassessment
+
+**Critical realization**: The $608.90 baseline (WITHOUT PH Resume) outperforms every PH Resume config:
+
+| Config | PH Resume? | Total | vs $608.90 |
+|--------|-----------|-------|------------|
+| No PH Resume (baseline) | No | **$608.90** | — |
+| E (Cold + Wider, best) | Yes | $496.05 | **-$112.85** |
+| B (None + Wider) | Yes | $483.55 | -$125.35 |
+| C (Cold + Base) | Yes | $481.74 | -$127.16 |
+| A (None + Base) | Yes | $421.45 | -$187.45 |
+| D (Partial + Base) | Yes | $404.65 | -$204.25 |
+
+**Root cause**: The daily profit target stopping trading for the day is *protecting* morning gains from afternoon chop/reversals. PH Resume gives back profits on every day it activates:
+- Feb 11: $197→$188 (-$9)
+- Feb 12: $172→$73 (-$99, catastrophic — morning gains eroded by PH whipsaw)
+- Feb 13: $179→$174 (-$5)
+
+The original $721.42 script result that motivated PH Resume was inflated by a cold analyst artifact (disabled trend-wait filter). The real signal: **trend/momentum strategies lose money in afternoon chop**.
+
+**Decision**: Keep PH Resume feature dormant (`ResumeInPowerHour=false`). All code stays but defaults to off.
+
+**Regression verified**: 5-day replay with dormant feature = **$608.90** (exact match, zero regressions).
+
+**Insight for future work**: PH trading needs an entirely different strategy — not settings tweaks on a trend/momentum bot. Choppy sessions require a fundamentally different approach (mean-reversion, range-bound strategies, or simply sitting out).

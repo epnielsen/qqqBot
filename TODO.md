@@ -156,7 +156,22 @@
 
 - [ ] **Remove Partial reset mode** — Dead code. Clearly worse than both None and Cold across all test days. Remove `Partial = 2` from enum, delete `PartialResetIndicators()` and `SeedFromTail()` helpers, update tests.
 
-- [ ] **Decide final PH config and apply** — Config B (wider stops only, +$483.55) is simplest/safest. Config E (cold+wider, +$496.05) is slightly better but adds code complexity. Need more replay data (esp. Feb 20 OpEx) before committing. Currently defaults to None with empty PH overrides.
+- [x] **Decide final PH config and apply**
+  **DECIDED (2026-02-18)**: Keep PH Resume **dormant** (`ResumeInPowerHour=false`, `AnalystPhaseResetMode=None`). The $608.90 baseline WITHOUT PH Resume outperforms EVERY PH Resume config (best was $496.05 = -$113). The daily profit target stopping trading for the day is *protecting* morning gains — PH Resume gives back profits on every day it activates. Regression verified: dormant feature still produces exact $608.90. All code stays for potential future re-evaluation with different PH strategies.
+
+## Choppy Session Strategy (Future Research)
+
+- [ ] **Research fundamentally different strategies for choppy/afternoon sessions**
+  The PH Resume experiment proved that the current trend/momentum bot **cannot profitably trade choppy sessions** — not with any combination of settings, stop widths, or analyst reset modes. The daily profit target stopping for the day is the correct behavior for this bot architecture.
+
+  Potential approaches worth researching (these are NOT settings tweaks — they require different strategy logic):
+  - **Mean-reversion**: Trade against moves in range-bound conditions (buy dips, sell rips within a band)
+  - **Range-bound detection + sit-out**: Detect chop early and refuse to trade until conditions change
+  - **Volatility regime switching**: Use realized vol to switch between trend-following and mean-reversion
+  - **Reduced position sizing**: Trade PH with smaller positions to limit downside while capturing rare trends
+  - **Options-based approaches**: Use spreads that benefit from range-bound conditions (iron condors, etc.)
+
+  This is a significant architectural undertaking — the current AnalystEngine is fundamentally a trend/momentum detector. A choppy-session strategy would likely need a separate engine or a multi-strategy framework.
 
 ## PH Data Collection
 
