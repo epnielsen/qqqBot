@@ -1297,3 +1297,58 @@ Plus a determinism check: re-run Feb 6 PH Base to confirm Brownian bridge produc
 | `opex-ph-test.ps1` | New script — OpEx Friday PH comparison (Feb 6 vs Feb 13) |
 | `EXPERIMENTS.md` | This session entry |
 | `TODO.md` | Added PH Resume Mode implementation TODO |
+
+---
+
+## Session: 2026-02-17 — PH Resume Mode Implementation
+
+### Context
+
+Implemented PH Resume Mode in TraderEngine based on 5-day experiment data showing +$112.52 (+18.5%) improvement. When the daily profit target fires before Power Hour, the engine now arms a resume flag, goes flat, and resumes trading at 14:00 ET with Base settings (daily target disabled for PH session).
+
+### Changes Made
+
+**MarketBlocks (feature/ph-resume-mode branch off master)**:
+
+| File | Change |
+|------|--------|
+| `MarketBlocks.Bots/Domain/HaltReason.cs` | **NEW** — `enum HaltReason { None, ProfitTarget, LossLimit }` |
+| `MarketBlocks.Bots/Domain/TradingState.cs` | Added `HaltReason` and `PhResumeArmed` persisted fields |
+| `MarketBlocks.Bots/Domain/TradingSettings.cs` | Added `ResumeInPowerHour` (bool, default false) |
+| `MarketBlocks.Bots/Services/TraderEngine.cs` | **Major refactor**: Replaced all 13 `_dailyTargetReached` (volatile bool) references with `_state.HaltReason` (persisted enum). Added `SetHaltReason()` helper (centralizes halt + PH Resume arming + state persistence). Added `CheckPhResume()` method (clears halt, resets daily target, disables DailyProfitTargetPercent for PH). Wired into TimeRuleApplier phase transition detection. Added `_previousPhaseName` for phase tracking. |
+| `MarketBlocks.Bots.Tests/TraderEngine_PhResumeTests.cs` | **NEW** — 7 tests: resume on PH transition, loss limit no resume, feature disabled stays halted, target during PH no resume, normal PH trading unaffected, state persistence verified, daily target disabled after resume |
+
+**qqqBot (feature/ph-resume-mode branch off main)**:
+
+| File | Change |
+|------|--------|
+| `qqqBot/TradingSettings.cs` | Added `ResumeInPowerHour` property (sync with MarketBlocks) |
+| `qqqBot/ProgramRefactored.cs` | Wired `ResumeInPowerHour` in `BuildTradingSettings` via `configuration.GetValue()` |
+| `qqqBot/appsettings.json` | Added `ResumeInPowerHour: false` setting. **Switched PH TimeRule overrides from OV-lite to empty** (PH now uses Base settings — OV-lite was provably inert, producing 0 trades even in trending markets). |
+
+### Design Decisions
+
+1. **HaltReason enum** replaces volatile `_dailyTargetReached` bool — fixes crash-safety gap (halt state was not persisted before) and enables distinguishing profit target vs loss limit halts.
+2. **Combined PH settings approach** — PH TimeRule overrides emptied so PH inherits Base settings. Simpler than maintaining separate PH-tuned settings when Base is already optimized.
+3. **Phase profit target deferred** — added as separate TODO item. Current implementation uses session-wide daily target with PH exemption (target disabled during PH session).
+4. **`SetHaltReason()` centralizes all halt transitions** — ensures consistent state persistence (`forceImmediate: true`) and PH Resume arming logic in one place.
+5. **`CheckPhResume()` runs on phase transitions only** — triggered by TimeRuleApplier phase change detection, not on every tick.
+
+### Test Results
+
+- MarketBlocks: 145 tests passed (7 new PH Resume + 138 existing), 0 failures
+- qqqBot: 63 tests passed, 0 failures
+- **Replay validation pending** — run with `ResumeInPowerHour=true` before going live
+
+### Known Limitations
+
+- Daily target is fully disabled during PH session (no re-arming). A future "phase profit target" could add PH-specific limits.
+- `DailyProfitTargetPercent` is mutated in-place for PH (set to 0). This is the same pattern TimeRuleApplier uses and is restored on day reset.
+- Feature defaults to `false` — must be explicitly enabled in appsettings.json.
+
+### Next Steps
+
+1. Run 5-day replay with `ResumeInPowerHour=true` and compare against prior $608.90 baseline and $721.42 script-stitched result
+2. Verify determinism (run 2-3 times, confirm identical P/L)
+3. If results match expectations, enable for live trading
+4. Collect Feb 20 data (monthly OpEx Friday) for further PH analysis
