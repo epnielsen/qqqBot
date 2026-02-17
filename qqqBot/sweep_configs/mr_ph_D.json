@@ -1,0 +1,123 @@
+{
+  "TradingBot": {
+    "BotId": "main",
+    "LogDirectory": "C:\\dev\\TradeEcosystem\\logs\\qqqbot",
+    "MarketDataDirectory": "C:\\dev\\TradeEcosystem\\data\\market",
+    "PollingIntervalSeconds": 1,
+    "BullSymbol": "TQQQ",
+    "BearSymbol": "SQQQ",
+    "BenchmarkSymbol": "QQQ",
+    "CryptoBenchmarkSymbol": "BTC/USD",
+
+    "//_COMMENT_SWEEP": "Config D: Phase 2 control — same as best Phase 1 winner, ChopOverride OFF",
+    "//_COMMENT_SWEEP2": "Update MrEntryLowPctB/MrEntryHighPctB/MeanRevStopPercent to match Phase 1 winner",
+    "MinVelocityThreshold": 0.000015,
+    "SMAWindowSeconds": 180,
+    "SlopeWindowSize": 20,
+    "ChopThresholdPercent": 0.0011,
+    "MinChopAbsolute": 0.02,
+    "TrendWindowSeconds": 5400,
+    "ExitStrategy": {
+      "ScalpWaitSeconds": 30,
+      "TrendWaitSeconds": 180,
+      "TrendConfidenceThreshold": 0.00008,
+      "HoldNeutralIfUnderwater": true
+    },
+    "UseMarketableLimits": true,
+    "UseIocOrders": true,
+    "IocLimitOffsetCents": 8,
+    "IocRetryStepCents": 5,
+
+    "TrailingStopPercent": 0.002,
+
+    "DynamicStopLoss": {
+      "Enabled": true,
+      "Tiers": [
+        { "TriggerProfitPercent": 0.003, "StopPercent": 0.0015 },
+        { "TriggerProfitPercent": 0.005, "StopPercent": 0.001 },
+        { "TriggerProfitPercent": 0.008, "StopPercent": 0.0008 }
+      ]
+    },
+    "EnableTrimming": true,
+    "TrimTriggerPercent": 0.0025,
+    "TrimSlopeThreshold": 0.000001,
+    "TrimCooldownSeconds": 300,
+    "TrimRatio": 0.75,
+    "ProfitReinvestmentPercent": 0.5,
+
+    "DailyProfitTargetPercent": 1.75,
+    "DailyProfitTargetRealtime": true,
+    "DailyProfitTargetTrailingStopPercent": 0.3,
+
+    "DailyLossLimit": 0,
+    "DailyLossLimitPercent": 0,
+    "ResumeInPowerHour": false,
+    "AnalystPhaseResetMode": "None",
+    "AnalystPhaseResetSeconds": 120,
+
+    "SlidingBand": false,
+    "SlidingBandFactor": 0.75,
+    "WatchBtc": false,
+    "MonitorSlippage": true,
+    "StopLossCooldownSeconds": 10,
+    "MaxSlippagePercent": 0.002,
+    "MaxChaseDeviationPercent": 0.003,
+    "LowLatencyMode": true,
+    "IocMaxRetries": 5,
+    "IocMaxDeviationPercent": 0.005,
+    "IocRemainingSharesTolerance": 2,
+    "KeepAlivePingSeconds": 5,
+    "WarmUpIterations": 10000,
+    "StatusLogIntervalSeconds": 5,
+
+    "PhDefaultStrategy": "MeanReversion",
+    "BollingerWindow": 20,
+    "BollingerMultiplier": 2.0,
+    "MrEntryLowPctB": 0.2,
+    "MrEntryHighPctB": 0.8,
+    "MrExitPctB": 0.5,
+    "MeanRevStopPercent": 0.003,
+    "ChopOverrideEnabled": false,
+
+    "TimeRules": [
+      {
+        "Name": "Open Volatility",
+        "StartTime": "09:30",
+        "EndTime": "10:13",
+        "Overrides": {
+          "MinVelocityThreshold": 0.000015,
+          "SMAWindowSeconds": 120,
+          "ChopThresholdPercent": 0.0015,
+          "MinChopAbsolute": 0.05,
+          "TrendWindowSeconds": 900,
+          "TrendWaitSeconds": 180,
+          "TrendConfidenceThreshold": 0.00012,
+          "UseMarketableLimits": false,
+          "UseIocOrders": false,
+          "IocLimitOffsetCents": 20,
+          "IocRetryStepCents": 10,
+          "TrailingStopPercent": 0.005,
+          "DynamicStopLossEnabled": true,
+          "DynamicStopLossTiers": [
+            { "TriggerProfitPercent": 0.005, "StopPercent": 0.003 },
+            { "TriggerProfitPercent": 0.008, "StopPercent": 0.002 },
+            { "TriggerProfitPercent": 0.012, "StopPercent": 0.0015 }
+          ],
+          "EnableTrimming": false,
+          "TrimTriggerPercent": 0.005,
+          "TrimSlopeThreshold": 0.000002,
+          "TrimCooldownSeconds": 60,
+          "TrimRatio": 0.33
+        }
+      },
+      {
+        "Name": "Power Hour",
+        "StartTime": "14:00",
+        "EndTime": "16:00",
+        "Overrides": {}
+      }
+    ],
+
+    "StartingAmount": 10000
+  }
+}

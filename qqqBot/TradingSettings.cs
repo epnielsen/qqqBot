@@ -31,6 +31,27 @@ class TradingSettings
     public bool ResumeInPowerHour { get; set; } = false; // true = resume trading in PH after daily target fires
     public string AnalystPhaseResetMode { get; set; } = "None"; // None, Cold, or Partial — controls indicator reset at phase boundaries
     public int AnalystPhaseResetSeconds { get; set; } = 120; // Seconds of history to keep in Partial mode
+    
+    // Mean Reversion Strategy
+    public string BaseDefaultStrategy { get; set; } = "Trend";   // Trend or MeanReversion
+    public string PhDefaultStrategy { get; set; } = "Trend";     // Trend or MeanReversion
+    public bool ChopOverrideEnabled { get; set; } = false;       // CHOP can dynamically flip strategy
+    public decimal ChopUpperThreshold { get; set; } = 61.8m;     // CHOP above = choppy → MR
+    public decimal ChopLowerThreshold { get; set; } = 38.2m;     // CHOP below = trending → Trend
+    public int BollingerWindow { get; set; } = 20;               // BB SMA period
+    public decimal BollingerMultiplier { get; set; } = 2.0m;     // BB std dev multiplier
+    public int ChopPeriod { get; set; } = 14;                    // CHOP lookback periods
+    public int ChopCandleSeconds { get; set; } = 60;             // Candle interval for CHOP/ATR
+    public decimal MrEntryLowPctB { get; set; } = 0.2m;         // %B below this → MR_LONG
+    public decimal MrEntryHighPctB { get; set; } = 0.8m;        // %B above this → MR_SHORT
+    public decimal MrExitPctB { get; set; } = 0.5m;             // %B crosses this → MR_FLAT
+    public decimal MeanRevStopPercent { get; set; } = 0.003m;    // Hard stop for MR trades (0.3%) — fallback when ATR unavailable
+    public decimal MrAtrStopMultiplier { get; set; } = 2.0m;     // ATR-based stop: multiplier × ATR on benchmark; 0 = use fixed %
+    public bool MrRequireRsi { get; set; } = true;               // Require RSI confirmation for MR entries
+    public int MrRsiPeriod { get; set; } = 14;                   // RSI lookback periods
+    public decimal MrRsiOversold { get; set; } = 30m;            // RSI below this confirms MR_LONG
+    public decimal MrRsiOverbought { get; set; } = 70m;          // RSI above this confirms MR_SHORT
+    
     public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade

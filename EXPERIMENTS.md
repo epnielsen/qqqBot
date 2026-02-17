@@ -1479,3 +1479,314 @@ The original $721.42 script result that motivated PH Resume was inflated by a co
 **Regression verified**: 5-day replay with dormant feature = **$608.90** (exact match, zero regressions).
 
 **Insight for future work**: PH trading needs an entirely different strategy — not settings tweaks on a trend/momentum bot. Choppy sessions require a fundamentally different approach (mean-reversion, range-bound strategies, or simply sitting out).
+
+---
+
+### Session: 2026-02-16 — Mean Reversion Strategy Implementation & Testing
+
+**Context**: Following the Session 15 insight that PH needs a fundamentally different strategy, we implemented a complete Mean Reversion (MR) infrastructure and ran systematic replay tests.
+
+#### Code Changes (Phase 0)
+
+**New file**: `MarketBlocks.Bots/Domain/StrategyMode.cs` — enum `Trend=0, MeanReversion=1`
+
+**Modified files** (7 files across both repos):
+- `MarketBlocks.Bots/Domain/TradingSettings.cs` — 13 new MR settings: `BaseDefaultStrategy`, `PhDefaultStrategy`, `ChopOverrideEnabled`, `ChopUpperThreshold` (61.8), `ChopLowerThreshold` (38.2), `BollingerWindow` (20), `BollingerMultiplier` (2.0), `ChopPeriod` (14), `ChopCandleSeconds` (60), `MeanRevStopPercent` (0.3%), `MrEntryLowPctB` (0.2), `MrEntryHighPctB` (0.8), `MrExitPctB` (0.5)
+- `MarketBlocks.Bots/Domain/TimeBasedRule.cs` — All 13 as nullable overrides in `TradingSettingsOverrides`
+- `MarketBlocks.Bots/Domain/MarketRegime.cs` — Extended with `ActiveStrategy`, `PercentB`, `BollingerUpper/Middle/Lower`, `ChopIndex`
+- `MarketBlocks.Bots/Services/AnalystEngine.cs` — BB/CHOP indicators, `DetermineStrategyMode()`, `DetermineMeanReversionSignal()`, `FeedChopCandle()` (candle aggregation for both CHOP and BB)
+- `MarketBlocks.Bots/Services/TraderEngine.cs` — MR_LONG/MR_SHORT/MR_FLAT signal dispatch, MR hard stop
+- `MarketBlocks.Bots/Services/TimeRuleApplier.cs` — All 13 settings wired through Snapshot, Restore, Apply, Log, IndicatorSettingsChanged, SettingsSnapshot
+- `MarketBlocks.Trade/Core/Math/StreamingBollingerBands.cs` — Added public `Multiplier` property
+
+**qqqBot wiring**: `TradingSettings.cs` (13 mirrored), `ProgramRefactored.cs` (BuildTradingSettings + ParseOverrides)
+
+**Bug fix during testing**: BB was originally fed every raw tick (`_bollingerBands.Add(tick.Price)`), making BB(20) = 20 ticks ≈ 20 seconds lookback. Bands were impossibly tight, causing 460 trades and -$5K loss in 2 hours. Fixed to feed BB on candle closes (same as CHOP), so BB(20) = 20 candle closes = 20 minutes lookback.
+
+**Build**: 0 errors both solutions. **Tests**: 325 pass (42+159+61+63). **Regression**: $608.90 exact match (MR dormant by default).
+
+#### Phase 1 Results — PH Segment Sweep (14:00-16:00 only, cold start)
+
+BB on candle closes. All configs deeply negative due to cold-start (BB needs 20 minutes to warm up):
+
+| Config | Entry Low/High | Stop | Total P/L | Trades | Notes |
+|--------|---------------|------|-----------|--------|-------|
+| A | 0.2 / 0.8 | 0.3% | -$2,550.84 | 161 | Default thresholds |
+| B | 0.1 / 0.9 | 0.3% | -$2,200.20 | 132 | Tighter entry reduces trades |
+| C | 0.2 / 0.8 | 0.5% | -$1,707.22 | 100 | Wider stop reduces trades more |
+
+Per-day detail (Config A): Feb 9=-$395, Feb 10=-$400, Feb 11=-$323, Feb 12=-$736, Feb 13=-$696
+
+**Conclusion**: Cold-start segment replays are not viable for BB-based MR. BB needs pre-warming.
+
+#### Phase 2 Results — CHOP Override (PH segment, cold start)
+
+| Config | CHOP | Total P/L | Trades | Notes |
+|--------|------|-----------|--------|-------|
+| D | Off | -$2,563.88 | 161 | Control (≈ Config A) |
+| E | On (61.8/38.2) | -$3,069.17 | 186 | **Worse** — cold CHOP can't filter effectively |
+
+**Conclusion**: CHOP on cold start adds noise, doesn't help.
+
+#### Phase 3 Results — Full-Day Replays (BB/CHOP pre-warmed from open)
+
+Baseline: **$608.90** (38 trades)
+
+| Config | CHOP | Total P/L | Trades | Delta vs Baseline | Notes |
+|--------|------|-----------|--------|-------------------|-------|
+| F | Off | -$377.49 | 102 | **-$986.39** | MR PH only |
+| G | On | -$1,623.93 | 186 | **-$2,232.83** | CHOP overrides Base phase too |
+
+Per-day detail (Config F vs Baseline):
+| Date | Baseline | Config F | Delta | Notes |
+|------|----------|----------|-------|-------|
+| Feb 9 | +$14.16 (4t) | -$530.39 (36t) | -$544.55 | MR fires in PH, loses big |
+| Feb 10 | +$46.24 (7t) | -$395.60 (39t) | -$441.84 | MR fires in PH, loses big |
+| Feb 11 | +$196.96 (6t) | +$196.96 (6t) | $0.00 | Daily target hit before PH |
+| Feb 12 | +$172.36 (15t) | +$172.36 (15t) | $0.00 | Daily target hit before PH |
+| Feb 13 | +$179.18 (6t) | +$179.18 (6t) | $0.00 | Daily target hit before PH |
+
+**Key findings**:
+1. **Daily profit target masks MR**: On 3/5 days, the daily target fires before PH. MR only activates on the 2 weakest days.
+2. **MR on trending PH = catastrophe**: Feb 9/10 PH was trending. MR fought the trend and lost ~$500/day.
+3. **CHOP override is phase-unaware**: When enabled, CHOP overrides during ALL phases (including Base), destroying good Base performance. Design flaw — CHOP should only override within the designated phase.
+4. **BB warm-up is critical**: Cold-start segment replays are invalid for BB-based strategies. BB(20) on 60s candles needs 20 minutes to become ready.
+
+#### Failed Experiments
+- Raw tick BB feeding (460 trades, -$5K in 2h)
+- PH segment replays with cold indicators
+- CHOP global override (destroys Base phase performance)
+
+#### Decisions
+- **MR infrastructure code is preserved** — dormant by default (`BaseDefaultStrategy=Trend`, `PhDefaultStrategy=Trend`, `ChopOverrideEnabled=false`)
+- **All sweep configs preserved** in `qqqBot/sweep_configs/` for future reference
+- **Regression verified**: $608.90 exact match with dormant MR
+
+#### Future Work Ideas
+1. **CHOP phase-gating**: Make CHOP override phase-aware (only override during PH, not Base/OV)
+2. **Longer BB window**: BB(50) or BB(100) on 60s candles for broader bands that reduce whipsawing
+3. **Market regime pre-filter**: Only enable MR on days where early session CHOP indicates choppy character
+4. **MR + trend confirmation**: Require both BB entry signal AND trend slope alignment (e.g., MR_LONG only when short-term slope is also turning up)
+5. **Test on known choppy days**: The 5-day sample (Feb 9-13) may have been trending. Need to specifically find/record choppy days for better MR testing
+
+---
+
+### Session: MR Root Cause Investigation & Bug Fixes (continued)
+**Date**: 2026-02-13 (continued from previous session)
+**Context**: User corrected earlier analysis — PH IS choppy (not trending). These 5 days historically identified as choppy. MR should theoretically work. Root cause investigation required.
+
+#### Bugs Found & Fixed
+
+**Bug 1: Cascading re-entry after hard stop (CRITICAL)**
+- **Root cause**: After hard stop fires and exits to CASH, AnalystEngine's `_lastMrSignal` stays "MR_LONG" (hysteresis holds until %B > 0.5). TraderEngine sees MR_LONG + CASH → immediately re-enters. Price continues against → another stop → re-enter → repeat. Trades 5→6→7→8 on Feb 12 were 6-11 seconds apart.
+- **Fix**: Added `_mrHardStopCooldown` flag in TraderEngine. After hard stop, MR_LONG/MR_SHORT signals are ignored until MR_FLAT resets the cycle (i.e., %B must cross midline before re-entering). 
+- **Impact**: Config A Feb 12 went from 161 trades / -$2,551 to 13 trades / -$132 (92% trade reduction, 95% loss reduction)
+- **File**: `MarketBlocks.Bots/Services/TraderEngine.cs`
+
+**Bug 2: Trailing stop overriding MR signals**
+- **Root cause**: `EvaluateTrailingStop()` runs before MR signal dispatch and can return `("NEUTRAL", false)`, forcing exit regardless of MR's own logic. MR has its own exit (MR_FLAT at midline) and loss protection (hard stop).
+- **Fix**: Gated trailing stop with `regime.ActiveStrategy != StrategyMode.MeanReversion`
+- **File**: `MarketBlocks.Bots/Services/TraderEngine.cs`
+
+**Bug 3: Trim logic destroying MR positions**
+- **Root cause**: Trim fires at +0.25% profit, selling 75% of position. Trade 1 on Feb 12 was trimmed from 139→35 shares. MR needs full position until %B exits at midline.
+- **Fix**: Added `regime.ActiveStrategy != StrategyMode.MeanReversion` guard to trim check.
+- **File**: `MarketBlocks.Bots/Services/TraderEngine.cs`
+
+**Regression**: All 3 fixes verified — $608.90 / 38 trades exact match (MR dormant by default).
+
+#### Comprehensive Sweep Results (Post-Fixes)
+
+**PH Segment Replays (14:00-16:00, cold start — BB warms up during PH)**
+
+| Config | BB | Entry | Exit | Stop | Total P/L | Trades | Avg/Trade |
+|--------|-----|-------|------|------|-----------|--------|-----------|
+| A | 20,2.0 | 0.2/0.8 | 0.5 | 0.3% | -$921 | 58 | -$15.88 |
+| B | 20,2.0 | 0.1/0.9 | 0.5 | 0.3% | -$713 | 42 | -$16.98 |
+| H | 20,2.0 | 0.2/0.8 | 0.5 | 0.9% | -$1,028 | 58 | -$17.72 |
+| I | 20,2.5 | 0.15/0.85 | 0.5 | 0.9% | -$780 | 38 | -$20.53 |
+| J | 30,2.0 | 0.1/0.9 | 0.5 | 0.9% | -$704 | 26 | -$27.08 |
+| K | 30,2.0 | 0.1/0.9 | 0.5 | none | -$694 | 26 | -$26.70 |
+| L | 30,2.0 | 0.1/0.9 | 0.4 | 0.9% | -$735 | 32 | -$22.97 |
+| **M** | **20,3.0** | **0.1/0.9** | **0.5** | **none** | **-$441** | **20** | **-$22.07** |
+| N | 30,3.0 | 0.1/0.9 | 0.5 | none | -$478 | 18 | -$26.54 |
+
+**Full-Day Replays (09:30-16:00, BB pre-warmed from morning) — baseline $608.90**
+
+| Config | BB | Entry | Exit | Stop | Total P/L | MR Contrib | Trades |
+|--------|-----|-------|------|------|-----------|------------|--------|
+| O | 60,2.0 | 0.1/0.9 | 0.5 | none | +$362 | **-$247** | 48 |
+| P | 60,3.0 | 0.1/0.9 | 0.5 | none | +$462 | **-$147** | 42 |
+| Q | 20,3.0 | 0.1/0.9 | 0.5 | none | +$427 | **-$182** | 50 |
+
+*MR Contrib = (Full-day P/L) - (Baseline $608.90). Negative = MR destroys existing trend engine profits.*
+
+#### Key Insight: BB Bandwidth vs Execution Costs
+
+The fundamental problem is that BB bands on 1-minute candles are too narrow relative to execution costs:
+
+1. **BB(20,2.0) bandwidth**: ~$0.40 on $604 QQQ = 0.066%. Entry at %B=0.1 → exit at %B=0.5 = ~$0.12 QQQ move → ~$0.029/share TQQQ profit → ~$5.80 on 200 shares
+2. **Execution costs**: IOC offset $0.08 × 200 shares = $16 per round trip (buy + sell)
+3. **Profit < costs**: The expected profit per MR trade is SMALLER than execution costs
+4. Wider BB multiplier (3.0) helps but doesn't overcome the fundamental cost structure
+5. The SMA adapts too quickly on 1-min candles — the "mean" shifts before reversion completes
+
+**Why all configs lose every day**: The BB bandwidth on 1-min candles during a 2-hour PH window produces profit targets of ~$5-20 per trade, while each round-trip costs ~$16 in IOC slippage alone. This is a structural impossibility.
+
+#### Decisions
+- **3 bug fixes committed**: Cooldown, trailing stop bypass, trim bypass for MR. All structurally correct.
+- **MR remains dormant** (`PhDefaultStrategy=Trend`) — no profitable settings found
+- **Regression preserved**: $608.90 exact match
+
+#### Next Steps for MR Viability
+1. **Separate BB candle interval from CHOP**: Allow BB to use 5-min or 15-min candle aggregation while CHOP stays on 60s. This would produce much wider bands (~3-5x wider) where profit exceeds costs.
+2. **Remove IOC slippage for MR**: Use market/limit orders instead of IOC for MR entries/exits, since MR doesn't need latency-sensitive execution.
+3. **BB bandwidth filter**: Only enter MR trades when bandwidth exceeds a minimum threshold (ensures profit potential > cost).
+4. **Market-on-close exit**: For MR trades still open at 15:55, exit at market close rather than forcing MR_FLAT.
+
+---
+
+## Session: 2026-02-19 — Research AI Recommendations: 5-min Candles + RSI + ATR Stops
+
+**Context**: Prior session (A-Q sweep) showed all MR configs on 1-min candles lose money — BB bandwidth (~$0.40) too narrow vs IOC execution costs (~$16 round-trip). Consulted a Research AI ("Adaptive Architectures for Systematic Trading and Regime Detection") for specific parameter recommendations.
+
+### Research AI Recommendations Implemented
+
+1. **5-min candles** (`ChopCandleSeconds=300`) — BB, CHOP, ATR, RSI all share same aggregation
+2. **ATR-based stops** (`MrAtrStopMultiplier=2.0`) — replaces fixed % stop, computed on QQQ benchmark, dynamic protection
+3. **RSI confirmation REQUIRED** (`MrRequireRsi=true`, RSI(14), oversold<30, overbought>70) — filters bad entries
+4. **Shared candle interval** — BB and CHOP both on 5-min to avoid mixed-resolution confusion
+
+### Code Changes
+
+| File | Change |
+|------|--------|
+| `StreamingRSI.cs` (NEW) | Wilder's smoothing RSI, 140 lines, same pattern as StreamingATR |
+| `MarketRegime.cs` | Added `Rsi` and `Atr` nullable decimal fields |
+| `TradingSettings.cs` (both repos) | 5 new settings: `MrAtrStopMultiplier`, `MrRequireRsi`, `MrRsiPeriod`, `MrRsiOversold`, `MrRsiOverbought` |
+| `TimeBasedRule.cs` | 5 matching nullable overrides in `TradingSettingsOverrides` |
+| `AnalystEngine.cs` | `_mrAtr`/`_mrRsi` fields, candle feeding, RSI filter in `DetermineMeanReversionSignal`, MarketRegime population, reconfig/reset |
+| `TraderEngine.cs` | `_mrEntryBenchmarkPrice`/`_mrEntryIsLong`, ATR-based stop (benchmark space), benchmark tracking |
+| `TimeRuleApplier.cs` | Snapshot/Restore/Apply/Log/IndicatorSettingsChanged for 5 new settings |
+| `ProgramRefactored.cs` | Config loading for 5 new settings in `BuildTradingSettings` + `ParseOverrides` |
+
+### Verification
+- Build: 0 errors both solutions
+- Tests: 575 pass (159 Bots + 61 Trade + 63 qqqBot + rest)
+- Regression: **$608.90 / 38 trades** exact match (MR dormant baseline)
+
+### Sweep 3 — Configs R through V (5-min candle + RSI + ATR)
+
+**Key constraint**: BB(20) on 5-min candles = 20 × 300s = 100 min warmup. PH-cold useless. All configs full-day pre-warmed.
+
+| Config | Variable | Key Difference |
+|--------|----------|----------------|
+| **R** | Research AI baseline | 5min, BB20/2.0, entry 0.1/0.9, ATR 2.0×, RSI required, PH-only MR |
+| **S** | + CHOP override | `ChopOverrideEnabled=true` (MR can fire during Base if choppy) |
+| **T** | RSI ablation | `MrRequireRsi=false` (measure RSI's filtering contribution) |
+| **U** | Wider ATR stop | `MrAtrStopMultiplier=3.0` (more breathing room) |
+| **V** | Wider entry | `MrEntryLowPctB=0.2, MrEntryHighPctB=0.8` (more trade signals) |
+
+### Results (Feb 9-13 2026, full-day replays)
+
+| Config | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | **Total P/L** | Trades | **MR Contrib** |
+|--------|-------|--------|--------|--------|--------|---------------|--------|----------------|
+| **R** | $33.27/6 | $12.92/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$594.69** | 42 | **-$14.21** |
+| **S** | $14.16/4 | -$49.74/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$512.92** | 40 | **-$95.98** |
+| **T** | -$27.75/8 | -$62.40/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$458.35** | 44 | **-$150.55** |
+| **U** | $33.27/6 | $12.92/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$594.69** | 42 | **-$14.21** |
+| **V** | $33.27/6 | $12.92/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$594.69** | 42 | **-$14.21** |
+| *Baseline* | — | — | — | — | — | *$608.90* | *38* | *$0.00* |
+
+### Analysis
+
+**Major finding — MR fires extremely rarely with 5-min candles:**
+- Feb 11, 12, 13: ALL configs produce **identical** results to baseline. MR generates ZERO signals on these 3 days.
+- Feb 9 and 10 are the only days with any MR differentiation.
+- Configs R, U, V are **perfectly identical** — ATR multiplier (2.0 vs 3.0) and entry bands (0.1/0.9 vs 0.2/0.8) make zero difference because the few MR trades that fire don't trigger ATR stops and the wider entry bands don't capture additional signals.
+
+**RSI filter is working and critical:**
+- Config T (no RSI) vs R: -$150.55 vs -$14.21 MR contribution. RSI prevents **$136 in losses**.
+- Feb 10 detail: Without RSI, MR_LONG fires at 15:07 → 50 min underwater position → -$62.40. With RSI, MR_LONG delayed to 15:57 (RSI finally < 30) → smaller late loss → +$12.92. RSI saved $75 on a single day.
+
+**CHOP override during Base hurts badly:**
+- Config S vs R: -$95.98 vs -$14.21. Enabling MR during Base (when CHOP > 61.8) destroys $82 in value.
+- Feb 10: S loses -$49.74 vs R's +$12.92. CHOP override switches profitable Base trend trades to losing MR trades.
+
+**Why MR fires so rarely on 5-min candles:**
+1. BB(20) on 5-min candles has ~2.2× wider bandwidth than 1-min (√5 scaling). %B rarely reaches 0.1/0.9 extremes.
+2. RSI(14) at 30/70 thresholds requires genuine oversold/overbought confirmation, further filtering rare %B extremes.
+3. On "good" days (Feb 11, 13), daily profit target ($175) hit before PH → trading stops → MR never gets a chance.
+4. On Feb 12, 15 trend trades generate $172.36 (close to target) — trend strategy dominates, no MR signals.
+
+**Improvement vs prior sweeps (A-Q):**
+- Prior sweeps (1-min candles): MR contribution ranged from **-$147 to -$921**. Catastrophic.
+- This sweep (5-min + RSI): Best configs at **-$14.21**. A 90%+ improvement. The 5-min candle width + RSI filter has nearly eliminated MR damage.
+- But still slightly net negative — MR adds 4 extra trades across 5 days, losing ~$3.55/trade.
+
+### Decisions
+- **MR remains dormant** (`PhDefaultStrategy=Trend`) — still not profitable
+- **RSI filter validated** — essential if MR is ever enabled
+- **CHOP override during Base disabled** — clearly harmful
+- **5-min candle approach validated** — dramatically reduces MR damage vs 1-min
+
+### Root Cause: MR Is Solving the Wrong Problem on These Dates
+
+The 5-day sample (Feb 9-13) averages $121.78/day with trend-only strategy. MR is designed for "lost" PH days where price chops sideways. But on 3 of 5 days, the profit target fires before PH. On the 2 remaining days (Feb 9-10), the trend strategy still produces positive P/L ($33-46 range before MR interference). There are no truly "choppy PH disaster" days in this sample to test MR against.
+
+### Next Steps
+1. **Need data from genuinely choppy PH days** — Feb 9-13 may not include days where PH trend trading loses money
+2. **Consider BB window reduction** — BB(10) or BB(15) on 5-min for faster warmup and tighter bands
+3. **Consider RSI relaxation** — RSI 35/65 instead of 30/70 to allow more MR trades
+4. **Consider 3-min candles** — Compromise between 1-min (too narrow) and 5-min (too few signals)
+5. **Bandwidth minimum filter** — Only enter when BB bandwidth > some threshold ensuring profit potential > cost
+
+---
+
+## Session: PH Resume + MR Investigation (continuation)
+
+**Context**: R-V sweep showed profit target fires before PH on 3/5 days (Feb 11-13), so MR never activates. Question: would PH Resume + MR add value on those days?
+
+### Configs Tested
+- **Config W**: Config R + `ResumeInPowerHour=true` + `PhDefaultStrategy=MeanReversion` — MR in PH after target fires
+- **Config X**: Same as W but `PhDefaultStrategy=Trend` — trend-following in PH after target fires (control)
+
+### Results: 3 Target-Fire Days (Feb 11-13)
+
+| Date | No Resume (R) | PH Resume + MR (W) | PH Resume + Trend (X) |
+|------|---------------|---------------------|------------------------|
+| Feb 11 | $196.96 / 6t | $196.96 / 6t (MR_FLAT) | $196.96 / 6t (no PH trades) |
+| Feb 12 | $172.36 / 15t | **$186.92 / 17t** | **-$4.71 / 27t** |
+| Feb 13 | $179.18 / 6t | **$181.26 / 8t** | **$166.80 / 15t** |
+| **Subtotal** | **$548.50** | **$565.14** | **$359.05** |
+
+Non-target days (Feb 9-10): No change — PH Resume doesn't fire, results identical to Config R.
+
+### 5-Day Totals
+
+| Config | Total P/L | Trades | vs Baseline |
+|--------|-----------|--------|-------------|
+| R (no PH Resume) | $594.69 | 42 | — |
+| W (PH Resume + MR) | $611.33 | 46 | **+$16.64** |
+| X (PH Resume + Trend) | **$405.37** | 57 | **-$189.32** |
+
+### Key Findings
+
+1. **PH Resume + Trend is catastrophic**: Trend-following during PH on target-fire days destroyed $189 of gains. Feb 12 alone went from +$172 to -$5 — entire day's profit plus more wiped out.
+2. **PH Resume + MR is net positive**: +$16.64 incremental gain. MR correctly identifies choppy conditions and trades conservatively.
+3. **MR advantage over Trend in PH**: $206 difference ($565 vs $359). MR exists to protect against exactly this choppy-PH scenario.
+4. **Feb 11 was truly flat**: Both strategies stayed in cash — PH had no actionable entry signals.
+5. **MR fires late (15:51+)**: RSI + BB(20) on 5-min candles is conservative — only enters after significant band penetration late in session.
+6. **This answers "Next Step #1"**: We found the choppy PH days — they're the target-fire days where trend would resume and get destroyed.
+
+### Implications
+
+- **MR + PH Resume is the correct combined strategy**: Use MR (not trend) when resuming in PH after profit target fires
+- The old question "need data from genuinely choppy PH days" is answered: **Feb 12-13 are exactly that** — trend loses money, MR preserves/adds gains
+- MR's value isn't in replacing trend-following during normal PH (where it can subtract $14) — it's in **protecting profits during PH on high-volatility/choppy days**
+- Consider making PH Resume + MR the default configuration for days where daily target fires early
+
+### Open Tuning Questions
+1. Could MR fire earlier with relaxed RSI (35/65) or smaller BB window (15)?
+2. Would 3-min candles give more MR signals without the 1-min noise problem?
+3. Should PH Resume automatically select MR regardless of PhDefaultStrategy?

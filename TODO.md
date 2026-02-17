@@ -205,6 +205,38 @@
   - Should interact properly with existing `DailyProfitTarget` (daily takes precedence)
   - Key challenge: unrealized P/L tracking requires equity watermark per phase, not just realized
 
+## Mean Reversion Strategy (Implemented, Dormant)
+
+- [x] **Implement MR infrastructure for choppy session PH trading**
+  **DONE (2026-02-16)**: Full MR pipeline implemented across MarketBlocks + qqqBot. StrategyMode enum, BB/CHOP indicators, MR_LONG/MR_SHORT/MR_FLAT signals, %B configurable thresholds, candle-based BB feeding. All dormant by default. See EXPERIMENTS.md "Session: 2026-02-16" for full details.
+
+- [x] **Fix cascading re-entry after MR hard stop**
+  **DONE (2026-02-17)**: Added `_mrHardStopCooldown` flag to TraderEngine. After hard stop, MR entry signals are ignored until MR_FLAT resets the cycle. Impact: Config A Feb 12 went from 161 trades/-$2,551 to 13 trades/-$132.
+
+- [x] **Fix trailing stop and trim interference with MR**
+  **DONE (2026-02-17)**: Gated trailing stop and trim logic on `regime.ActiveStrategy != StrategyMode.MeanReversion`. MR uses its own exit (%B midline) and loss protection (hard stop). Minimal P/L impact but structurally correct.
+
+- [x] **Comprehensive MR parameter sweep (14+ configs)**
+  **DONE (2026-02-17)**: Tested BB windows 20/30/60, multipliers 2.0/2.5/3.0, entries 0.1-0.2, stops 0/0.3/0.5/0.9%, exits 0.4/0.5, PH-cold and full-day pre-warmed modes. **Every configuration loses money.** Best PH-only: -$441 (BB20,3.0). Best full-day MR contribution: -$147 (BB60,3.0). Root cause: BB bandwidth on 1-min candles ($5-20 profit potential) is smaller than round-trip execution costs (~$16 IOC slippage). See EXPERIMENTS.md for full results table.
+
+- [x] **Implement Research AI recommendations (5-min candles + RSI + ATR stops)**
+  **DONE (2026-02-19)**: Added StreamingRSI (Wilder's smoothing), ATR-based dynamic stops on QQQ benchmark, RSI(14) entry confirmation filter (oversold<30, overbought>70), 5-min candle aggregation for all MR indicators. 5 new settings, 10 files changed. Sweep R-V (5 configs × 5 dates): Best MR contribution = -$14.21 (90%+ improvement vs A-Q sweep). RSI filter validated as critical (saves $136 in losses). MR fires extremely rarely on 5-min candles — only 2 of 5 days show any activity. **Still net negative — MR remains dormant.** See EXPERIMENTS.md "Session: 2026-02-19".
+
+- [x] **PH Resume + MR investigation**
+  **DONE (2026-02-19)**: Tested Config W (PH Resume + MR) vs Config X (PH Resume + Trend) on target-fire days (Feb 11-13). **PH Resume + Trend is catastrophic** (-$189 vs no resume). **PH Resume + MR is net positive** (+$16.64). MR advantage over Trend in PH: $206. MR is the only safe strategy for PH Resume. See EXPERIMENTS.md "Session: PH Resume + MR Investigation".
+
+- [ ] **Fix CHOP override phase-awareness**
+  CHOP override currently applies globally across all phases. When enabled, it overrides BaseDefaultStrategy during Base phase, destroying good Trend performance. Should only override within the designated phase (e.g., only override during PH when PhDefaultStrategy=MR). Fix in `AnalystEngine.DetermineStrategyMode()`.
+
+- [x] **Separate BB candle interval from CHOP** *(prerequisite for viable MR)*
+  **DONE (2026-02-19)**: `ChopCandleSeconds` now controls aggregation for BB, CHOP, ATR, and RSI together (all share same 5-min candle). Tested in sweep R-V. The wider bands did solve the bandwidth-vs-execution-cost problem, but 5-min candles produce too few signals (BB %B rarely reaches 0.1/0.9 extremes).
+
+- [ ] **Reduce MR execution costs**
+  Use market/limit orders instead of IOC for MR entries/exits — MR doesn't need latency-sensitive execution. Or add a BB bandwidth filter (only trade when bandwidth > minimum threshold ensuring profit > cost).
+
+- [ ] **MR + trend slope confirmation**
+  Require both BB %B entry signal AND short-term slope alignment (e.g., MR_LONG only when slope is turning up) to reduce counter-trend entries.
+
   **Key data from analysis**:
   | Day | OV P/L | OV Peak | Base P/L | Full Day | Opportunity |
   |-----|--------|---------|----------|----------|-------------|

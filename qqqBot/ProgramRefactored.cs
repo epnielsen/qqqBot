@@ -621,7 +621,29 @@ public static class ProgramRefactored
             // Analyst Phase Reset
             AnalystPhaseResetMode = Enum.Parse<MarketBlocks.Bots.Domain.AnalystPhaseResetMode>(
                 configuration.GetValue("TradingBot:AnalystPhaseResetMode", "None")!, ignoreCase: true),
-            AnalystPhaseResetSeconds = configuration.GetValue("TradingBot:AnalystPhaseResetSeconds", 120)
+            AnalystPhaseResetSeconds = configuration.GetValue("TradingBot:AnalystPhaseResetSeconds", 120),
+            
+            // Mean Reversion Strategy
+            BaseDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(
+                configuration.GetValue("TradingBot:BaseDefaultStrategy", "Trend")!, ignoreCase: true),
+            PhDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(
+                configuration.GetValue("TradingBot:PhDefaultStrategy", "Trend")!, ignoreCase: true),
+            ChopOverrideEnabled = configuration.GetValue("TradingBot:ChopOverrideEnabled", false),
+            ChopUpperThreshold = configuration.GetValue("TradingBot:ChopUpperThreshold", 61.8m),
+            ChopLowerThreshold = configuration.GetValue("TradingBot:ChopLowerThreshold", 38.2m),
+            BollingerWindow = configuration.GetValue("TradingBot:BollingerWindow", 20),
+            BollingerMultiplier = configuration.GetValue("TradingBot:BollingerMultiplier", 2.0m),
+            ChopPeriod = configuration.GetValue("TradingBot:ChopPeriod", 14),
+            ChopCandleSeconds = configuration.GetValue("TradingBot:ChopCandleSeconds", 60),
+            MrEntryLowPctB = configuration.GetValue("TradingBot:MrEntryLowPctB", 0.2m),
+            MrEntryHighPctB = configuration.GetValue("TradingBot:MrEntryHighPctB", 0.8m),
+            MrExitPctB = configuration.GetValue("TradingBot:MrExitPctB", 0.5m),
+            MeanRevStopPercent = configuration.GetValue("TradingBot:MeanRevStopPercent", 0.003m),
+            MrAtrStopMultiplier = configuration.GetValue("TradingBot:MrAtrStopMultiplier", 2.0m),
+            MrRequireRsi = configuration.GetValue("TradingBot:MrRequireRsi", true),
+            MrRsiPeriod = configuration.GetValue("TradingBot:MrRsiPeriod", 14),
+            MrRsiOversold = configuration.GetValue("TradingBot:MrRsiOversold", 30m),
+            MrRsiOverbought = configuration.GetValue("TradingBot:MrRsiOverbought", 70m)
         };
         
         // Parse DynamicStopLoss (nested object with tiers)
@@ -720,6 +742,25 @@ public static class ProgramRefactored
         if (section["ProfitReinvestmentPercent"] != null) o.ProfitReinvestmentPercent = section.GetValue<decimal>("ProfitReinvestmentPercent");
         // Direction switch cooldown
         if (section["DirectionSwitchCooldownSeconds"] != null) o.DirectionSwitchCooldownSeconds = section.GetValue<int>("DirectionSwitchCooldownSeconds");
+        // Mean reversion strategy
+        if (section["BaseDefaultStrategy"] != null) o.BaseDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(section["BaseDefaultStrategy"]!, ignoreCase: true);
+        if (section["PhDefaultStrategy"] != null) o.PhDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(section["PhDefaultStrategy"]!, ignoreCase: true);
+        if (section["ChopOverrideEnabled"] != null) o.ChopOverrideEnabled = section.GetValue<bool>("ChopOverrideEnabled");
+        if (section["ChopUpperThreshold"] != null) o.ChopUpperThreshold = section.GetValue<decimal>("ChopUpperThreshold");
+        if (section["ChopLowerThreshold"] != null) o.ChopLowerThreshold = section.GetValue<decimal>("ChopLowerThreshold");
+        if (section["BollingerWindow"] != null) o.BollingerWindow = section.GetValue<int>("BollingerWindow");
+        if (section["BollingerMultiplier"] != null) o.BollingerMultiplier = section.GetValue<decimal>("BollingerMultiplier");
+        if (section["ChopPeriod"] != null) o.ChopPeriod = section.GetValue<int>("ChopPeriod");
+        if (section["ChopCandleSeconds"] != null) o.ChopCandleSeconds = section.GetValue<int>("ChopCandleSeconds");
+        if (section["MrEntryLowPctB"] != null) o.MrEntryLowPctB = section.GetValue<decimal>("MrEntryLowPctB");
+        if (section["MrEntryHighPctB"] != null) o.MrEntryHighPctB = section.GetValue<decimal>("MrEntryHighPctB");
+        if (section["MrExitPctB"] != null) o.MrExitPctB = section.GetValue<decimal>("MrExitPctB");
+        if (section["MeanRevStopPercent"] != null) o.MeanRevStopPercent = section.GetValue<decimal>("MeanRevStopPercent");
+        if (section["MrAtrStopMultiplier"] != null) o.MrAtrStopMultiplier = section.GetValue<decimal>("MrAtrStopMultiplier");
+        if (section["MrRequireRsi"] != null) o.MrRequireRsi = section.GetValue<bool>("MrRequireRsi");
+        if (section["MrRsiPeriod"] != null) o.MrRsiPeriod = section.GetValue<int>("MrRsiPeriod");
+        if (section["MrRsiOversold"] != null) o.MrRsiOversold = section.GetValue<decimal>("MrRsiOversold");
+        if (section["MrRsiOverbought"] != null) o.MrRsiOverbought = section.GetValue<decimal>("MrRsiOverbought");
         
         return o;
     }
