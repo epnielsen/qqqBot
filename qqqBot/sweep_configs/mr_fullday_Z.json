@@ -9,8 +9,7 @@
     "BenchmarkSymbol": "QQQ",
     "CryptoBenchmarkSymbol": "BTC/USD",
 
-    "//_COMMENT_BASE": "--- BASE CONFIG: MID-DAY LULL defaults (10:13 - 14:00) ---",
-    "//_COMMENT_BASE2": "--- Open Volatility and Power Hour are overridden via TimeRules below ---",
+    "//_COMMENT_SWEEP": "Config Z: Full aggressive — BB(10), mult 1.5, RSI 35/65. Maximum signal frequency.",
     "MinVelocityThreshold": 0.000015,
     "SMAWindowSeconds": 180,
     "SlopeWindowSize": 20,
@@ -45,23 +44,16 @@
     "TrimRatio": 0.75,
     "ProfitReinvestmentPercent": 0.5,
 
-    "//_COMMENT_DAILY_TARGET": "--- DAILY PROFIT TARGET ---",
     "DailyProfitTargetPercent": 1.75,
     "DailyProfitTargetRealtime": true,
     "DailyProfitTargetTrailingStopPercent": 0.3,
 
-    "//_COMMENT_DAILY_LOSS": "--- DAILY LOSS LIMIT ---",
     "DailyLossLimit": 0,
     "DailyLossLimitPercent": 0,
-    
-    "//_COMMENT_PH_RESUME": "--- PH RESUME MODE ---",
     "ResumeInPowerHour": true,
-    
-    "//_COMMENT_ANALYST_RESET": "--- ANALYST PHASE RESET (None / Cold / Partial) ---",
     "AnalystPhaseResetMode": "None",
     "AnalystPhaseResetSeconds": 120,
 
-    "//_COMMENT_STATIC": "--- STATIC SETTINGS (same across all phases) ---",
     "SlidingBand": false,
     "SlidingBandFactor": 0.75,
     "WatchBtc": false,
@@ -77,12 +69,10 @@
     "WarmUpIterations": 10000,
     "StatusLogIntervalSeconds": 5,
 
-    "//_COMMENT_MR": "--- MEAN REVERSION (PH only via PhDefaultStrategy) ---",
-    "//_COMMENT_MR2": "--- BB/RSI/ATR indicators run all day for warmup; MR signals gated to Power Hour ---",
     "PhDefaultStrategy": "MeanReversion",
     "ChopCandleSeconds": 300,
-    "BollingerWindow": 20,
-    "BollingerMultiplier": 2.0,
+    "BollingerWindow": 10,
+    "BollingerMultiplier": 1.5,
     "MrEntryLowPctB": 0.1,
     "MrEntryHighPctB": 0.9,
     "MrExitPctB": 0.5,
@@ -90,12 +80,10 @@
     "MrAtrStopMultiplier": 2.0,
     "MrRequireRsi": true,
     "MrRsiPeriod": 14,
-    "MrRsiOversold": 30,
-    "MrRsiOverbought": 70,
+    "MrRsiOversold": 35,
+    "MrRsiOverbought": 65,
     "ChopOverrideEnabled": false,
 
-    "//_COMMENT_TIMERULES": "--- TIME-BASED PHASE SWITCHING ---",
-    "//_COMMENT_TIMERULES2": "--- Only overrides that DIFFER from base config are specified ---",
     "TimeRules": [
       {
         "Name": "Open Volatility",
@@ -128,7 +116,6 @@
         }
       },
       {
-        "//_COMMENT": "PH uses Base settings (no overrides). TimeRule kept for phase detection (PH Resume).",
         "Name": "Power Hour",
         "StartTime": "14:00",
         "EndTime": "16:00",

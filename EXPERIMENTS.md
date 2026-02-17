@@ -1787,6 +1787,80 @@ Non-target days (Feb 9-10): No change — PH Resume doesn't fire, results identi
 - Consider making PH Resume + MR the default configuration for days where daily target fires early
 
 ### Open Tuning Questions
-1. Could MR fire earlier with relaxed RSI (35/65) or smaller BB window (15)?
+1. ~~Could MR fire earlier with relaxed RSI (35/65) or smaller BB window (15)?~~ → **Answered below** (no — relaxation is destructive)
 2. Would 3-min candles give more MR signals without the 1-min noise problem?
 3. Should PH Resume automatically select MR regardless of PhDefaultStrategy?
+
+---
+
+## Session: Research AI Tuning Recommendations Sweep (2026-02-16)
+
+**Context**: Research AI recommended: BB(10), mult 1.5-1.8, RSI 35/65 to address "late fire" (15:51+) issue. Hypothesis: shorter lookback + relaxed filters = earlier signals = more upside.
+
+### Configs Tested (all with PH Resume=true)
+
+| Config | BB Window | BB Mult | RSI | Change vs W |
+|--------|-----------|---------|-----|-------------|
+| **W** (baseline) | 20 | 2.0 | 30/70 | — |
+| **Y** | 10 | 2.0 | 30/70 | BB window only |
+| **Z** | 10 | 1.5 | 35/65 | Full aggressive |
+| **AA** | 10 | 1.8 | 35/65 | Moderate |
+| **AB** | 20 | 2.0 | 35/65 | RSI only |
+
+### Full Results (5 dates × 5 configs = 25 runs)
+
+| Config | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | **Total** | **vs W** |
+|--------|-------|--------|--------|--------|--------|-----------|----------|
+| **W** | $33.27 | $12.92 | $196.96 | $186.92 | $181.26 | **$611.33** | — |
+| **Y** | $11.22 | $12.92 | $196.96 | $186.92 | $181.26 | $589.28 | -$22 |
+| **Z** | -$15.24 | -$37.61 | $213.13 | $116.47 | $90.60 | $367.35 | **-$244** |
+| **AA** | -$15.24 | -$37.61 | $213.13 | $116.47 | $90.60 | $367.35 | **-$244** |
+| **AB** | $6.81 | -$37.61 | $229.30 | $116.47 | $90.60 | $405.57 | **-$206** |
+
+### Isolation Analysis
+
+**BB multiplier (1.5 vs 1.8)**: Zero impact. Z and AA are **bitwise identical** across all 5 dates. The multiplier is not a binding constraint — %B extremes are driven by BB window and price action, not std dev width.
+
+**BB window (10 vs 20)**: Minor impact. Y lost $22 vs W, all from Feb 9 (-$22.05); Feb 11-13 identical. BB(10) makes bands more reactive → marginal worse entries on non-target days. The "warmup lag" thesis is wrong — BB(20) on 5-min is warm (54 candles) by PH start at 14:00.
+
+**RSI relaxation (35/65 vs 30/70)**: **Dominant destructive factor**. Every config with RSI 35/65 lost $200+ vs W:
+- Feb 10: -$50 (new MR entries in PH hit stop losses)
+- Feb 12: -$70 (entered MR_LONG 5 min early at 15:46 — caught false bottom, run P/L -$45 vs W's +$14)
+- Feb 13: -$91 (similar premature entry, price hadn't actually bottomed)
+- Feb 11: +$32 (the one win — unlocked a trade W's strict RSI blocked)
+- Net: +$32 - $50 - $70 - $91 = **-$179 from RSI relaxation**
+
+### Why the Research AI's Diagnosis Was Wrong
+
+1. **"100-minute warmup lag" is not the issue**: Indicators run all day (full-day mode, not PH-cold). By 14:00, BB(20) has 270 min of data. The "late fire" at 15:51 isn't warmup lag — price genuinely doesn't reach %B 0.1/0.9 until then.
+
+2. **"Catching shallow reversals" backfires**: RSI 35/65 enters on marginal oversold/overbought that hasn't fully developed. On Feb 12, the "shallow" RSI ~35 entry at 15:46 caught a false bottom that continued lower. The "deep" RSI <30 entry at 15:51 (Config W) caught the actual reversal. Strict RSI = better fill quality.
+
+3. **"More signals = more upside" is wrong for MR**: In MR, trade quality matters more than quantity. One clean reversion from a genuine extreme (RSI <30 + %B <0.1) outperforms multiple noisy entries from marginal conditions.
+
+### Conclusion
+
+**Config W is definitively the best MR configuration.** The conservative RSI 30/70 filter correctly rejects premature MR entries. The "late fire" problem is not actually a problem — it's the bot waiting for high-quality setups. The research AI's thesis that faster/more-permissive parameters would unlock upside is empirically falsified.
+
+### Updated Tuning Priorities
+1. ~~BB window shrink~~ → Tested, hurts marginally
+2. ~~RSI relaxation~~ → Tested, destructive (-$179 to -$206)
+3. ~~BB multiplier reduction~~ → Tested, zero impact
+4. 3-min candles — untested, could provide more data points while keeping strict filters
+5. Slope confirmation for MR entries — untested, could improve entry timing without relaxing RSI
+
+---
+
+## Production Deployment: Config W (2026-02-16)
+
+**Changes to `appsettings.json`:**
+- `ResumeInPowerHour`: `false` → `true`
+- Added MR settings block: `PhDefaultStrategy=MeanReversion`, `ChopCandleSeconds=300`, `BollingerWindow=20`, `BollingerMultiplier=2.0`, `MrEntryLowPctB=0.1`, `MrEntryHighPctB=0.9`, `MrExitPctB=0.5`, `MeanRevStopPercent=0.003`, `MrAtrStopMultiplier=2.0`, `MrRequireRsi=true`, `MrRsiPeriod=14`, `MrRsiOversold=30`, `MrRsiOverbought=70`, `ChopOverrideEnabled=false`
+
+**Regression verified**: Feb 12 replay = $186.92 / 17 trades (exact Config W match)
+
+**Expected behavior**:
+- OV + Base: Unchanged trend-following (MR indicators warm up silently)
+- PH (no target fired): MR signals during PH; typically MR_FLAT (no trades) unless extreme %B reached
+- PH (after target fired): PH Resume activates → MR protects profits instead of trend whipsaws
+- 5-day backtest: $611.33 / 46 trades (+$3 vs no-resume baseline)

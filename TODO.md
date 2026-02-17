@@ -225,6 +225,9 @@
 - [x] **PH Resume + MR investigation**
   **DONE (2026-02-19)**: Tested Config W (PH Resume + MR) vs Config X (PH Resume + Trend) on target-fire days (Feb 11-13). **PH Resume + Trend is catastrophic** (-$189 vs no resume). **PH Resume + MR is net positive** (+$16.64). MR advantage over Trend in PH: $206. MR is the only safe strategy for PH Resume. See EXPERIMENTS.md "Session: PH Resume + MR Investigation".
 
+- [x] **Test Research AI parameter tuning recommendations**
+  **DONE (2026-02-16)**: Tested BB(10), mult 1.5/1.8, RSI 35/65 in 5 configs (Y/Z/AA/AB) × 5 dates = 25 runs. **Every recommendation lost money vs Config W**: Y=-$22, Z/AA=-$244, AB=-$206. RSI relaxation (35/65) is the primary destructive factor — enters on premature reversals that haven't bottomed. BB multiplier change (1.5 vs 1.8) has literally zero impact. BB window shrink (20→10) marginally hurts. **Config W (conservative BB20, RSI 30/70, PH Resume) confirmed as best.** See EXPERIMENTS.md "Session: Research AI Tuning Recommendations Sweep".
+
 - [ ] **Fix CHOP override phase-awareness**
   CHOP override currently applies globally across all phases. When enabled, it overrides BaseDefaultStrategy during Base phase, destroying good Trend performance. Should only override within the designated phase (e.g., only override during PH when PhDefaultStrategy=MR). Fix in `AnalystEngine.DetermineStrategyMode()`.
 
