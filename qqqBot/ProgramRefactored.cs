@@ -600,6 +600,8 @@ public static class ProgramRefactored
             DisplacementAtrMultiplier = configuration.GetValue("TradingBot:DisplacementAtrMultiplier", 2.0m),
             DisplacementChopThreshold = configuration.GetValue("TradingBot:DisplacementChopThreshold", 40m),
             DisplacementBbwLookback = configuration.GetValue("TradingBot:DisplacementBbwLookback", 20),
+            DisplacementSlopeWindow = configuration.GetValue("TradingBot:DisplacementSlopeWindow", 10),
+            DisplacementMinSlope = configuration.GetValue("TradingBot:DisplacementMinSlope", 0m),
             // Low-Latency Mode Settings
             LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
             UseIocOrders = configuration.GetValue("TradingBot:UseIocOrders", false),
@@ -733,6 +735,8 @@ public static class ProgramRefactored
         if (section["DisplacementAtrMultiplier"] != null) o.DisplacementAtrMultiplier = section.GetValue<decimal>("DisplacementAtrMultiplier");
         if (section["DisplacementChopThreshold"] != null) o.DisplacementChopThreshold = section.GetValue<decimal>("DisplacementChopThreshold");
         if (section["DisplacementBbwLookback"] != null) o.DisplacementBbwLookback = section.GetValue<int>("DisplacementBbwLookback");
+        if (section["DisplacementSlopeWindow"] != null) o.DisplacementSlopeWindow = section.GetValue<int>("DisplacementSlopeWindow");
+        if (section["DisplacementMinSlope"] != null) o.DisplacementMinSlope = section.GetValue<decimal>("DisplacementMinSlope");
         if (section["EntryConfirmationTicks"] != null) o.EntryConfirmationTicks = section.GetValue<int>("EntryConfirmationTicks");
         if (section["BearEntryConfirmationTicks"] != null) o.BearEntryConfirmationTicks = section.GetValue<int>("BearEntryConfirmationTicks");
         if (section["BullOnlyMode"] != null) o.BullOnlyMode = section.GetValue<bool>("BullOnlyMode");

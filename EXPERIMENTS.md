@@ -2481,3 +2481,169 @@ Fetched Tradier streaming API documentation. Key findings for future CVD impleme
 5. **Feb 9 winning trade anatomy**: CHOP=37.3 (trending, < 40), displacement 2.90 > 2.0×ATR=2.87, bought TQQQ at $51.32, sold at $51.34, profit +$3.88.
 
 6. **Research AI was right about CHOP < 40.** Feb 9 triggers with validated CHOP=37.3 and the Feb 9 entries at CHOP=43-49 (which cascaded under the old code) would have been correctly rejected by CHOP<40 + one-shot.
+
+---
+
+### Session: 2026-02-19 (Part 2) — AND Logic, Slope Filter, MR Suppression
+
+**Context**: Research AI evaluated the Part 1 implementation and identified three improvements:
+1. **OR→AND logic**: BBW expansion alone (without CHOP confirmation) allows entries in high-volatility chop (shakeouts)
+2. **Slope filter**: Add price velocity check to distinguish "drift" from "drive"
+3. **MR phase suppression**: Displacement is a trend mechanism, shouldn't fire during MR (Power Hour)
+
+**Changes Made**:
+- **OR→AND gate**: `chopValid || bbwValid` → `chopValid && bbwValid`. Disabled indicators default to `true` (pass).
+- **Slope filter**: Added `DisplacementSlopeWindow` (10) and `DisplacementMinSlope` (0m) settings. New `StreamingSlope` tracks candle close prices. Directional check: slope must match displacement direction.
+- **CHOP threshold**: Raised from 40 → 50 per Research AI recommendation
+- **MR suppression**: Added `_activeStrategy != StrategyMode.MeanReversion` guard to displacement check
+- **Settings pipeline**: 2 new settings wired through TradingSettings (×2), TimeBasedRule, TimeRuleApplier (5 sections), ProgramRefactored (2 sections), appsettings.json
+
+**Critical Discovery — MR Override Bug**:
+During debugging, discovered that displacement entries fire inside `DetermineSignal()` but are overridden by `DetermineMeanReversionSignal()` in `ProcessTick()` during MR phases (Power Hour). The displacement signal sets `newSignal = "BULL"` but MR replaces `signal` with `MR_FLAT/MR_SHORT`.
+
+This means the previous session's $827.52 was likely measured from a transient code state. The committed code's displacement entries all fired during Power Hour (MR mode) and were silently overridden to zero effect.
+
+Attempted fix: restoring displacement signal over MR override in ProcessTick. **Result: -$40.02 on Feb 9** (was +$5.55). The displacement entered BULL during a directionless Power Hour market and lost $32.30. This validates the Research AI's warning about entries in non-trending markets.
+
+**Final fix**: Added `_activeStrategy != StrategyMode.MeanReversion` to displacement guard. This prevents:
+1. Wasted computation during MR phases
+2. State inconsistency (`_lastSignal` diverging from emitted signal)
+3. Log spam from "Restoring" overrides
+
+**Replay Results (7-day, Feb 9-13 + 17-18)**:
+
+| Configuration | Total P/L | Delta vs Baseline |
+|---|---|---|
+| Baseline (displacement off) | $823.64 | — |
+| AND logic + CHOP<50 + slope=0 | $823.64 | $0.00 |
+| MR override attempted (unsafe) | $700.07 | -$123.57 |
+
+**Per-day breakdown (AND logic, final)**:
+| Date | P/L | Displacement | Notes |
+|---|---|---|---|
+| Feb 9 | $5.55 | Fires (14:27 MR) | Suppressed — MR phase |
+| Feb 10 | $12.92 | Fires (MR phase) | Suppressed |
+| Feb 11 | $196.96 | Fires (MR phase) | Suppressed |
+| Feb 12 | $186.92 | None | No stop-out → no displacement |
+| Feb 13 | $174.99 | Fires (MR phase) | Suppressed |
+| Feb 17 | $89.22 | None | No stop-out → no displacement |
+| Feb 18 | $157.08 | Fires (MR phase) | Suppressed |
+
+**Key Findings**:
+
+1. **All displacement opportunities in this dataset occur during Power Hour (MR mode).** The Base phase (Trend mode) stop-outs don't lead to sufficient displacement before Power Hour begins. This means displacement re-entry is effectively dormant on this dataset.
+
+2. **MR override is dangerous.** Forcing displacement entries during MR mode lost $123.57 over 7 days. The MR regime correctly suppresses these entries because post-stop-out price movements during Power Hour are mean-reverting, not trending.
+
+3. **AND logic is structurally correct.** Even though it's P/L-neutral on this dataset, it prevents the theoretical "high-volatility chop" entry that OR logic would allow. This is a safety improvement for when displacement activates during Trend phases.
+
+4. **Slope filter is plumbed but untested.** `DisplacementMinSlope = 0` (disabled) because displacement doesn't fire during Trend phases in this dataset. The infrastructure (StreamingSlope feeding, directional check, normalization) is ready for when displacement has trend-phase opportunities.
+
+5. **Previous $827.52 was likely invalid.** The displacement entries that produced +$3.88 in the prior session were probably from a transient code state between edits, not from the final committed code.
+
+**Current Settings** (appsettings.json):
+```json
+{
+  "DisplacementReentryEnabled": true,
+  "DisplacementReentryPercent": 0.005,
+  "DisplacementAtrMultiplier": 2.0,
+  "DisplacementChopThreshold": 50,
+  "DisplacementBbwLookback": 20,
+  "DisplacementSlopeWindow": 10,
+  "DisplacementMinSlope": 0
+}
+```
+
+---
+
+### Session: 2026-02-19 (Part 3) — Dynamic Regime Switching, Slope Activation, Scramble
+
+**Context**: Research AI provided detailed evaluation of Part 2's implementation report ("20260219-02"). Three specific action items:
+1. **Dynamic Regime Switching**: Enable `ChopOverrideEnabled` so CHOP < 38.2 during PH switches from MR → Trend (allows displacement to fire during end-of-day trend runs)
+2. **Slope Activation**: Set `DisplacementMinSlope = 0.0002` to enable the velocity filter
+3. **Scramble (One-Shot Reset)**: Reset `_displacementConsumedThisPhase` when `|slope| > 2× threshold && CHOP < 35` — allows second re-entry when momentum accelerates
+
+**Changes Made**:
+
+1. **`ChopOverrideEnabled`**: Set `true` in appsettings.json. Modified `DetermineStrategyMode()` to restrict CHOP override to Power Hour only (prevents Base phase MR override that kills profitable trend trades).
+
+2. **`DisplacementMinSlope`**: Set `0.0002` in appsettings.json. Slope filter infrastructure from Part 2 already complete.
+
+3. **Scramble code**: Added between displacement block and displacement tracking block in `DetermineSignal()`. Logic:
+   ```
+   if (consumed && !MR && MinSlope > 0 && slope.Ready && chop.Ready)
+       if (|normalizedSlope| > 2× MinSlope && CHOP < 35)
+           _displacementConsumedThisPhase = false  // unlock for next re-entry
+   ```
+
+**Replay Results — Full CHOP Override (global):**
+
+First attempt: `ChopOverrideEnabled = true` globally (affects both Base and PH phases).
+
+| Date | Baseline | Global Override | Delta |
+|---|---|---|---|
+| Feb 9 | +$5.55 | -$51.56 | -$57.11 |
+| Feb 10 | +$12.92 | -$49.74 | -$62.66 |
+| Feb 11 | +$196.96 | +$196.96 | $0.00 |
+| Feb 12 | +$186.92 | +$105.72 | -$81.20 |
+| Feb 13 | +$174.99 | +$174.28 | -$0.71 |
+| Feb 17 | +$89.22 | +$13.62 | -$75.60 |
+| Feb 18 | +$157.08 | -$41.74 | -$198.82 |
+| **Total** | **$823.64** | **$347.54** | **-$476.10** |
+
+**Catastrophic.** Global CHOP override switches Base phase to MR when CHOP > 61.8, destroying profitable trend trades.
+
+**Replay Results — PH-Only CHOP Override:**
+
+Modified `DetermineStrategyMode()` to add `currentPhase == "Power Hour"` guard. Base phase unaffected.
+
+| Date | Baseline | PH-Only Override | Delta |
+|---|---|---|---|
+| Feb 9 | +$5.55 | -$51.56 | -$57.11 |
+| Feb 10 | +$12.92 | +$12.92 | $0.00 |
+| Feb 11 | +$196.96 | +$196.96 | $0.00 |
+| Feb 12 | +$186.92 | +$105.72 | -$81.20 |
+| Feb 13 | +$174.99 | +$174.28 | -$0.71 |
+| Feb 17 | +$89.22 | +$77.10 | -$12.12 |
+| Feb 18 | +$157.08 | -$41.74 | -$198.82 |
+| **Total** | **$823.64** | **$473.68** | **-$349.96** |
+
+**Still catastrophic.** Even PH-only, the CHOP override destabilizes the MR strategy. When CHOP briefly dips below 38.2 during PH, the bot switches to un-tuned Trend logic. PH trend parameters (velocity, SMA, cruise control) are optimized for Base phase, not Power Hour dynamics.
+
+**Final Configuration**: Reverted `ChopOverrideEnabled = false`. Full 7-day replay: **$823.64** (baseline match).
+
+**Key Findings**:
+
+1. **CHOP override is destructive on this dataset.** PH CHOP readings oscillate around 38.2 frequently enough to cause harmful mode switches. The MR strategy's Bollinger Band %B logic is better suited to PH price action than the trend velocity/SMA logic.
+
+2. **Trend parameters aren't PH-tuned.** The Trend strategy uses Base-phase-optimized velocity thresholds, SMA window, slope gates, etc. These don't transfer to PH — different volatility profile, shorter time horizon, and different market microstructure.
+
+3. **Feature readiness preserved.** All three features have correct infrastructure:
+   - `DetermineStrategyMode()` restricted to PH (correct for future use)
+   - Slope filter active at 0.0002 (dormant — displacement suppressed during MR)
+   - Scramble logic plumbed (dormant — requires consumed displacement + CHOP < 35)
+
+4. **Displacement remains dormant.** With `ChopOverrideEnabled = false`, all displacement opportunities still fall during MR phases and are suppressed. Slope filter and scramble are correctly gated but have no opportunities to activate.
+
+5. **Research AI's theory vs practice.** The "Trend Rescue" concept is sound in principle — rare trend days during PH should allow trend re-entry. But the implementation requires PH-specific trend parameters, not reusing Base parameters. This is a larger architectural change.
+
+**What's Needed Before ChopOverrideEnabled Can Work**:
+- PH-specific Trend parameters (velocity, SMA window, slope gates) — possibly via TimeRules override
+- A wider date range with genuine PH trend days for testing
+- Tighter CHOP threshold (e.g., < 25 instead of 38.2) to reduce false switches
+
+**Current Settings** (appsettings.json):
+```json
+{
+  "DisplacementReentryEnabled": true,
+  "DisplacementReentryPercent": 0.005,
+  "DisplacementAtrMultiplier": 2.0,
+  "DisplacementChopThreshold": 50,
+  "DisplacementBbwLookback": 20,
+  "DisplacementSlopeWindow": 10,
+  "DisplacementMinSlope": 0.0002,
+  "ChopOverrideEnabled": false,
+  "ChopLowerThreshold": 38.2,
+  "ChopUpperThreshold": 61.8
+}
+```
