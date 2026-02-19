@@ -75,8 +75,12 @@ class TradingSettings
     public decimal DriftTrailingStopPercent { get; set; } = 0m; // 0 = use normal TrailingStopPercent. >0 = wider stop for drift entries
     
     // DISPLACEMENT RE-ENTRY: re-enter after stop-out when price has drifted significantly
+    // Regime-validated: requires either trending market (low CHOP) OR volatility expansion (BBW > SMA(BBW))
     public bool DisplacementReentryEnabled { get; set; }
     public decimal DisplacementReentryPercent { get; set; } = 0.005m;
+    public decimal DisplacementAtrMultiplier { get; set; } = 2.0m;
+    public decimal DisplacementChopThreshold { get; set; } = 40m;
+    public int DisplacementBbwLookback { get; set; } = 20;
     
     public bool UseMarketableLimits { get; set; } = false; // Use limit orders instead of market orders
     public decimal MaxSlippagePercent { get; set; } = 0.002m; // 0.2% max slippage for limit orders

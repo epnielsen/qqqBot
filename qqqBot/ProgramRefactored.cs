@@ -597,6 +597,9 @@ public static class ProgramRefactored
             DriftTrailingStopPercent = configuration.GetValue("TradingBot:DriftTrailingStopPercent", 0m),
             DisplacementReentryEnabled = configuration.GetValue("TradingBot:DisplacementReentryEnabled", false),
             DisplacementReentryPercent = configuration.GetValue("TradingBot:DisplacementReentryPercent", 0.005m),
+            DisplacementAtrMultiplier = configuration.GetValue("TradingBot:DisplacementAtrMultiplier", 2.0m),
+            DisplacementChopThreshold = configuration.GetValue("TradingBot:DisplacementChopThreshold", 40m),
+            DisplacementBbwLookback = configuration.GetValue("TradingBot:DisplacementBbwLookback", 20),
             // Low-Latency Mode Settings
             LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
             UseIocOrders = configuration.GetValue("TradingBot:UseIocOrders", false),
@@ -727,6 +730,9 @@ public static class ProgramRefactored
         if (section["DriftTrailingStopPercent"] != null) o.DriftTrailingStopPercent = section.GetValue<decimal>("DriftTrailingStopPercent");
         if (section["DisplacementReentryEnabled"] != null) o.DisplacementReentryEnabled = section.GetValue<bool>("DisplacementReentryEnabled");
         if (section["DisplacementReentryPercent"] != null) o.DisplacementReentryPercent = section.GetValue<decimal>("DisplacementReentryPercent");
+        if (section["DisplacementAtrMultiplier"] != null) o.DisplacementAtrMultiplier = section.GetValue<decimal>("DisplacementAtrMultiplier");
+        if (section["DisplacementChopThreshold"] != null) o.DisplacementChopThreshold = section.GetValue<decimal>("DisplacementChopThreshold");
+        if (section["DisplacementBbwLookback"] != null) o.DisplacementBbwLookback = section.GetValue<int>("DisplacementBbwLookback");
         if (section["EntryConfirmationTicks"] != null) o.EntryConfirmationTicks = section.GetValue<int>("EntryConfirmationTicks");
         if (section["BearEntryConfirmationTicks"] != null) o.BearEntryConfirmationTicks = section.GetValue<int>("BearEntryConfirmationTicks");
         if (section["BullOnlyMode"] != null) o.BullOnlyMode = section.GetValue<bool>("BullOnlyMode");

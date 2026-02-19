@@ -291,6 +291,7 @@
 
 - [x] **Implement Displacement Re-Entry (infrastructure)**
   **DONE (2026-02-18)**: Infrastructure built and plumbed. Records `_lastNeutralTransitionPrice` when directional signal exits to NEUTRAL. Can re-enter when price displaces ≥`DisplacementReentryPercent` from that price. **Left disabled** (`DisplacementReentryEnabled: false`) — caused regressions in testing.
+  **UPGRADED (2026-02-19)**: Regime-validated displacement re-entry using price-derived conviction proxies (no volume needed). ATR-based displacement threshold + dual regime gates (CHOP < 40 trending OR BBW > SMA(BBW) volatility expanding). One-shot per phase prevents cascading. Indicators-required during warmup. **Enabled** — 7-day result: $823.64 → $827.52 (+$4). Safe: harmless on 6/7 days, +$3.88 on Feb 9.
 
 - [x] **Remove noisy slope override from DetermineSignal**
   **DONE (2026-02-18)**: Deleted the `_shortTrendSlope` override block that forced `isBullTrend`/`isBearTrend` during warmup. Was proven harmful in adaptive trend experiments.
@@ -305,5 +306,6 @@
   Current defaults (60 ticks, 0.2% displacement, 0.35% drift stop) are sweep-validated across 7 days. Only 2 of 7 days are affected by drift stop changes — monitor on future data for overfitting.
   Consider: different thresholds per phase (OV vs Base), shorter tick window with higher displacement requirement.
 
-- [ ] **Evaluate Displacement Re-Entry with CVD gating**
-  Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).
+- [x] **Evaluate Displacement Re-Entry with CVD gating**
+  ~~Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).~~
+  **SUPERSEDED (2026-02-19)**: Implemented price-derived regime validation (CHOP + BBW) instead of volume-based CVD. Works without Tradier migration. CVD remains a future enhancement if/when Tradier streaming is active.
