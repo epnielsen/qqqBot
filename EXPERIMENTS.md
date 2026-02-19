@@ -2272,11 +2272,136 @@ Reset logic in ColdReset and PartialReset: counters, flags, and displacement pri
 
 5. **Drift maintenance is essential.** Without `_isDriftEntry` sticky hold, the velocity gate immediately exits drift positions on the next tick (stalled→NEUTRAL). The maintenance block bypasses velocity logic while price stays on correct side of SMA.
 
+### Current Settings (after Drift Mode session)
+```json
+"DriftModeEnabled": true,
+"DriftModeConsecutiveTicks": 60,
+"DriftModeMinDisplacementPercent": 0.002,
+"DisplacementReentryEnabled": false,
+"DisplacementReentryPercent": 0.005,
+"EnableAdaptiveTrendWindow": false
+```
+
+---
+
+## Session 2026-02-18 (continued) — ATR-Dynamic Drift Threshold & Drift Trailing Stop
+
+### Context
+Research AI consultation proposed 4 improvements to Drift Mode. After feasibility assessment, two were selected:
+1. **#1: ATR-dynamic drift displacement threshold** — scale displacement threshold with intraday volatility so the bar rises automatically on high-vol days
+2. **#3: ATR trailing stop for drift entries** — use a wider stop (like TrendRescue) for drift entries since they catch gradual moves that need more breathing room
+
+Also researched: **Tradier streaming API volume data** for future CVD-gated Displacement Re-Entry.
+
+### Changes Implemented
+
+#### 1. ATR-Dynamic Drift Threshold (AnalystEngine)
+
+**Design evolution:**
+- **Initial approach**: Replace fixed threshold with `K × ATR / price`. At K=1.0, ATR=$0.59, price=$614 → dynamic threshold = 0.097%. This was **half** the fixed 0.2%, admitting noise entries.
+- **Feb 9 regression**: -$93 swing (+$33→-$60) because 0.097% threshold let drift fire on marginal price displacement that wasn't a real trend.
+- **Final design**: `max(fixed, K × ATR / price)` — ATR only RAISES the displacement bar in high-volatility conditions, never lowers below the proven fixed floor.
+
+**Implementation** (AnalystEngine.cs, drift threshold computation):
+```csharp
+decimal atrThreshold = _settings.DriftModeAtrMultiplier * _mrAtr.CurrentValue / currentSma;
+driftThreshold = Math.Max(_settings.DriftModeMinDisplacementPercent, atrThreshold);
+```
+
+Log format: `max(Fixed 0.200%, ATR 0.097%)=0.200%` — shows which side of the max won.
+
+**New setting**: `DriftModeAtrMultiplier` (decimal, default 0m). 0 = use fixed threshold only. >0 = use `max(fixed, K × ATR / price)`. Currently set to 1.0.
+
+**Result**: Neutral on current 7-day data (ATR threshold never exceeds fixed 0.2% on any tested day). Infrastructure is ready for high-vol days where ATR will automatically raise the bar.
+
+#### 2. Drift Trailing Stop (TraderEngine)
+
+**Design**: Drift entries use a separate, wider trailing stop that bypasses the DynamicStopLoss ratchet — identical pattern to TrendRescue trailing stop. Priority chain in `EvaluateTrailingStop`:
+1. If `_isDriftPosition && DriftTrailingStopPercent > 0` → use drift stop
+2. Else if `_isTrendRescuePosition && TrendRescueTrailingStopPercent > 0` → use TrendRescue stop
+3. Else → normal TrailingStopPercent with ratchet
+
+**New field**: `_isDriftPosition` (bool) — set when entering on a drift signal, cleared at all 3 position-clear locations.
+
+**New MarketRegime field**: `IsDriftEntry` (bool) — propagated from AnalystEngine to TraderEngine via the regime channel.
+
+**New setting**: `DriftTrailingStopPercent` (decimal, default 0m). 0 = use normal TrailingStopPercent.
+
+**Bug fix discovered**: BEAR entry setup at ~L2208 never set `_isTrendRescuePosition` — only used `_settings.TrailingStopPercent`. Fixed by adding full drift/rescue priority logic matching the BULL entry pattern.
+
+#### 3. Full Plumbing (10 files changed)
+
+| File | Changes |
+|------|---------|
+| `MarketRegime.cs` | Added `bool IsDriftEntry = false` parameter |
+| `TradingSettings.cs` (MarketBlocks) | Added `DriftModeAtrMultiplier`, `DriftTrailingStopPercent` |
+| `TradingSettings.cs` (qqqBot) | Mirror of above |
+| `TimeBasedRule.cs` | Added nullable override properties |
+| `TimeRuleApplier.cs` | Updated all 5 sections: snapshot, restore, apply, log, SettingsSnapshot |
+| `ProgramRefactored.cs` | BuildTradingSettings + ParseOverrides |
+| `AnalystEngine.cs` | max() threshold, IsDriftEntry propagation |
+| `TraderEngine.cs` | _isDriftPosition field, EvaluateTrailingStop, BULL/BEAR entry, 3 resets |
+| `appsettings.json` | New settings added |
+
+### Replay Sweep Results
+
+**Baseline**: $803.55 (Drift Mode ON, new features OFF = DriftTrailingStopPercent=0, DriftModeAtrMultiplier=1.0 with max() = neutral)
+
+**DriftTrailingStopPercent sweep** (7 dates: Feb 9-13, 17, 18):
+
+| DriftStop | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | Feb 17 | Feb 18 | Total | Delta |
+|-----------|-------|--------|--------|--------|--------|--------|--------|-------|-------|
+| 0% (baseline) | +$33.27 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$41.41 | +$157.08 | **$803.55** | — |
+| 0.25% | +$23.37 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$14.06 | +$157.08 | $766.30 | -$37 |
+| **0.30%** | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$82.98 | +$157.08 | $817.40 | +$14 |
+| **0.35%** | **+$5.55** | **+$12.92** | **+$196.96** | **+$186.92** | **+$174.99** | **+$89.22** | **+$157.08** | **$823.64** | **+$20** |
+| 0.40% | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$74.52 | +$157.08 | $808.94 | +$5 |
+| 0.50% | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$44.34 | +$157.08 | $778.76 | -$25 |
+| 0.80% | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$44.34 | +$157.08 | $778.76 | -$25 |
+
+**Observations:**
+- Only **2 of 7 days** are affected by drift trailing stop (Feb 9 and Feb 17). All other days show identical P/L regardless of setting.
+- **Feb 9 regression**: Any stop ≥0.3% causes -$28 (binary — same result at 0.3%, 0.35%, 0.4%, 0.5%, 0.8%). A wider stop lets a bad drift entry hold too long.
+- **Feb 17 improvement**: Smoothly increases from +$14 at 0.25% to peak at +$89 at 0.35%, then declines. The wider stop lets a good drift entry ride through a pullback.
+- **0.35% is the optimum**: Feb 17 gain (+$48) outweighs Feb 9 loss (-$28). Net: +$20 improvement.
+- **0.35% is between normal (0.2%) and TrendRescue (0.5%)**: Makes sense — drift entries are less confident than TrendRescue but more confident than normal velocity entries.
+
+**ATR threshold test** (replace fixed with K×ATR/price, no max()):
+
+| Config | Feb 9 | Total | Notes |
+|--------|-------|-------|-------|
+| ATR replaces fixed, DriftStop=0.8% | -$59.83 | $629.22 | ATR threshold too low (0.097%) |
+| max() + DriftStop=0.8% | +$5.55 | $694.60 | Fixed floor restored |
+| max() + DriftStop=0% | +$33.27 | $803.55 | Identical to baseline (ATR neutral) |
+
+The ATR threshold at K=1.0 produces 0.097% on current data — always below the 0.2% fixed floor. The max() design makes it invisible on normal-vol days but will automatically protect on high-vol days when ATR spikes.
+
+### Tradier Streaming Volume Research
+
+Fetched Tradier streaming API documentation. Key findings for future CVD implementation:
+
+- **Trade events**: Include `size` (per-trade volume in shares) and `cvol` (cumulative session volume). Direct feed of individual trade prints.
+- **Timesale events**: Include `size` + `bid` + `ask` at time of trade. This enables CVD computation by comparing trade price to bid/ask midpoint.
+- **CVD computation**: `if (trade_price > midpoint) → CVD += size; else CVD -= size` — standard tick-level CVD.
+- **Implication**: Tradier migration (Phase 1 — market data) is prerequisite for CVD-gated Displacement Re-Entry. Alpaca streaming does not provide per-trade volume or bid/ask context needed for CVD.
+
+### Key Findings
+
+1. **max() design is critical for ATR threshold.** Replacing fixed threshold with ATR alone halves the bar on normal days (0.097% vs 0.2%). The asymmetric `max()` preserves the proven floor while adding upside protection for volatile days.
+
+2. **0.35% drift trailing stop is the sweet spot.** Wider than normal (0.2%) to give gradual moves breathing room. Narrower than TrendRescue (0.5%) because drift entries are less directionally confident. Net +$20 improvement across 7 days.
+
+3. **Two-day overfitting risk.** Only Feb 9 and Feb 17 are affected by drift stop changes. The 0.35% value is optimal on this sample but should be monitored on future data.
+
+4. **BEAR entry had missing TrendRescue handling.** Fixed as part of this implementation — BEAR entry setup now has full drift/rescue/normal stop priority logic matching BULL.
+
 ### Current Settings
 ```json
 "DriftModeEnabled": true,
 "DriftModeConsecutiveTicks": 60,
 "DriftModeMinDisplacementPercent": 0.002,
+"DriftModeAtrMultiplier": 1.0,
+"DriftTrailingStopPercent": 0.0035,
 "DisplacementReentryEnabled": false,
 "DisplacementReentryPercent": 0.005,
 "EnableAdaptiveTrendWindow": false

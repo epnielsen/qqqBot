@@ -71,6 +71,8 @@ class TradingSettings
     public bool DriftModeEnabled { get; set; }
     public int DriftModeConsecutiveTicks { get; set; } = 60;
     public decimal DriftModeMinDisplacementPercent { get; set; } = 0.002m;
+    public decimal DriftModeAtrMultiplier { get; set; } = 0m; // 0 = use fixed percent only. >0 = use max(fixed, K × ATR / price) for adaptive threshold
+    public decimal DriftTrailingStopPercent { get; set; } = 0m; // 0 = use normal TrailingStopPercent. >0 = wider stop for drift entries
     
     // DISPLACEMENT RE-ENTRY: re-enter after stop-out when price has drifted significantly
     public bool DisplacementReentryEnabled { get; set; }

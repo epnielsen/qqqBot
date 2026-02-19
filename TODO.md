@@ -295,8 +295,15 @@
 - [x] **Remove noisy slope override from DetermineSignal**
   **DONE (2026-02-18)**: Deleted the `_shortTrendSlope` override block that forced `isBullTrend`/`isBearTrend` during warmup. Was proven harmful in adaptive trend experiments.
 
-- [ ] **Tune Drift Mode thresholds further**
-  Current defaults (60 ticks, 0.2% displacement) are sweep-validated across 7 days but could benefit from fine-tuning. Consider: different thresholds per phase (OV vs Base), shorter tick window with higher displacement requirement, or longer window with lower displacement.
+- [x] **ATR-dynamic drift threshold + drift trailing stop**
+  **DONE (2026-02-18)**: Two enhancements to Drift Mode:
+  1. **ATR threshold**: `max(fixed, K × ATR / price)` — ATR raises displacement bar in high-vol, never lowers below 0.2% floor. Neutral on current data (ATR always below fixed). Setting: `DriftModeAtrMultiplier: 1.0`.
+  2. **Drift trailing stop**: Wider stop for drift entries (like TrendRescue pattern). Swept 0.25%-0.8%, optimum at **0.35%**. Net +$20 improvement ($803→$824). Setting: `DriftTrailingStopPercent: 0.0035`.
+  Also fixed: BEAR entry setup was missing TrendRescue handling. 10 files changed across both repos. See EXPERIMENTS.md.
 
-- [ ] **Evaluate Displacement Re-Entry with different thresholds**
-  Global displacement re-entry causes regressions. Consider: OV-only enabling, ATR-scaled threshold instead of fixed %, or combined with drift mode counters.
+- [ ] **Tune Drift Mode thresholds further**
+  Current defaults (60 ticks, 0.2% displacement, 0.35% drift stop) are sweep-validated across 7 days. Only 2 of 7 days are affected by drift stop changes — monitor on future data for overfitting.
+  Consider: different thresholds per phase (OV vs Base), shorter tick window with higher displacement requirement.
+
+- [ ] **Evaluate Displacement Re-Entry with CVD gating**
+  Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).

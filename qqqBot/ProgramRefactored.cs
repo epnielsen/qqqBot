@@ -593,6 +593,8 @@ public static class ProgramRefactored
             DriftModeEnabled = configuration.GetValue("TradingBot:DriftModeEnabled", false),
             DriftModeConsecutiveTicks = configuration.GetValue("TradingBot:DriftModeConsecutiveTicks", 60),
             DriftModeMinDisplacementPercent = configuration.GetValue("TradingBot:DriftModeMinDisplacementPercent", 0.002m),
+            DriftModeAtrMultiplier = configuration.GetValue("TradingBot:DriftModeAtrMultiplier", 0m),
+            DriftTrailingStopPercent = configuration.GetValue("TradingBot:DriftTrailingStopPercent", 0m),
             DisplacementReentryEnabled = configuration.GetValue("TradingBot:DisplacementReentryEnabled", false),
             DisplacementReentryPercent = configuration.GetValue("TradingBot:DisplacementReentryPercent", 0.005m),
             // Low-Latency Mode Settings
@@ -721,6 +723,8 @@ public static class ProgramRefactored
         if (section["DriftModeEnabled"] != null) o.DriftModeEnabled = section.GetValue<bool>("DriftModeEnabled");
         if (section["DriftModeConsecutiveTicks"] != null) o.DriftModeConsecutiveTicks = section.GetValue<int>("DriftModeConsecutiveTicks");
         if (section["DriftModeMinDisplacementPercent"] != null) o.DriftModeMinDisplacementPercent = section.GetValue<decimal>("DriftModeMinDisplacementPercent");
+        if (section["DriftModeAtrMultiplier"] != null) o.DriftModeAtrMultiplier = section.GetValue<decimal>("DriftModeAtrMultiplier");
+        if (section["DriftTrailingStopPercent"] != null) o.DriftTrailingStopPercent = section.GetValue<decimal>("DriftTrailingStopPercent");
         if (section["DisplacementReentryEnabled"] != null) o.DisplacementReentryEnabled = section.GetValue<bool>("DisplacementReentryEnabled");
         if (section["DisplacementReentryPercent"] != null) o.DisplacementReentryPercent = section.GetValue<decimal>("DisplacementReentryPercent");
         if (section["EntryConfirmationTicks"] != null) o.EntryConfirmationTicks = section.GetValue<int>("EntryConfirmationTicks");
