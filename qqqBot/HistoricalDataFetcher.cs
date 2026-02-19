@@ -146,13 +146,13 @@ public class HistoricalDataFetcher
         var filePath = Path.Combine(_dataDirectory, $"{dateStr}_market_data_{sanitized}.csv");
 
         using var writer = new StreamWriter(filePath, append: false);
-        writer.WriteLine("TimestampUTC,Symbol,Price,Volume,Source");
+        writer.WriteLine("TimestampUTC,Symbol,Price,Volume,Source,Open,High,Low");
 
         string source = _alpacaSource != null ? "AlpacaBar" : "FmpBar";
         foreach (var bar in bars.OrderBy(b => b.Timestamp))
         {
             var ts = bar.Timestamp.ToString("O", CultureInfo.InvariantCulture);
-            writer.WriteLine($"{ts},{symbol},{bar.Close},{bar.Volume},{source}");
+            writer.WriteLine($"{ts},{symbol},{bar.Close},{bar.Volume},{source},{bar.Open},{bar.High},{bar.Low}");
         }
 
         return filePath;

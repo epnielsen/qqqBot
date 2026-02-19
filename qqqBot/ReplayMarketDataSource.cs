@@ -35,8 +35,10 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
 
     /// <summary>
     /// Parsed tick from CSV, sortable by timestamp.
+    /// OHLC fields are populated for historical bar data (columns 5-7); null for recorded tick data.
     /// </summary>
-    private record CsvTick(DateTime TimestampUtc, string Symbol, decimal Price, long Volume, string Source);
+    private record CsvTick(DateTime TimestampUtc, string Symbol, decimal Price, long Volume, string Source,
+        decimal? Open = null, decimal? High = null, decimal? Low = null);
 
     public ReplayMarketDataSource(
         ILogger logger,
@@ -224,10 +226,18 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
     }
 
     /// <summary>
-    /// Interpolates between consecutive bars using a Brownian bridge (guided random walk).
-    /// Each intermediate tick drifts toward the next bar's known price while adding
-    /// realistic microstructure noise. The walk is seeded so replays are deterministic.
-    /// Already-high-resolution data (sub-second gaps) passes through unchanged.
+    /// Interpolates between consecutive bars using a market-microstructure-aware tick generator.
+    /// 
+    /// When OHLC data is available (historical bars), generates ticks that:
+    ///   - Are constrained to the candle's actual High/Low range
+    ///   - Cluster into momentum bursts and pauses (ABM-lite) instead of uniform spacing
+    ///   - Visit High and Low during the candle to produce realistic slope signals
+    ///   - Distribute bar volume across synthetic ticks with front-loading
+    /// 
+    /// When only Close data is available (old format), falls back to the original
+    /// Brownian bridge with Gaussian noise (backward compatible).
+    /// 
+    /// The walk is seeded so replays are deterministic.
     /// </summary>
     private static List<CsvTick> InterpolateWithBrownianBridge(List<CsvTick> ticks, int seed)
     {
@@ -247,36 +257,228 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
                 if (gapSeconds > 1.5) // Only interpolate gaps > 1.5 seconds
                 {
                     int steps = (int)gapSeconds;
-                    var p0 = ticks[i].Price;
-                    var p1 = ticks[i + 1].Price;
+                    var bar = ticks[i];
 
-                    // Noise scale: ~0.5 basis point per step, proportional to price level.
-                    // Over 60 steps (1-min bar): std dev ≈ price × 0.00005 × √60 ≈ 0.04%
-                    var sigma = p0 * 0.00005m;
-
-                    var current = p0;
-                    for (int s = 1; s < steps; s++)
+                    if (bar.Open.HasValue && bar.High.HasValue && bar.Low.HasValue)
                     {
-                        int remaining = steps - s;
-                        // Drift: steer toward the target price so we arrive on time
-                        var drift = (p1 - current) / remaining;
-                        // Noise: Gaussian perturbation, dampened near the endpoint
-                        var dampening = (decimal)Math.Sqrt((double)remaining / steps);
-                        var noise = sigma * (decimal)NextGaussian(rng) * dampening;
-
-                        current += drift + noise;
-
-                        // Safety: prevent negative or zero prices
-                        if (current <= 0) current = p0 * 0.001m;
-
-                        var time = ticks[i].TimestampUtc.AddSeconds(s);
-                        result.Add(new CsvTick(time, ticks[i].Symbol, Math.Round(current, 4), 0, "Interpolated"));
+                        // OHLC-aware microstructure interpolation
+                        GenerateOhlcTicks(rng, result, bar, ticks[i + 1], steps);
+                    }
+                    else
+                    {
+                        // Legacy Brownian bridge (Close-only data)
+                        GenerateBrownianBridgeTicks(rng, result, bar, ticks[i + 1], steps);
                     }
                 }
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// OHLC-constrained microstructure tick generator (ABM-lite).
+    /// 
+    /// Generates a realistic price path within the candle's OHLC range:
+    ///   1. Determines candle character (trending vs choppy) from body/range ratio
+    ///   2. Builds waypoints: Open → (High or Low first, based on candle direction) → Close
+    ///   3. Generates momentum-clustered tick segments between waypoints
+    ///   4. Clamps all prices to [Low, High]
+    ///   5. Distributes volume with front-loading bias
+    /// </summary>
+    private static void GenerateOhlcTicks(Random rng, List<CsvTick> result,
+        CsvTick bar, CsvTick nextBar, int steps)
+    {
+        var open = bar.Open!.Value;
+        var high = bar.High!.Value;
+        var low = bar.Low!.Value;
+        var close = nextBar.Price; // Close = next bar's price (which is the close of this bar)
+        var range = high - low;
+        var symbol = bar.Symbol;
+        var barVolume = bar.Volume;
+
+        // Edge case: zero-range candle (unchanged price)
+        if (range <= 0)
+        {
+            for (int s = 1; s < steps; s++)
+            {
+                var time = bar.TimestampUtc.AddSeconds(s);
+                var vol = DistributeVolume(barVolume, s, steps, rng);
+                result.Add(new CsvTick(time, symbol, open, vol, "Interpolated"));
+            }
+            return;
+        }
+
+        // Determine candle character
+        var body = Math.Abs(close - open);
+        var bodyRatio = body / range;
+        bool isBullish = close >= open;
+        bool isTrending = bodyRatio > 0.5m; // Large body = trending candle
+
+        // Build waypoints: Open → extremes → Close
+        // For bullish candles: Open → Low → High → Close (dip-then-rally pattern)
+        // For bearish candles: Open → High → Low → Close (rally-then-dip pattern)
+        // For choppy candles (small body): visit both extremes with more oscillation
+        var waypoints = new List<(decimal price, double fraction)>();
+
+        if (isTrending)
+        {
+            if (isBullish)
+            {
+                // Bullish trending: dip to low early, then rally through high to close
+                var lowFrac = 0.15 + rng.NextDouble() * 0.15;  // Visit low at 15-30%
+                var highFrac = 0.65 + rng.NextDouble() * 0.20;  // Visit high at 65-85%
+                waypoints.Add((low, lowFrac));
+                waypoints.Add((high, highFrac));
+            }
+            else
+            {
+                // Bearish trending: pop to high early, then sell off through low to close
+                var highFrac = 0.15 + rng.NextDouble() * 0.15;
+                var lowFrac = 0.65 + rng.NextDouble() * 0.20;
+                waypoints.Add((high, highFrac));
+                waypoints.Add((low, lowFrac));
+            }
+        }
+        else
+        {
+            // Choppy/doji: visit extremes with more oscillation, order is random
+            if (rng.NextDouble() < 0.5)
+            {
+                waypoints.Add((high, 0.25 + rng.NextDouble() * 0.15));
+                waypoints.Add((low, 0.55 + rng.NextDouble() * 0.15));
+            }
+            else
+            {
+                waypoints.Add((low, 0.25 + rng.NextDouble() * 0.15));
+                waypoints.Add((high, 0.55 + rng.NextDouble() * 0.15));
+            }
+        }
+
+        // Build segment list: Open → wp1 → wp2 → Close
+        var segments = new List<(decimal startPrice, decimal endPrice, int startStep, int endStep)>();
+        decimal prevPrice = open;
+        int prevStep = 0;
+
+        foreach (var (wpPrice, fraction) in waypoints)
+        {
+            int wpStep = Math.Max(prevStep + 1, Math.Min((int)(fraction * steps), steps - 2));
+            if (wpStep > prevStep)
+            {
+                segments.Add((prevPrice, wpPrice, prevStep, wpStep));
+                prevPrice = wpPrice;
+                prevStep = wpStep;
+            }
+        }
+        // Final segment to close
+        if (prevStep < steps - 1)
+        {
+            segments.Add((prevPrice, close, prevStep, steps - 1));
+        }
+
+        // Generate ticks for each segment with momentum clustering
+        foreach (var (segStart, segEnd, sStart, sEnd) in segments)
+        {
+            int segSteps = sEnd - sStart;
+            if (segSteps <= 0) continue;
+
+            var segRange = segEnd - segStart;
+            var current = segStart;
+
+            // Determine momentum profile for this segment
+            // Trending candle segments get bursts; choppy segments get oscillation
+            bool segIsMomentum = isTrending && Math.Abs(segRange) > range * 0.3m;
+
+            for (int s = 1; s <= segSteps; s++)
+            {
+                int remaining = segSteps - s;
+                decimal drift;
+                decimal noise;
+
+                if (segIsMomentum)
+                {
+                    // Momentum burst: stronger drift with variable intensity
+                    // Creates steep slopes that StreamingSlope can detect
+                    var intensity = 0.5 + 1.0 * Math.Sin(Math.PI * (double)s / segSteps); // Peak in middle
+                    drift = segRange / segSteps * (decimal)intensity * 1.5m;
+
+                    // Smaller noise during momentum (coherent price movement)
+                    var sigma = range * 0.01m;
+                    noise = sigma * (decimal)NextGaussian(rng) * 0.3m;
+                }
+                else
+                {
+                    // Choppy: guided walk with larger noise
+                    drift = remaining > 0 ? (segEnd - current) / remaining : 0;
+
+                    // Larger noise for oscillation
+                    var sigma = range * 0.02m;
+                    var dampening = remaining > 0 ? (decimal)Math.Sqrt((double)remaining / segSteps) : 0.1m;
+                    noise = sigma * (decimal)NextGaussian(rng) * dampening;
+                }
+
+                current += drift + noise;
+
+                // Clamp to candle's OHLC range
+                current = Math.Max(low, Math.Min(high, current));
+
+                var time = bar.TimestampUtc.AddSeconds(sStart + s);
+                var vol = DistributeVolume(barVolume, sStart + s, steps, rng);
+                result.Add(new CsvTick(time, symbol, Math.Round(current, 4), vol, "Interpolated"));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Legacy Brownian bridge interpolation for Close-only data (no OHLC available).
+    /// Preserved for backward compatibility with recorded tick data or old CSV files.
+    /// </summary>
+    private static void GenerateBrownianBridgeTicks(Random rng, List<CsvTick> result,
+        CsvTick bar, CsvTick nextBar, int steps)
+    {
+        var p0 = bar.Price;
+        var p1 = nextBar.Price;
+
+        // Noise scale: ~0.5 basis point per step, proportional to price level.
+        var sigma = p0 * 0.00005m;
+
+        var current = p0;
+        for (int s = 1; s < steps; s++)
+        {
+            int remaining = steps - s;
+            var drift = (p1 - current) / remaining;
+            var dampening = (decimal)Math.Sqrt((double)remaining / steps);
+            var noise = sigma * (decimal)NextGaussian(rng) * dampening;
+
+            current += drift + noise;
+
+            if (current <= 0) current = p0 * 0.001m;
+
+            var time = bar.TimestampUtc.AddSeconds(s);
+            result.Add(new CsvTick(time, bar.Symbol, Math.Round(current, 4), 0, "Interpolated"));
+        }
+    }
+
+    /// <summary>
+    /// Distributes a bar's total volume across synthetic ticks with front-loading bias.
+    /// Real markets have higher volume at the start of each minute (market orders clustering).
+    /// Returns 0 if the bar has no volume data.
+    /// </summary>
+    private static long DistributeVolume(long totalVolume, int currentStep, int totalSteps, Random rng)
+    {
+        if (totalVolume <= 0 || totalSteps <= 0) return 0;
+
+        // Exponential decay: front-load volume
+        double position = (double)currentStep / totalSteps;
+        double weight = Math.Exp(-2.0 * position); // Decays from 1.0 to ~0.13
+
+        // Add noise (±50% of weight)
+        weight *= (0.5 + rng.NextDouble());
+
+        // Scale to produce roughly correct total volume
+        // Average weight ≈ 0.5, so scale = totalVolume / (totalSteps * 0.5)
+        var vol = (long)(weight * totalVolume / (totalSteps * 0.4));
+        return Math.Max(0, vol);
     }
 
     /// <summary>
@@ -320,8 +522,20 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
                 long.TryParse(parts[3].Trim(), out var volume);
                 var source = parts[4].Trim();
 
+                // Parse optional OHLC columns (columns 5-7, present in historical bar data)
+                decimal? open = null, high = null, low = null;
+                if (parts.Length >= 8)
+                {
+                    decimal.TryParse(parts[5].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var o);
+                    decimal.TryParse(parts[6].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var h);
+                    decimal.TryParse(parts[7].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var l);
+                    if (o > 0) open = o;
+                    if (h > 0) high = h;
+                    if (l > 0) low = l;
+                }
+
                 // Use the symbol from the subscription, not the CSV (handles case mismatches)
-                ticks.Add(new CsvTick(timestamp, expectedSymbol, price, volume, source));
+                ticks.Add(new CsvTick(timestamp, expectedSymbol, price, volume, source, open, high, low));
             }
             catch (FormatException)
             {

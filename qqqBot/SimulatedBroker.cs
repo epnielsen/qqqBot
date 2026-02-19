@@ -8,10 +8,13 @@ namespace qqqBot;
 /// "The Fake Broker" — handles Buy/Sell orders during Replay without hitting Alpaca.
 /// 
 /// Tracks cash balance, positions, and fills orders at the current replay price
-/// with optional slippage simulation. This ensures replay never sends real orders
-/// to the exchange.
+/// with realistic spread and slippage simulation:
+///   - Synthetic bid/ask spread (wider during OV and PH phases)
+///   - Volatility-scaled slippage (higher during high-ATR periods)
+///   - Configurable base slippage in basis points
 /// 
-/// Also implements GetLatestPriceAsync by tracking the last seen price per symbol.
+/// This ensures replay never sends real orders to the exchange while producing
+/// realistic transaction costs for backtesting.
 /// 
 /// Usage: Injected by ProgramRefactored when --mode=replay is specified.
 /// </summary>
@@ -19,8 +22,16 @@ public sealed class SimulatedBroker : IBrokerExecution
 {
     private readonly ILogger _logger;
     private readonly decimal _initialCash;
-    private readonly decimal _slippagePercent;
     private readonly object _lock = new();
+
+    // Configuration
+    private readonly decimal _slippageBps;           // Base slippage in basis points
+    private readonly decimal _spreadBps;             // Base half-spread in basis points
+    private readonly decimal _ovSpreadMultiplier;     // Spread multiplier during Open Volatility (09:30-10:13 ET)
+    private readonly decimal _phSpreadMultiplier;     // Spread multiplier during Power Hour (14:00-16:00 ET)
+    private readonly bool _volatilitySlippageEnabled; // Use volatility-scaled slippage
+    private readonly decimal _volSlippageMultiplier;  // Multiplier for volatility slippage (k × σ)
+    private readonly int _volWindowTicks;             // Rolling window for volatility calculation
 
     // Simulated state
     private decimal _cashBalance;
@@ -39,31 +50,77 @@ public sealed class SimulatedBroker : IBrokerExecution
     private DateTime _troughEquityTime;
     private bool _watermarkInitialized;
 
+    // Track latest timestamp for phase-aware spread
+    private DateTime _latestTimestampUtc;
+    private readonly TimeZoneInfo _easternZone;
+
+    // Rolling price history for volatility calculation
+    private readonly Dictionary<string, Queue<decimal>> _priceHistory = new();
+
+    // Cumulative spread/slippage tracking for summary
+    private decimal _totalSpreadCost;
+    private decimal _totalSlippageCost;
+
     private record SimulatedPosition(string Symbol, long Quantity, decimal AverageEntryPrice);
 
-    public SimulatedBroker(ILogger logger, decimal initialCash = 30_000m, decimal slippagePercent = 0.0001m)
+    public SimulatedBroker(
+        ILogger logger,
+        decimal initialCash = 30_000m,
+        decimal slippageBps = 1.0m,
+        decimal spreadBps = 2.0m,
+        decimal ovSpreadMultiplier = 3.0m,
+        decimal phSpreadMultiplier = 1.5m,
+        bool volatilitySlippageEnabled = true,
+        decimal volSlippageMultiplier = 0.5m,
+        int volWindowTicks = 60)
     {
         _logger = logger;
         _initialCash = initialCash;
         _cashBalance = initialCash;
-        _slippagePercent = slippagePercent;
+        _slippageBps = slippageBps;
+        _spreadBps = spreadBps;
+        _ovSpreadMultiplier = ovSpreadMultiplier;
+        _phSpreadMultiplier = phSpreadMultiplier;
+        _volatilitySlippageEnabled = volatilitySlippageEnabled;
+        _volSlippageMultiplier = volSlippageMultiplier;
+        _volWindowTicks = volWindowTicks;
+        _easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
 
         _logger.LogInformation("[SIM-BROKER] ==========================================");
         _logger.LogInformation("[SIM-BROKER]  S I M U L A T E D   B R O K E R");
         _logger.LogInformation("[SIM-BROKER]  Starting Cash: ${Cash:N2}", initialCash);
-        _logger.LogInformation("[SIM-BROKER]  Slippage: {Slip:P3}", slippagePercent);
+        _logger.LogInformation("[SIM-BROKER]  Base Slippage: {Slip} bps", slippageBps);
+        _logger.LogInformation("[SIM-BROKER]  Base Spread:   {Spread} bps (OV ×{OV}, PH ×{PH})",
+            spreadBps, ovSpreadMultiplier, phSpreadMultiplier);
+        _logger.LogInformation("[SIM-BROKER]  Vol Slippage:  {Enabled} (k={K}, window={W})",
+            volatilitySlippageEnabled, volSlippageMultiplier, volWindowTicks);
         _logger.LogInformation("[SIM-BROKER] ==========================================");
     }
 
     /// <summary>
     /// Update the latest known price for a symbol (called by the replay pipeline).
-    /// When timestampUtc is provided, also tracks equity high/low watermarks.
+    /// Tracks equity high/low watermarks and maintains rolling price history for volatility.
     /// </summary>
     public void UpdatePrice(string symbol, decimal price, DateTime timestampUtc = default)
     {
         lock (_lock)
         {
             _latestPrices[symbol] = price;
+            if (timestampUtc != default)
+                _latestTimestampUtc = timestampUtc;
+
+            // Maintain rolling price history for volatility calculation
+            if (_volatilitySlippageEnabled)
+            {
+                if (!_priceHistory.TryGetValue(symbol, out var history))
+                {
+                    history = new Queue<decimal>();
+                    _priceHistory[symbol] = history;
+                }
+                history.Enqueue(price);
+                while (history.Count > _volWindowTicks)
+                    history.Dequeue();
+            }
 
             // Track equity watermarks when we have a valid timestamp (replay mode)
             if (timestampUtc != default)
@@ -131,12 +188,50 @@ public sealed class SimulatedBroker : IBrokerExecution
                 return Task.FromResult(rejected);
             }
 
-            // Apply slippage: Buy slightly higher, Sell slightly lower
-            decimal slippage = basePrice * _slippagePercent;
+            // --- Phase-aware spread ---
+            decimal spreadMultiplier = 1.0m;
+            if (_latestTimestampUtc != default)
+            {
+                var eastern = TimeZoneInfo.ConvertTimeFromUtc(_latestTimestampUtc, _easternZone);
+                var tod = eastern.TimeOfDay;
+                if (tod >= new TimeSpan(9, 30, 0) && tod < new TimeSpan(10, 13, 0))
+                    spreadMultiplier = _ovSpreadMultiplier;   // Open Volatility: wider spread
+                else if (tod >= new TimeSpan(14, 0, 0) && tod < new TimeSpan(16, 0, 0))
+                    spreadMultiplier = _phSpreadMultiplier;   // Power Hour: moderately wider
+            }
+            decimal halfSpread = basePrice * (_spreadBps / 10_000m) * spreadMultiplier;
+
+            // --- Slippage: base + volatility-scaled ---
+            decimal baseSlippage = basePrice * (_slippageBps / 10_000m);
+            decimal volSlippage = 0m;
+            if (_volatilitySlippageEnabled &&
+                _priceHistory.TryGetValue(request.Symbol, out var hist) && hist.Count >= 5)
+            {
+                // Rolling standard deviation of recent prices
+                var prices = hist.ToArray();
+                decimal mean = 0m;
+                foreach (var p in prices) mean += p;
+                mean /= prices.Length;
+                decimal sumSqDev = 0m;
+                foreach (var p in prices)
+                {
+                    var dev = p - mean;
+                    sumSqDev += dev * dev;
+                }
+                decimal sigma = (decimal)Math.Sqrt((double)(sumSqDev / prices.Length));
+                volSlippage = _volSlippageMultiplier * sigma;
+            }
+            decimal totalSlippage = baseSlippage + volSlippage;
+
+            // --- Apply: Buy pays more, Sell receives less ---
             decimal fillPrice = request.Side == BotOrderSide.Buy
-                ? basePrice + slippage
-                : basePrice - slippage;
+                ? basePrice + halfSpread + totalSlippage
+                : basePrice - halfSpread - totalSlippage;
             fillPrice = Math.Round(fillPrice, 2);
+
+            // Track cumulative costs (per-share × quantity)
+            _totalSpreadCost += halfSpread * request.Quantity;
+            _totalSlippageCost += totalSlippage * request.Quantity;
 
             // Execute the fill
             var fillValue = fillPrice * request.Quantity;
@@ -218,8 +313,8 @@ public sealed class SimulatedBroker : IBrokerExecution
             // Keep latest market price up-to-date after every fill (use base price, not slippage-adjusted fill)
             _latestPrices[request.Symbol] = basePrice;
 
-            _logger.LogInformation("[SIM-BROKER] {Side} {Qty} {Symbol} @ {Price:N2} (slippage: {Slip:N4}). Cash: ${Cash:N2}",
-                request.Side, request.Quantity, request.Symbol, fillPrice, slippage, _cashBalance);
+            _logger.LogInformation("[SIM-BROKER] {Side} {Qty} {Symbol} @ {Price:N2} (spread: {Spd:N4}, slip: {Slip:N4}). Cash: ${Cash:N2}",
+                request.Side, request.Quantity, request.Symbol, fillPrice, halfSpread, totalSlippage, _cashBalance);
 
             return Task.FromResult(order);
         }
@@ -344,6 +439,11 @@ public sealed class SimulatedBroker : IBrokerExecution
             _logger.LogInformation("[SIM-BROKER]  Realized P/L:   ${PnL:N2}", _realizedPnL);
             _logger.LogInformation("[SIM-BROKER]  Net Return:     {Return:P2}", (equity - _initialCash) / _initialCash);
             _logger.LogInformation("[SIM-BROKER]  Total Trades:   {Count}", _tradeCount);
+            _logger.LogInformation("[SIM-BROKER]  Spread Cost:    ${Cost:N2}", _totalSpreadCost);
+            _logger.LogInformation("[SIM-BROKER]  Slippage Cost:  ${Cost:N2}", _totalSlippageCost);
+            _logger.LogInformation("[SIM-BROKER]  Total Txn Cost: ${Cost:N2}", _totalSpreadCost + _totalSlippageCost);
+            if (_tradeCount > 0)
+                _logger.LogInformation("[SIM-BROKER]  Avg Cost/Trade: ${Cost:N2}", (_totalSpreadCost + _totalSlippageCost) / _tradeCount);
 
             if (_watermarkInitialized)
             {

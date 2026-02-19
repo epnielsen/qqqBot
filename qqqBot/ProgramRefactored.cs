@@ -316,7 +316,16 @@ public static class ProgramRefactored
                     services.AddSingleton<SimulatedBroker>(sp =>
                     {
                         var logger = sp.GetRequiredService<ILogger<SimulatedBroker>>();
-                        return new SimulatedBroker(logger, settings.StartingAmount);
+                        var cfg = sp.GetRequiredService<IConfiguration>();
+                        var slipBps = cfg.GetValue("SimulatedBroker:SlippageBasisPoints", 1.0m);
+                        var spreadBps = cfg.GetValue("SimulatedBroker:SpreadBasisPoints", 2.0m);
+                        var ovMult = cfg.GetValue("SimulatedBroker:OvSpreadMultiplier", 3.0m);
+                        var phMult = cfg.GetValue("SimulatedBroker:PhSpreadMultiplier", 1.5m);
+                        var volEnabled = cfg.GetValue("SimulatedBroker:VolatilitySlippageEnabled", true);
+                        var volMult = cfg.GetValue("SimulatedBroker:VolatilitySlippageMultiplier", 0.5m);
+                        var volWindow = cfg.GetValue("SimulatedBroker:VolatilityWindowTicks", 60);
+                        return new SimulatedBroker(logger, settings.StartingAmount,
+                            slipBps, spreadBps, ovMult, phMult, volEnabled, volMult, volWindow);
                     });
                     services.AddSingleton<IBrokerExecution>(sp => sp.GetRequiredService<SimulatedBroker>());
                     

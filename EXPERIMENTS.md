@@ -2713,3 +2713,106 @@ Features are safe/dormant at ChopLowerThreshold=25 — infrastructure ready for 
 2. **Feb 19 deep trough (-$199.46 at 12:42)**: Losing day regardless of features. Investigate Base phase behavior.
 3. **More diverse dataset needed**: Current 8-day dataset doesn't have genuine PH trend days where CHOP < 25.
 4. **TrimRatio**: Stays at 0.75 per user instruction. User saw 102/136 shares trimmed (75%). Will be reviewed next tuning round.
+
+---
+
+### Session 4b: 2026-02-19 — Replay Broker Realism Upgrade
+
+**Context**: Research AI recommended upgrading replay broker with realistic transaction costs (spread, slippage, market-aware tick generation) before expanding dataset or adding ATR-based position sizing.
+
+**Goal**: Make backtests on 1-minute data more realistic by adding synthetic spread, volatility-scaled slippage, and OHLC-aware tick interpolation.
+
+#### Changes Made
+
+##### Phase 1: OHLC in CSV (HistoricalDataFetcher.cs)
+- CSV header expanded: `TimestampUTC,Symbol,Price,Volume,Source,Open,High,Low`
+- `SaveBarsToCsv` now writes Open/High/Low as columns 5-7
+- Backward-compatible: existing CSVs without OHLC still parse correctly
+
+##### Phase 2: Market-Aware Tick Generation (ReplayMarketDataSource.cs)
+- `CsvTick` record expanded with `decimal? Open, High, Low` fields
+- `LoadCsvFile` parses OHLC columns when present (≥8 columns)
+- New `GenerateOhlcTicks()` — ABM-lite tick generation:
+  - Analyzes candle character (body/range ratio, bullish/bearish)
+  - Creates waypoint path (e.g., Open→Low→High→Close for bullish candles)
+  - Momentum-clustered segments with acceleration/deceleration
+  - All ticks clamped to [Low, High] range
+  - Exponential decay volume distribution with noise
+- Legacy `GenerateBrownianBridgeTicks()` extracted for backward compatibility
+- Dispatch: OHLC data → ABM-lite, Close-only → Brownian bridge
+
+##### Phase 3+4: Synthetic Spread + Configurable Slippage (SimulatedBroker.cs)
+- New `SimulatedBroker` config section in appsettings.json (separate from TradingSettings)
+- **Phase-aware spread**: OV (09:30-10:13 ET) gets 2× multiplier, PH (14:00-16:00 ET) gets 1.25×, Base gets 1×
+- **Base slippage**: Configurable in basis points (default 0.5 bps)
+- **Volatility-scaled slippage**: Rolling σ of last 60 price updates × configurable multiplier
+- **Cumulative cost tracking**: Reports total spread cost, slippage cost, and avg cost/trade in summary
+- Constructor expanded from 3 params to 9 (all with defaults for backward compatibility)
+- `ProgramRefactored.cs` reads `SimulatedBroker` config section and passes to constructor
+
+##### Configuration (appsettings.json SimulatedBroker section)
+```json
+{
+  "SlippageBasisPoints": 0.5,
+  "SpreadBasisPoints": 1.0,
+  "OvSpreadMultiplier": 2.0,
+  "PhSpreadMultiplier": 1.25,
+  "VolatilitySlippageEnabled": true,
+  "VolatilitySlippageMultiplier": 0.15,
+  "VolatilityWindowTicks": 60
+}
+```
+
+##### Tests (SimulatedBrokerTests.cs)
+- Updated `CreateBroker` helper: new signature with `slippageBps`, `spreadBps`, `volatilitySlippageEnabled` params
+- All 63 tests updated and passing
+- Tests use spread=0, volSlippage=false by default for deterministic assertions
+
+#### Results
+
+**Determinism**: 3× identical runs confirmed (Feb 10: P/L=-$39.66 with aggressive defaults, then switched to calibrated defaults)
+
+**Initial defaults (too aggressive):**
+| Metric | Value |
+|--------|-------|
+| 8-day P/L | -$980.64 |
+| Total Txn Cost | $1,263.66 |
+| Spread Cost | $429.37 |
+| Slippage Cost | $834.29 |
+Caused: Spread 2 bps, Slippage 1 bps, Vol multiplier 0.5, OV 3×
+
+**Calibrated defaults (shipped):**
+| Date | P/L | Trades | Spread | Slippage |
+|------|-----|--------|--------|----------|
+| Feb 09 | -$8.35 | 6 | $10.45 | $12.05 |
+| Feb 10 | $0.55 | 9 | $10.47 | $16.89 |
+| Feb 11 | $180.91 | 6 | $12.04 | $12.56 |
+| Feb 12 | $176.80 | 21 | $25.44 | $46.02 |
+| Feb 13 | $168.13 | 8 | $14.53 | $17.44 |
+| Feb 17 | $30.17 | 21 | $26.78 | $44.53 |
+| Feb 18 | $147.03 | 4 | $8.54 | $8.16 |
+| Feb 19 | -$234.80 | 21 | $27.58 | $57.85 |
+| **TOTAL** | **$460.44** | **96** | **$135.83** | **$215.50** |
+
+**Comparison:**
+| Metric | Old Broker (flat 1 bps) | New Broker (calibrated) | Delta |
+|--------|------------------------|------------------------|-------|
+| 8-day P/L | $627.15 | $460.44 | -$166.71 |
+| Total Txn Cost | ~$12 | $351.33 | +$339 |
+| 8-day Trades | 126 | 96 | -30 |
+
+**Observations:**
+- New broker absorbs ~$351 in realistic transaction costs, bringing replay closer to live trading fills
+- Trade count dropped from 126 to 96 — some borderline fills changed outcomes at slightly different prices
+- The OHLC-aware tick generation produces different intra-minute paths than the old Brownian bridge, which affects signal timing
+- Feb 12 and Feb 13 dramatically improved (was -$294/-$354 with aggressive defaults, now +$177/+$168 with calibrated)
+- Feb 19 remains the worst day at -$235 (was -$270 aggressive, -$197 old broker)
+- Default settings can be tuned per-sweep via `-config=` pattern with `SimulatedBroker` section overrides
+
+#### Files Modified
+- `qqqBot/HistoricalDataFetcher.cs` — OHLC columns in CSV output
+- `qqqBot/ReplayMarketDataSource.cs` — OHLC parsing, ABM-lite tick gen, volume distribution
+- `qqqBot/SimulatedBroker.cs` — phase-aware spread, vol slippage, cost tracking
+- `qqqBot/ProgramRefactored.cs` — SimulatedBroker config section wiring
+- `qqqBot/appsettings.json` — `SimulatedBroker` config section
+- `qqqBot.Tests/SimulatedBrokerTests.cs` — updated for new constructor signature

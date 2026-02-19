@@ -282,6 +282,15 @@
 
 ## SimulatedBroker Realism (2026-02-17)
 
+- [x] **SimulatedBroker: Phase-aware spread + volatility-scaled slippage**
+  **DONE (2026-02-19)**: Replaced flat 1 bps slippage with realistic transaction cost model:
+  - Synthetic bid/ask spread (base 1.0 bps, OV ×2.0, PH ×1.25)
+  - Base slippage (0.5 bps) + volatility-scaled slippage (0.15 × rolling σ)
+  - Cumulative cost tracking in replay summary
+  - Separate `SimulatedBroker` config section in appsettings.json
+  - 8-day P/L: $627.15 → $460.44 (realistic friction absorbs ~$351)
+  - All 63 tests passing
+
 - [ ] **SimulatedBroker: Add fill latency + stochastic fill failure**
   Current `SimulatedBroker.SubmitOrderAsync` fills every order instantly. This makes the entire `ProcessPendingOrderAsync` pathway (10s timeout, cancel, reconcile, buy cooldown backoff) dead code in replay. Feb 17 showed a $77.28 live-vs-replay gap caused entirely by a SQQQ order that timed out in live but filled instantly in replay. Enhancement: return `Status = New` initially, resolve to `Filled` after configurable delay, with seeded-RNG probability of fill failure (especially during OV phase where standard limit orders often timeout). Preserves determinism via seed.
 
