@@ -571,6 +571,7 @@ public static class ProgramRefactored
             WatchBtc = configuration.GetValue("TradingBot:WatchBtc", false),
             MonitorSlippage = configuration.GetValue("TradingBot:MonitorSlippage", false),
             TrailingStopPercent = configuration.GetValue("TradingBot:TrailingStopPercent", 0.0m),
+            TrendRescueTrailingStopPercent = configuration.GetValue("TradingBot:TrendRescueTrailingStopPercent", 0.0m),
             StopLossCooldownSeconds = configuration.GetValue("TradingBot:StopLossCooldownSeconds", 10),
             DirectionSwitchCooldownSeconds = configuration.GetValue("TradingBot:DirectionSwitchCooldownSeconds", 0),
             StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m),
@@ -579,10 +580,21 @@ public static class ProgramRefactored
             MaxChaseDeviationPercent = configuration.GetValue("TradingBot:MaxChaseDeviationPercent", 0.003m),
             // Hybrid Engine Settings
             MinVelocityThreshold = configuration.GetValue("TradingBot:MinVelocityThreshold", 0.0001m),
+            EntryVelocityMultiplier = configuration.GetValue("TradingBot:EntryVelocityMultiplier", 2.0m),
             SlopeWindowSize = configuration.GetValue("TradingBot:SlopeWindowSize", 5),
             EntryConfirmationTicks = configuration.GetValue("TradingBot:EntryConfirmationTicks", 2),
             BearEntryConfirmationTicks = configuration.GetValue("TradingBot:BearEntryConfirmationTicks", 0),
             TrendWindowSeconds = configuration.GetValue("TradingBot:TrendWindowSeconds", 1800),
+            // Adaptive Trend Window (Opening Blindness Fix)
+            EnableAdaptiveTrendWindow = configuration.GetValue("TradingBot:EnableAdaptiveTrendWindow", true),
+            ShortTrendSlopeWindow = configuration.GetValue("TradingBot:ShortTrendSlopeWindow", 90),
+            ShortTrendSlopeThreshold = configuration.GetValue("TradingBot:ShortTrendSlopeThreshold", 0.00002m),
+            // Drift Mode + Displacement Re-Entry
+            DriftModeEnabled = configuration.GetValue("TradingBot:DriftModeEnabled", false),
+            DriftModeConsecutiveTicks = configuration.GetValue("TradingBot:DriftModeConsecutiveTicks", 60),
+            DriftModeMinDisplacementPercent = configuration.GetValue("TradingBot:DriftModeMinDisplacementPercent", 0.002m),
+            DisplacementReentryEnabled = configuration.GetValue("TradingBot:DisplacementReentryEnabled", false),
+            DisplacementReentryPercent = configuration.GetValue("TradingBot:DisplacementReentryPercent", 0.005m),
             // Low-Latency Mode Settings
             LowLatencyMode = configuration.GetValue("TradingBot:LowLatencyMode", false),
             UseIocOrders = configuration.GetValue("TradingBot:UseIocOrders", false),
@@ -594,6 +606,7 @@ public static class ProgramRefactored
             BuyRetryCooldownSeconds = configuration.GetValue("TradingBot:BuyRetryCooldownSeconds", 15),
             MaxBuyRetryCooldownSeconds = configuration.GetValue("TradingBot:MaxBuyRetryCooldownSeconds", 60),
             MarketOpenDelaySeconds = configuration.GetValue("TradingBot:MarketOpenDelaySeconds", 15),
+            LastEntryMinutesBeforeClose = configuration.GetValue("TradingBot:LastEntryMinutesBeforeClose", 2.0m),
             KeepAlivePingSeconds = configuration.GetValue("TradingBot:KeepAlivePingSeconds", 5),
             WarmUpIterations = configuration.GetValue("TradingBot:WarmUpIterations", 10000),
             StatusLogIntervalSeconds = configuration.GetValue("TradingBot:StatusLogIntervalSeconds", 5),
@@ -696,11 +709,20 @@ public static class ProgramRefactored
         
         // Signal generation
         if (section["MinVelocityThreshold"] != null) o.MinVelocityThreshold = section.GetValue<decimal>("MinVelocityThreshold");
+        if (section["EntryVelocityMultiplier"] != null) o.EntryVelocityMultiplier = section.GetValue<decimal>("EntryVelocityMultiplier");
         if (section["SMAWindowSeconds"] != null) o.SMAWindowSeconds = section.GetValue<int>("SMAWindowSeconds");
         if (section["SlopeWindowSize"] != null) o.SlopeWindowSize = section.GetValue<int>("SlopeWindowSize");
         if (section["ChopThresholdPercent"] != null) o.ChopThresholdPercent = section.GetValue<decimal>("ChopThresholdPercent");
         if (section["MinChopAbsolute"] != null) o.MinChopAbsolute = section.GetValue<decimal>("MinChopAbsolute");
         if (section["TrendWindowSeconds"] != null) o.TrendWindowSeconds = section.GetValue<int>("TrendWindowSeconds");
+        if (section["EnableAdaptiveTrendWindow"] != null) o.EnableAdaptiveTrendWindow = section.GetValue<bool>("EnableAdaptiveTrendWindow");
+        if (section["ShortTrendSlopeWindow"] != null) o.ShortTrendSlopeWindow = section.GetValue<int>("ShortTrendSlopeWindow");
+        if (section["ShortTrendSlopeThreshold"] != null) o.ShortTrendSlopeThreshold = section.GetValue<decimal>("ShortTrendSlopeThreshold");
+        if (section["DriftModeEnabled"] != null) o.DriftModeEnabled = section.GetValue<bool>("DriftModeEnabled");
+        if (section["DriftModeConsecutiveTicks"] != null) o.DriftModeConsecutiveTicks = section.GetValue<int>("DriftModeConsecutiveTicks");
+        if (section["DriftModeMinDisplacementPercent"] != null) o.DriftModeMinDisplacementPercent = section.GetValue<decimal>("DriftModeMinDisplacementPercent");
+        if (section["DisplacementReentryEnabled"] != null) o.DisplacementReentryEnabled = section.GetValue<bool>("DisplacementReentryEnabled");
+        if (section["DisplacementReentryPercent"] != null) o.DisplacementReentryPercent = section.GetValue<decimal>("DisplacementReentryPercent");
         if (section["EntryConfirmationTicks"] != null) o.EntryConfirmationTicks = section.GetValue<int>("EntryConfirmationTicks");
         if (section["BearEntryConfirmationTicks"] != null) o.BearEntryConfirmationTicks = section.GetValue<int>("BearEntryConfirmationTicks");
         if (section["BullOnlyMode"] != null) o.BullOnlyMode = section.GetValue<bool>("BullOnlyMode");
@@ -711,12 +733,14 @@ public static class ProgramRefactored
         if (section["HoldNeutralIfUnderwater"] != null) o.HoldNeutralIfUnderwater = section.GetValue<bool>("HoldNeutralIfUnderwater");
         // Trade execution
         if (section["TrailingStopPercent"] != null) o.TrailingStopPercent = section.GetValue<decimal>("TrailingStopPercent");
+        if (section["TrendRescueTrailingStopPercent"] != null) o.TrendRescueTrailingStopPercent = section.GetValue<decimal>("TrendRescueTrailingStopPercent");
         if (section["UseMarketableLimits"] != null) o.UseMarketableLimits = section.GetValue<bool>("UseMarketableLimits");
         if (section["UseIocOrders"] != null) o.UseIocOrders = section.GetValue<bool>("UseIocOrders");
         if (section["IocLimitOffsetCents"] != null) o.IocLimitOffsetCents = section.GetValue<decimal>("IocLimitOffsetCents");
         if (section["IocRetryStepCents"] != null) o.IocRetryStepCents = section.GetValue<decimal>("IocRetryStepCents");
         if (section["MaxSlippagePercent"] != null) o.MaxSlippagePercent = section.GetValue<decimal>("MaxSlippagePercent");
         if (section["MaxChaseDeviationPercent"] != null) o.MaxChaseDeviationPercent = section.GetValue<decimal>("MaxChaseDeviationPercent");
+        if (section["LastEntryMinutesBeforeClose"] != null) o.LastEntryMinutesBeforeClose = section.GetValue<decimal>("LastEntryMinutesBeforeClose");
         // Dynamic stop loss (flattened)
         if (section["DynamicStopLossEnabled"] != null) o.DynamicStopLossEnabled = section.GetValue<bool>("DynamicStopLossEnabled");
         var tiersSection = section.GetSection("DynamicStopLossTiers");
@@ -873,6 +897,7 @@ public class TradingOrchestrator : BackgroundService
         _logger.LogInformation("");
         _logger.LogInformation("Analytics:");
         _logger.LogInformation("  MinVelocityThreshold: {Value}", _settings.MinVelocityThreshold);
+            _logger.LogInformation("  EntryVelocityMultiplier: {Value}", _settings.EntryVelocityMultiplier);
         _logger.LogInformation("  SMAWindowSeconds: {Value}", _settings.SMAWindowSeconds);
         _logger.LogInformation("  SlopeWindowSize: {Value}", _settings.SlopeWindowSize);
         _logger.LogInformation("  ChopThresholdPercent: {Value:P4}", _settings.ChopThresholdPercent);
@@ -883,6 +908,7 @@ public class TradingOrchestrator : BackgroundService
         _logger.LogInformation("  UseMarketableLimits: {Value}", _settings.UseMarketableLimits);
         _logger.LogInformation("  IocLimitOffsetCents: {Value}", _settings.IocLimitOffsetCents);
         _logger.LogInformation("  TrailingStopPercent: {Value:P2}", _settings.TrailingStopPercent);
+        _logger.LogInformation("  TrendRescueTrailingStopPercent: {Value:P2}", _settings.TrendRescueTrailingStopPercent);
         _logger.LogInformation("");
         _logger.LogInformation("Profit:");
         _logger.LogInformation("  ProfitReinvestmentPercent: {Value:P0}", _settings.ProfitReinvestmentPercent);

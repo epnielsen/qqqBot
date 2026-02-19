@@ -1864,3 +1864,420 @@ Non-target days (Feb 9-10): No change — PH Resume doesn't fire, results identi
 - PH (no target fired): MR signals during PH; typically MR_FLAT (no trades) unless extreme %B reached
 - PH (after target fired): PH Resume activates → MR protects profits instead of trend whipsaws
 - 5-day backtest: $611.33 / 46 trades (+$3 vs no-resume baseline)
+
+---
+
+## Session: Feb 17 Missed Uptrend Investigation (2026-02-20)
+
+### Context
+Feb 17, 2026: QQQ rose ~$7.56 (+1.27%) from $593.63→$601.19 between 10:40-11:13 ET. The bot was in CASH the entire time, missing significant TQQQ upside. Additionally, smaller missed opportunities at 11:26 ET and 12:37-12:45 ET.
+
+### Baseline Replay (Feb 17)
+- **Result**: -$21.93 P/L, 15 trades
+- Peak: +$75.72 at 09:56 ET, Trough: -$173.66 at 09:46 ET
+- Bot went to CASH at 10:44 ET and **never re-entered for the rest of the day**
+- All 15 trades were OV or early Base phase; none captured the 10:40-11:13 uptrend
+
+### Root Cause #1: TrendRescue Deadlock Bug (CONFIRMED)
+**Location**: `AnalystEngine.cs`, `DetermineSignal()`, line ~773 (original)
+
+**Original code**:
+```csharp
+else if (activeSlope > entryVelocity ||
+         (trendRescue && _sustainedVelocityTicks >= _settings.EntryConfirmationTicks))
+```
+
+**Problem**: Classic chicken-and-egg deadlock. `_sustainedVelocityTicks` only increments INSIDE this block, but the trendRescue path requires `_sustainedVelocityTicks >= EntryConfirmationTicks` to ENTER the block. When `activeSlope` is below `entryVelocity`, trendRescue can never fire.
+
+**Math on Feb 17 uptrend**:
+- maintenance velocity = $595 × 0.000015 = $0.00893/tick
+- entry velocity = $0.00893 × 2.0 = $0.01785/tick
+- Actual SMA slope during 10:44-11:13 uptrend ≈ $0.0175/tick
+- Shortfall: $0.0003 (1.7%) — slope was JUST below the entry threshold
+- TrendRescue was designed to catch exactly this case, but deadlock prevented it
+
+### Root Cause #2: Trailing Stop Too Aggressive for Gradual Trends
+**Location**: `TraderEngine.cs`, `EvaluateTrailingStop()`, line ~1829
+
+**Problem**: Even if trendRescue correctly enters BULL, the 0.2% trailing stop on QQQ benchmark ($1.19 distance at $596) ejects positions within minutes during gradual uptrends. The DynamicStopLoss ratchet further tightens stops as profit grows, making it even worse.
+
+**Evidence**: Fix v6 (trendRescue working) produced 41 trades on Feb 17 — the bot correctly entered BULL during Base phase uptrend via trendRescue, but every entry was immediately stopped out by the trailing stop, creating an enter→stop→enter→stop churn cycle.
+
+### Root Cause #3: `--override` CLI Flag Is Broken
+**Location**: `CommandLineOverrides.cs`
+
+The `--override KEY=VALUE` flag is silently ignored — there is no handler for it in `Parse()`. All earlier parameter sweeps (TrendWindowSeconds, MinVelocityThreshold) using `--override` produced identical results because the overrides were never applied. Must modify `appsettings.json` directly for parameter changes.
+
+### CycleTracker Audit
+Zero `[RHYTHM]` log lines on Feb 17 replay. CycleTracker confirmed **NOT a factor** in the missed uptrend.
+
+### Fix Iteration Results
+
+All fixes cross-validated on Feb 9-13 + Feb 17. Build: `dotnet clean && dotnet build` both repos between each.
+
+**Note**: Feb 9-13 baseline = $611.33 (Config W production settings, see "Production Deployment: Config W" above). The "Total" column below is the **6-day** sum including Feb 17.
+
+| Fix | Description | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | Feb 17 | 6-Day Total |
+|-----|------------|-------|--------|--------|--------|--------|--------|-------------|
+| **Baseline** | Config W (production) | +$33 (6tr) | +$13 (9tr) | +$197 (6tr) | +$187 (17tr) | +$181 (8tr) | -$22 (15tr) | **+$589** |
+| v1 | trendRescue, no gate | +$83 (15) | -$63 (13) | -$395 (35) | +$187 (17) | -$527 (49) | +$169 (6) | -$546 |
+| v3 | trendRescue, 3x confirm | +$22 (15) | -$67 (13) | +$197 (6) | +$187 (17) | -$509 (47) | +$185 (6) | +$16 |
+| v4 | trendRescue, 5x confirm | +$66 (9) | -$67 (13) | +$197 (6) | +$187 (17) | -$570 (45) | -$244 (41) | -$431 |
+| v5 | trendRescue, 10x+min20 | +$33 (6) | +$26 (11) | +$197 (6) | +$187 (17) | +$181 (8) | -$150 (37) | +$475 |
+| v6 | Base-only, 3x confirm | +$34 (13) | -$84 (11) | +$197 (6) | +$187 (17) | +$181 (8) | -$198 (41) | +$317 |
+| EVM=1.9 | Lower velocity multiplier | +$33 (6) | +$13 (9) | +$197 (6) | +$187 (17) | +$181 (8) | -$191 (21) | +$420 |
+
+### Key Insight
+v1 and v3's good Feb 17 results (+$169/+$185 with only 6 trades) came from changed **OV behavior** (earlier BULL switch, daily target hit by 09:55 ET), NOT from capturing the Base phase uptrend. The 10:44-11:13 ET uptrend was never successfully captured by ANY fix iteration because:
+
+1. Fixes that allow trendRescue during OV: change OV entry timing → earlier daily target → stops trading before the uptrend even starts (appears to "fix" Feb 17 but is coincidental and wildly regresses other days)
+2. Fixes restricted to Base phase (v6): correctly enter BULL via trendRescue during uptrend, but trailing stop ejects every position within minutes → 41 trades, massive churn loss
+
+**Solving the missed uptrend requires addressing BOTH root causes simultaneously:**
+1. Fix the trendRescue deadlock (entry problem)
+2. Widen or adapt the trailing stop for trendRescue-initiated entries during gradual trends (exit problem)
+
+### Infrastructure Added
+- **EntryVelocityMultiplier** setting: configurable multiplier for entry velocity = maintenance × multiplier (was hardcoded 2.0). Added to:
+  - `MarketBlocks.Bots/Domain/TradingSettings.cs` (property, default 2.0m)
+  - `MarketBlocks.Bots/Domain/TimeBasedRule.cs` (nullable override)
+  - `MarketBlocks.Bots/Services/TimeRuleApplier.cs` (snapshot/restore/apply/changes/SettingsSnapshot)
+  - `qqqBot/ProgramRefactored.cs` (loading, phase config, logging)
+  - All tests pass (159 Bots tests, 63 qqqBot tests)
+
+### Code State After Session
+- **Fix v6 currently applied** to AnalystEngine.cs (phase-restricted trendRescue, 3x confirmation, Base/PH only)
+- **EntryVelocityMultiplier infrastructure** in both repos
+- No changes committed
+
+### Open Questions for Next Session
+1. Should we implement a "trend hold" mode that widens trailing stop for trendRescue-initiated entries?
+2. Should we disable the DynamicStopLoss ratchet tightening during trendRescue entries?
+3. Alternative: signal-based exit only (no trailing stop) for trendRescue entries?
+4. The `--override` CLI bug needs fixing for efficient parameter sweeps
+5. Smaller missed trades at 11:26 and 12:37-12:45 ET not yet investigated
+
+---
+
+## Session: Combined TrendRescue + Wider Stop Fix (2026-02-20, continued)
+
+### Approach
+Combined entry fix (trendRescue deadlock) with exit fix (Option A: wider trailing stop, no ratchet).
+
+### v7: Maintenance Velocity Floor + 5x Confirmation + 0.5% Wider Stop (WINNER)
+
+**Entry changes** (AnalystEngine.cs):
+1. Fixed trendRescue deadlock: trendRescue ticks now accumulate independently of `activeSlope > entryVelocity`
+2. Phase restriction: trendRescue only fires during Base/PH (after 10:13 ET)
+3. Minimum slope floor: `activeSlope > maintenanceVelocity` required (was just `> 0`). Filters out weak/noisy trends.
+4. Higher confirmation: 5x normal EntryConfirmationTicks (= 10 ticks). Prevents false positives on choppy days.
+5. `IsTrendRescueEntry` flag propagated through `MarketRegime` record to TraderEngine.
+
+**Exit changes** (TraderEngine.cs):
+1. `_isTrendRescuePosition` tracked per position
+2. When `TrendRescueTrailingStopPercent > 0`, trendRescue positions use that as trailing stop distance
+3. DynamicStopLoss ratchet is SKIPPED for trendRescue positions (ratchet causes immediate churn on gradual trends)
+4. Non-trendRescue positions: completely unchanged behavior
+
+**Settings** (appsettings.json):
+- `TrendRescueTrailingStopPercent`: 0.005 (0.5%) — only applies to trendRescue entries
+
+### v7 Results
+
+| Date | Baseline | v7 | Delta |
+|------|----------|-----|-------|
+| Feb 9 | +$33 (6tr) | +$33 (6tr) | = |
+| Feb 10 | +$13 (9tr) | +$13 (9tr) | = |
+| Feb 11 | +$197 (6tr) | +$197 (6tr) | = |
+| Feb 12 | +$187 (17tr) | +$187 (17tr) | = |
+| Feb 13 | +$181 (8tr) | +$181 (8tr) | = |
+| **5-day (Feb 9-13)** | **+$611** | **+$611** | **=** |
+| Feb 17 | -$22 (15tr) | **+$8** (23tr) | **+$30** |
+| **6-day total** | **+$589** | **+$619** | **+$30** |
+
+**Zero regression on all 5 other days. Feb 17 turns from losing (-$22) to profitable (+$8).**
+
+- 4 trendRescue entries on Feb 17 (confirmed via [TREND RESCUE] log lines)
+- 0 trendRescue entries on Feb 10 (maintenance velocity floor correctly filters it)
+- Feb 9, 11, 12, 13: no trendRescue entries (identical trade counts and P/L)
+- All tests pass: 159 Bots + 63 qqqBot
+
+### Earlier v7 Iterations (Rejected)
+
+| Config | Feb 10 | Feb 17 | Issue |
+|--------|--------|--------|-------|
+| 3x confirm, no floor, 0.5% stop | -$118 (11tr) | -$10 (27tr) | False trendRescue on Feb 10, $132 loss |
+| 3x confirm, no floor, no wide stop | -$84 (11tr) | -$198 (41tr) | Entry alone regresses Feb 10 + churn on Feb 17 |
+
+**Key insight**: The maintenance velocity floor (`activeSlope > maintenanceVelocity`) is the critical filter that prevents false trendRescue entries. Without it, even with high confirmation ticks, trendRescue fires on weak slopes that don't sustain.
+
+### CycleTracker Deep Audit (2026-02-20)
+
+Comprehensive code audit found CycleTracker has exactly **one** influence point: `HandleNeutralAsync()` in TraderEngine, where it can reduce the neutral timeout (`effectiveWaitSeconds`). This reduction:
+1. Only fires when 3 conditions are all met (cycle > 30s, stability < 20s std, and cap < configured wait)
+2. Always logs `[RHYTHM]` when it fires — cannot act silently
+3. Does not modify signals, bands, slopes, stops, or entry decisions
+
+**Assessment**: CycleTracker is clean. No `[RHYTHM]` = zero effect on trading decisions.
+
+### Code Changes (Committed State)
+
+**MarketBlocks** (4 files):
+- `MarketBlocks.Bots/Domain/MarketRegime.cs`: Added `bool IsTrendRescueEntry = false`
+- `MarketBlocks.Bots/Domain/TradingSettings.cs`: Added `EntryVelocityMultiplier` (2.0 default), `TrendRescueTrailingStopPercent` (0 default)
+- `MarketBlocks.Bots/Domain/TimeBasedRule.cs`: Added nullable overrides for both
+- `MarketBlocks.Bots/Services/TimeRuleApplier.cs`: Added to all 5 sections
+- `MarketBlocks.Bots/Services/AnalystEngine.cs`: Fixed trendRescue deadlock, added IsTrendRescueEntry propagation, `_currentSignalIsTrendRescue` tracking
+- `MarketBlocks.Bots/Services/TraderEngine.cs`: Added `_isTrendRescuePosition`, wider stop for trendRescue, reset on position close and latch clear
+
+**qqqBot** (2 files):
+- `qqqBot/ProgramRefactored.cs`: Added loading/logging for both new settings
+- `qqqBot/TradingSettings.cs`: Added `TrendRescueTrailingStopPercent`
+- `qqqBot/appsettings.json`: Added `TrendRescueTrailingStopPercent: 0.005`
+
+---
+
+## Session: Feb 17 Live vs Replay Divergence Investigation (2026-02-17)
+
+### Context
+After applying v7 (TrendRescue + wider stop), Feb 17 replay shows +$8.16 but live trading returned +$85.44 — a **$77.28 gap**. Prior divergence investigations found real bugs (Feb 12: $425 gap from Brownian bridge), so this was worth investigating.
+
+### Methodology
+1. Extracted complete trade logs from live (`qqqbot_20260217.log`, +$85.44, 9 trades)
+2. Ran v7 replay (`--mode=replay --date=20260217 --speed=0`, +$8.16, 23 trades)
+3. Side-by-side trade comparison with timestamps
+4. Audited `SimulatedBroker.cs` fill model
+5. Reviewed `TraderEngine.cs` pending order timeout / buy cooldown pathways
+
+### Root Cause: SimulatedBroker Instant Fill Model
+
+The entire divergence cascades from **one event at 09:31 ET**:
+
+| | Live (Alpaca) | Replay (SimulatedBroker) |
+|---|---|---|
+| 09:31 BEAR signal | SQQQ buy submitted | SQQQ buy submitted |
+| Fill result | **Timed out after 10s** (no fill) | **Filled instantly** |
+| Consequence | Cash rolled back, 15s buy cooldown | Entered SQQQ, lost **-$142.04** on trailing stop |
+| Next entry | TQQQ at 09:37:29 (after 3 more fill failures) | TQQQ at different time/price |
+
+**SimulatedBroker structural limitations:**
+- `SubmitOrderAsync` (L103-224): Every valid order fills instantly with `Status = Filled`
+- `CancelOrderAsync` (L231-235): Always returns `false` (nothing to cancel)
+- No `PendingNew/Accepted` state ever reached
+- The entire `ProcessPendingOrderAsync` pathway in TraderEngine (10s timeout, cancel, reconcile, buy cooldown backoff) is **dead code in replay**
+- Buy cooldown (15s/30s/60s escalating) never activates
+
+**Secondary divergence**: v7 TREND RESCUE trades (4 entries in replay) don't exist in live (live ran pre-v7 code). These contributed ~+$24 net for replay.
+
+**Cascading effect**: Different P/L from trade 1 → different capital → different share counts → different subsequent trade outcomes. Makes simple arithmetic reconciliation impossible.
+
+### Decision
+**Accepted as inherent** (Option 1). Fill failures are non-deterministic (market depth, latency, queue position). The gap is fully explained by the SimulatedBroker's instant fill model vs real-world order timeouts.
+
+### Future Enhancement (Backlog)
+A combination of fill latency simulation + stochastic fill failure could narrow the gap while preserving determinism via seeded RNG. This would:
+- Exercise the `ProcessPendingOrderAsync` pathway in replay
+- Model OV-phase fill failures (where standard limit orders often timeout)
+- Remain deterministic for regression testing (seeded random generator)
+- Not yet implemented — added to TODO.md
+
+### Historical Divergence Summary
+
+| Date | Gap | Root Cause | Status |
+|------|-----|------------|--------|
+| Feb 12 | $425 | Brownian bridge synthetic ticks | Fixed |
+| Feb 11 | $48 | IOC partial fills + latency | Documented (expected) |
+| **Feb 17** | **$77** | **SimulatedBroker instant fill** | **Documented (expected)** |
+
+---
+
+## Session: 2026-02-18 — Adaptive Trend & EOD Cutoff
+
+### Context
+Feb 18 live trading: bot went BEAR at 09:30 (2x SQQQ buy timeouts, broker errors), then stayed NEUTRAL-CASH from 09:31 to 13:42 while QQQ rallied from $601 to $607. Ended at -$17.04 (3 trades). Suspected "Opening Blindness" — trend SMA unreliable during OV→Base warmup.
+
+### Changes Implemented
+
+**Block 1: Adaptive Trend Detection (AnalystEngine)**
+- Added `EnableAdaptiveTrendWindow` (bool, default true → later set false)
+- Added `ShortTrendSlopeWindow` (int, 90) and `ShortTrendSlopeThreshold` (decimal, 0.00002)
+- Two mechanisms in `DetermineSignal()`:
+  1. **FillRatio scaling**: `effectiveTrendWidth *= _trendSma.FillRatio` during warmup — makes trend detection proportionally easier
+  2. **Slope override**: Forces `isBullTrend`/`isBearTrend` when `_shortTrendSlope.CurrentSlope` exceeds threshold — re-enables TrendRescue/CruiseControl during warmup
+- Added `_shortTrendSlope` (StreamingSlope) field, constructor init, ProcessTick feed, ReconfigureIndicators resize+seed, ColdResetIndicators clear, PartialResetIndicators seed
+- Full TimeRuleApplier plumbing (all 7 sections), ProgramRefactored loading, TimeBasedRule overrides
+
+**Block 2: End-of-Day Entry Cutoff (TraderEngine)**
+- Added `LastEntryMinutesBeforeClose` (decimal, default 0 — disabled unless set in appsettings.json)
+- `EnsureBullPositionAsync` and `EnsureBearPositionAsync`: early-return when ET time ≥ `15:58 - LastEntryMinutesBeforeClose`
+- appsettings.json sets `LastEntryMinutesBeforeClose: 2` (cutoff at 15:56 ET)
+
+**Block 3: Broker Timeout Fix (appsettings.json)**
+- Changed OV overrides: `UseMarketableLimits: false, UseIocOrders: false` → `true, true`
+- **REVERTED**: This caused massive regression in replay — SimulatedBroker fills IOC instantly but the order flow changes. OV Market orders have much lower simulated slippage.
+- **Root cause preserved**: Market orders during first ~60s of OV sit in `Accepted` state >10s on Alpaca. IOC would fix live but harms replay determinism. Left as `false, false` in config; fix is a live-only concern that needs SimulatedBroker latency modeling first.
+
+**Block 4: TODO.md Updates**
+- Added "Bidirectional MR Research" item (separate branch exploration)
+- Added "Broker Timeout During OV" item (documented as identified, workaround noted)
+
+### Replay Sweep Results
+
+**Adaptive Trend — All Variants Tested on Feb 9-13 + 17-18:**
+
+| Config | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | Feb 17 | Feb 18 | Total |
+|--------|-------|--------|--------|--------|--------|--------|--------|-------|
+| **Baseline (adaptive off)** | +$33 (6) | +$13 (9) | +$197 (6) | +$187 (17) | +$181 (8) | +$8 (23) | -$88 (6) | **+$531** |
+| FillRatio only, OV gated | +$33 (6) | +$4 (11) | +$197 (6) | +$187 (17) | +$181 (8) | — | — | **+$603** |
+| Both mechanisms, OV gated | +$48 (9) | -$73 (13) | +$197 (6) | +$187 (17) | +$181 (8) | +$37 (35) | -$88 (6) | **+$489** |
+| Both mechanisms, everywhere | -$72 (15) | — | — | — | — | — | — | **heavily negative** |
+| Split OV: Early (09:30-09:50 off) + Late (09:50-10:13 on) | -$2 (10) | +$13 (9) | +$197 (6) | +$179 (17) | +$181 (8) | +$8 (23) | -$88 (6) | **+$488** |
+
+### Key Findings
+
+1. **Feb 18 Opening Blindness is an OV-phase problem, NOT a Base-warmup problem.** The QQQ rally (601→607) happened during OV (09:50-10:05). By Base start (10:13), QQQ was already at 607-608 and no longer trending. Adaptive trend detection during Base warmup makes zero difference on Feb 18.
+
+2. **Slope override is the main damage source.** It forces false `isBullTrend`/`isBearTrend` based on noisy 90-tick slopes, enabling bad TrendRescue entries that get stopped out. Feb 10 regression: -$86 from slope override alone.
+
+3. **FillRatio scaling is near-neutral.** Only marginal effect (-$8 on 5-day total), not enough to justify the added complexity.
+
+4. **OV gating helps but doesn't eliminate harm.** Disabling adaptive during OV and only running during Base warmup reduces damage but the slope override still causes whipsaws during Base transition.
+
+5. **The adaptive approach as designed doesn't work.** The Feb 18 problem requires a fundamentally different approach — likely one that operates during OV itself (where the rally happened), not during the post-OV warmup period the adaptive was designed for.
+
+### Decision
+- `EnableAdaptiveTrendWindow: false` in appsettings.json (feature disabled)
+- All infrastructure code committed and available for future tuning
+- OV `UseIocOrders` left as `false` (original value) — IOC during OV is a live-only concern that needs SimBroker latency modeling
+- `LastEntryMinutesBeforeClose: 2` enabled in appsettings.json (prevents entries after 15:56 ET)
+
+### Baseline Established
+Current 5-day baseline (Feb 9-13) with v7 TrendRescue + adaptive off: **+$611.33** (46 trades)
+Prior baseline reference: +$608.90 (without v7 TrendRescue changes)
+
+---
+
+## Session 2026-02-18 (continued) — Drift Mode & Displacement Re-Entry
+
+### Context
+Research AI consultation identified the fundamental architectural gap: qqqBot has no velocity-independent entry path. Gradual price drifts where SMA tracks price don't breach Bollinger Bands, so the velocity gate blocks entries even when the trend is clear from price position alone. Feb 18 missed a 1% QQQ rally ($601→$607) during OV because of this gap.
+
+Research AI proposed 3 changes:
+1. **Remove noisy slope override** — `_shortTrendSlope` (90-tick) override was proven harmful  
+2. **Drift Mode (TimeInZone counter)** — enter when price sustains above/below SMA for N ticks  
+3. **Displacement Re-Entry** — re-enter after directional→NEUTRAL transition when price moves significantly
+
+### Changes Made
+
+#### 1. Slope Override Removed
+- Deleted the `_shortTrendSlope` override block from `DetermineSignal` (was gated by `EnableAdaptiveTrendWindow`)
+- FillRatio scaling kept (near-neutral, harmless)
+- `_shortTrendSlope` field/init/feed kept to avoid plumbing churn (dead code when `EnableAdaptiveTrendWindow=false`)
+
+#### 2. Drift Mode Implemented
+New fields in AnalystEngine:
+- `_consecutiveTicksAboveSma` / `_consecutiveTicksBelowSma` — counters updated every tick
+- `_isDriftEntry` — flag for drift position maintenance (bypass velocity exit)
+- `_bullDriftConsumedThisPhase` / `_bearDriftConsumedThisPhase` — per-direction one-shot flags
+
+Drift mode logic in `DetermineSignal`:
+- **Counter update**: Before velocity logic, price compared to `currentSma`
+- **Position maintenance**: If `_isDriftEntry && isInTrade`, maintain signal while price stays on correct side of SMA (bypasses velocity gate exit)
+- **Entry path**: After main signal logic, if `!isInTrade && newSignal == "NEUTRAL"`:
+  - Check duration: consecutive ticks ≥ `DriftModeConsecutiveTicks`
+  - Check magnitude: displacement from SMA ≥ `DriftModeMinDisplacementPercent`
+  - Check one-shot: per-direction consumed flag not set
+  - If all pass → override to BULL or BEAR
+- **Exit**: Position releases when price crosses SMA; `_isDriftEntry = false`
+
+New settings:
+- `DriftModeEnabled` (bool, default false) — globally enable/disable
+- `DriftModeConsecutiveTicks` (int, default 60) — ~3min at ~3s/tick
+- `DriftModeMinDisplacementPercent` (decimal, default 0.002) — 0.2% minimum distance from SMA
+
+#### 3. Displacement Re-Entry Implemented (disabled)
+New field: `_lastNeutralTransitionPrice` — records price when signal transitions from BULL/BEAR to NEUTRAL.
+
+Logic: If `!isInTrade && newSignal == "NEUTRAL"` and `_lastNeutralTransitionPrice` has value:
+- Compute displacement % from recorded price
+- If > `DisplacementReentryPercent` → BULL re-entry
+- If < -`DisplacementReentryPercent` → BEAR re-entry
+
+New settings:
+- `DisplacementReentryEnabled` (bool, default false) — left disabled (caused regressions in testing)
+- `DisplacementReentryPercent` (decimal, default 0.005) — 0.5% displacement threshold
+
+#### 4. Plumbing
+All new settings added to: MarketBlocks TradingSettings, qqqBot TradingSettings, TimeBasedRule, TimeRuleApplier (Snapshot/Restore/Apply/Log/SettingsSnapshot), ProgramRefactored (BuildTradingSettings + ParseOverrides), appsettings.json.
+
+Reset logic in ColdReset and PartialReset: counters, flags, and displacement price all cleared.
+
+### Development Iterations
+
+**Iteration 1: Naive drift (global, 60 ticks, no filters)**
+- Feb 18: +$149 ✓ (captured OV rally!)
+- Feb 9: -$458 ✗ (53 trades, oscillation every 2 ticks — BEAR→NEUTRAL→BEAR cycling)
+- Fix needed: oscillation prevention
+
+**Iteration 2: Added `_isDriftEntry` sticky hold + counter reset**
+- Fixed 2-tick oscillation — drift holds until price crosses SMA
+- Still cycling: enter→hold→SMA cross→exit→60 ticks→re-enter (15+ entries per OV)
+- Feb 9: -$458 still (drift cycling throughout Base/PH)
+
+**Iteration 3: OV-only phase gating**
+- DriftModeEnabled=false global, true in OV override
+- Feb 9: +$4 (improved but -$29 from baseline)
+- Feb 18: +$149 ✓ BUT...
+- Feb 11/12/13: massive regressions (37 trades each — displacement re-entry was still enabled)
+
+**Iteration 4: OV-only + displacement disabled**
+- Standard displacement ReEntry disabled, drift OV-only
+- Still too many trades from drift cycling within OV
+
+**Iteration 5: One-shot per phase**
+- `_driftConsumedThisPhase` prevents re-entry after first drift
+- Feb 18: Wrong direction first — BEAR consumed the one-shot before BULL could catch the rally
+
+**Iteration 6: Per-direction one-shot**
+- Separate `_bullDriftConsumedThisPhase` / `_bearDriftConsumedThisPhase`
+- Better but still not effective on Feb 18 (-$84)
+
+**Iteration 7: Displacement filter (FINAL)**
+- Added `DriftModeMinDisplacementPercent` (0.2%) — price must be ≥0.2% from SMA when ticks threshold met
+- **Globally enabled** (not OV-gated) — the displacement filter naturally prevents entries on low-volatility/choppy days
+- Per-direction one-shot preserved
+
+### Final Replay Results (Drift Mode with displacement filter)
+
+| Date | Baseline P/L | Drift P/L | Delta | Base Trades | Drift Trades |
+|------|-------------|-----------|-------|-------------|--------------|
+| Feb 9 | +$33 | +$33 | $0 | 6 | 6 |
+| Feb 10 | +$13 | +$13 | $0 | 9 | 9 |
+| Feb 11 | +$197 | +$197 | $0 | 6 | 6 |
+| Feb 12 | +$187 | +$187 | $0 | 17 | 17 |
+| Feb 13 | +$181 | +$175 | -$6 | 8 | 8 |
+| Feb 17 | +$8 | +$41 | +$33 | 23 | 25 |
+| **Feb 18** | **-$88** | **+$157** | **+$245** | 6 | 4 |
+| **7-day Total** | **+$531** | **+$803** | **+$272** | — | — |
+
+### Key Findings
+
+1. **Displacement filter is the breakthrough.** Duration-only drift (consecutive ticks) generates too many false entries. Adding a magnitude filter (price must be ≥0.2% from SMA) makes drift selective enough to be net positive.
+
+2. **Zero regression on 4 of 7 days.** The displacement filter prevents drift from firing at all on choppy/rangebound days (Feb 9, 10, 11, 12). Only fires on days with genuine sustained displacement from SMA.
+
+3. **Feb 18 fix works.** Target day went from -$88 to +$157 — drift entered BULL during OV rally and held through the move. Trade count actually decreased (6→4) because drift captured the move in fewer, larger trades.
+
+4. **Displacement Re-Entry too noisy.** Enabled it caused regressions on every day. Left infrastructure in place but disabled (`DisplacementReentryEnabled: false`).
+
+5. **Drift maintenance is essential.** Without `_isDriftEntry` sticky hold, the velocity gate immediately exits drift positions on the next tick (stalled→NEUTRAL). The maintenance block bypasses velocity logic while price stays on correct side of SMA.
+
+### Current Settings
+```json
+"DriftModeEnabled": true,
+"DriftModeConsecutiveTicks": 60,
+"DriftModeMinDisplacementPercent": 0.002,
+"DisplacementReentryEnabled": false,
+"DisplacementReentryPercent": 0.005,
+"EnableAdaptiveTrendWindow": false
+```

@@ -248,3 +248,55 @@
   | Feb 11 | +$47 | +$56 | +$150 | +$162 | $0 (full day better) |
   | Feb 12 | +$74 | +$81 | +$135 | +$127 | $0 (full day better) |
   | Feb 13 | +$179 | +$182 | -$156 | +$179 | $0 (daily target saved it) |
+
+## Bidirectional Mean Reversion (Research)
+
+- [ ] **Explore bidirectional MR: trade momentum toward BB extremes, not just contrarian**
+  Current MR is contrarian-only: MR_LONG at low %B (oversold), MR_SHORT at high %B (overbought). Alternative approach: trade *with* momentum toward BB extremes (SQQQ while dropping toward lower band, TQQQ on bounce from lower band). This would capture the directional move rather than bet on reversal. MR_SHORT already exists and works (BullOnlyMode=false by default). Research on a separate branch (`feature/bidirectional-mr`). Key questions:
+  - Does entering with momentum reduce counter-trend risk?
+  - Can slope direction + BB %B gradient identify "approaching extreme" entries?
+  - How does this interact with the existing MR exit (%B midline)?
+  - Does this produce positive expectancy on Feb 9-13 replay data?
+
+## Broker Timeout During OV (2026-02-18)
+
+- [x] **FIX: Market orders timing out during OV opening**
+  **FIXED (2026-02-20)**: Feb 17 and Feb 18 both showed identical pattern: plain Market/Day orders placed in the first ~30-60s of OV sat in `Accepted` state for >10s and timed out (`PendingOrderTimeoutSeconds=10`). Root cause: OV config had `UseMarketableLimits=false, UseIocOrders=false`, forcing plain Market orders that Alpaca's opening auction can hold. Fix: changed OV TimeRule overrides to `UseMarketableLimits=true, UseIocOrders=true` (same as Base phase). IOC orders have explicit fill-or-kill semantics that work better during volatile opens.
+
+## Bugs Found (2026-02-20)
+
+- [x] **FIX: TrendRescue deadlock in DetermineSignal()**
+  **FIXED (2026-02-20)**: v7 combined fix with maintenance velocity floor + 5x confirmation + 0.5% wider stop (no ratchet) for trendRescue positions. Feb 17 improved from -$22 to +$8. Zero regression on Feb 9-13. See EXPERIMENTS.md "Session: Combined TrendRescue + Wider Stop Fix".
+
+- [ ] **FIX: `--override` CLI flag silently ignored**
+  `CommandLineOverrides.cs` has no handler for `--override KEY=VALUE`. All parameter sweeps using this flag produced identical results because overrides were never applied. Need to add generic override handling or document the correct alternative (alternate appsettings files can already be passed on the command line).
+
+## Trailing Stop Adaptation (2026-02-20)
+
+- [x] **Investigate trailing stop behavior during gradual/trendRescue trends**
+  **FIXED (2026-02-20)**: Added `TrendRescueTrailingStopPercent` setting (Base: 0.005 = 0.5%). TrendRescue positions use this wider stop with DynamicStopLoss ratchet skipped. Prevents churn cycle on gradual uptrends. See EXPERIMENTS.md v7 results.
+
+- [ ] **Add CycleTracker toggle setting**
+  CycleTracker audited 2026-02-20: clean, single influence point with mandatory logging. Not a priority.
+
+## SimulatedBroker Realism (2026-02-17)
+
+- [ ] **SimulatedBroker: Add fill latency + stochastic fill failure**
+  Current `SimulatedBroker.SubmitOrderAsync` fills every order instantly. This makes the entire `ProcessPendingOrderAsync` pathway (10s timeout, cancel, reconcile, buy cooldown backoff) dead code in replay. Feb 17 showed a $77.28 live-vs-replay gap caused entirely by a SQQQ order that timed out in live but filled instantly in replay. Enhancement: return `Status = New` initially, resolve to `Filled` after configurable delay, with seeded-RNG probability of fill failure (especially during OV phase where standard limit orders often timeout). Preserves determinism via seed.
+
+## Drift Mode & Displacement Re-Entry (2026-02-18)
+
+- [x] **Implement Drift Mode (velocity-independent entry)**
+  **DONE (2026-02-18)**: Added TimeInZone counter for sustained price-above/below-SMA entry. Requires BOTH duration (60 ticks) AND magnitude (≥0.2% displacement from SMA). Per-direction one-shot prevents cycling. Sticky `_isDriftEntry` hold bypasses velocity exit. Settings: `DriftModeEnabled`, `DriftModeConsecutiveTicks`, `DriftModeMinDisplacementPercent`. 7-day result: +$272 improvement (+$531→+$803), Feb 18 fix: -$88→+$157.
+
+- [x] **Implement Displacement Re-Entry (infrastructure)**
+  **DONE (2026-02-18)**: Infrastructure built and plumbed. Records `_lastNeutralTransitionPrice` when directional signal exits to NEUTRAL. Can re-enter when price displaces ≥`DisplacementReentryPercent` from that price. **Left disabled** (`DisplacementReentryEnabled: false`) — caused regressions in testing.
+
+- [x] **Remove noisy slope override from DetermineSignal**
+  **DONE (2026-02-18)**: Deleted the `_shortTrendSlope` override block that forced `isBullTrend`/`isBearTrend` during warmup. Was proven harmful in adaptive trend experiments.
+
+- [ ] **Tune Drift Mode thresholds further**
+  Current defaults (60 ticks, 0.2% displacement) are sweep-validated across 7 days but could benefit from fine-tuning. Consider: different thresholds per phase (OV vs Base), shorter tick window with higher displacement requirement, or longer window with lower displacement.
+
+- [ ] **Evaluate Displacement Re-Entry with different thresholds**
+  Global displacement re-entry causes regressions. Consider: OV-only enabling, ATR-scaled threshold instead of fixed %, or combined with drift mode counters.

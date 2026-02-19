@@ -55,8 +55,27 @@ class TradingSettings
     public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
+    public decimal TrendRescueTrailingStopPercent { get; set; } = 0m; // 0 = use normal TrailingStopPercent. >0 = wider stop for trendRescue entries.
     public decimal TrailingStopPercent { get; set; } = 0.0m; // 0 = disabled, e.g. 0.002 = 0.2%
     public int StopLossCooldownSeconds { get; set; } = 10; // Washout latch duration
+    
+    // ADAPTIVE TREND WINDOW (Opening Blindness Fix)
+    public bool EnableAdaptiveTrendWindow { get; set; } = true;
+    public int ShortTrendSlopeWindow { get; set; } = 90;
+    public decimal ShortTrendSlopeThreshold { get; set; } = 0.00002m;
+    
+    // END-OF-DAY ENTRY CUTOFF
+    public decimal LastEntryMinutesBeforeClose { get; set; }
+    
+    // DRIFT MODE: velocity-independent entry for sustained directional moves
+    public bool DriftModeEnabled { get; set; }
+    public int DriftModeConsecutiveTicks { get; set; } = 60;
+    public decimal DriftModeMinDisplacementPercent { get; set; } = 0.002m;
+    
+    // DISPLACEMENT RE-ENTRY: re-enter after stop-out when price has drifted significantly
+    public bool DisplacementReentryEnabled { get; set; }
+    public decimal DisplacementReentryPercent { get; set; } = 0.005m;
+    
     public bool UseMarketableLimits { get; set; } = false; // Use limit orders instead of market orders
     public decimal MaxSlippagePercent { get; set; } = 0.002m; // 0.2% max slippage for limit orders
     public decimal MaxChaseDeviationPercent { get; set; } = 0.003m; // 0.3% max price move before aborting entry chase
