@@ -2395,6 +2395,10 @@ Fetched Tradier streaming API documentation. Key findings for future CVD impleme
 
 4. **BEAR entry had missing TrendRescue handling.** Fixed as part of this implementation — BEAR entry setup now has full drift/rescue/normal stop priority logic matching BULL.
 
+5. **Drift trailing stop must use max(drift, phase) — not drift alone.** Initial implementation used `DriftTrailingStopPercent` directly. During OV where `TrailingStopPercent=0.50%`, the drift stop of 0.35% was actually *tighter* — the "wider stop" label was wrong. Fixed by applying `Math.Max(DriftTrailingStopPercent, TrailingStopPercent)` at all 5 usage sites (EvaluateTrailingStop, BULL entry, BEAR entry). Log now shows `(drift=0.35%, phase=0.50%, max applied)`.
+
+6. **Feb 9 $5.55 cliff explained: DynamicStopLoss ratchet skip.** The drift/TrendRescue code path intentionally skips the DynamicStopLoss ratchet (which tightens the stop as profit grows: 0.3%→0.15%, 0.5%→0.10%, 0.8%→0.08%). In the baseline (DriftTrailingStopPercent=0), the drift entry falls through to the normal code path where the ratchet runs, locks in profit, and fires the stop at $50.49 (+$43.56). With DriftTrailingStopPercent>0, the ratchet is skipped, the wide stop doesn't fire, and the dynamic exit timer (ScalpWait/TrendWait) fires at $50.34 (+$15.84) — $28 worse. This is a design tradeoff, not a bug: ratchet skip prevents churn on gradual moves (Feb 17: +$48) at the cost of not locking in profits on reversals (Feb 9: -$28). Net is still +$20.
+
 ### Current Settings
 ```json
 "DriftModeEnabled": true,
