@@ -651,6 +651,7 @@ public static class ProgramRefactored
             ChopOverrideEnabled = configuration.GetValue("TradingBot:ChopOverrideEnabled", false),
             ChopUpperThreshold = configuration.GetValue("TradingBot:ChopUpperThreshold", 61.8m),
             ChopLowerThreshold = configuration.GetValue("TradingBot:ChopLowerThreshold", 38.2m),
+            ChopTrendExitThreshold = configuration.GetValue("TradingBot:ChopTrendExitThreshold", 45m),
             BollingerWindow = configuration.GetValue("TradingBot:BollingerWindow", 20),
             BollingerMultiplier = configuration.GetValue("TradingBot:BollingerMultiplier", 2.0m),
             ChopPeriod = configuration.GetValue("TradingBot:ChopPeriod", 14),
@@ -786,6 +787,7 @@ public static class ProgramRefactored
         if (section["ChopOverrideEnabled"] != null) o.ChopOverrideEnabled = section.GetValue<bool>("ChopOverrideEnabled");
         if (section["ChopUpperThreshold"] != null) o.ChopUpperThreshold = section.GetValue<decimal>("ChopUpperThreshold");
         if (section["ChopLowerThreshold"] != null) o.ChopLowerThreshold = section.GetValue<decimal>("ChopLowerThreshold");
+        if (section["ChopTrendExitThreshold"] != null) o.ChopTrendExitThreshold = section.GetValue<decimal>("ChopTrendExitThreshold");
         if (section["BollingerWindow"] != null) o.BollingerWindow = section.GetValue<int>("BollingerWindow");
         if (section["BollingerMultiplier"] != null) o.BollingerMultiplier = section.GetValue<decimal>("BollingerMultiplier");
         if (section["ChopPeriod"] != null) o.ChopPeriod = section.GetValue<int>("ChopPeriod");

@@ -2647,3 +2647,69 @@ Modified `DetermineStrategyMode()` to add `currentPhase == "Power Hour"` guard. 
   "ChopUpperThreshold": 61.8
 }
 ```
+
+### Session: 2026-02-19 (Part 4) — CHOP Hysteresis, PH Trend Params, Displacement Strategy Pivot
+
+**Date**: Feb 19, 2026 (evening)
+**Context**: Implementing Research AI's 3-part strategy to unlock dormant displacement re-entry system.
+**Live results**: QQQ Open 602.81 → Close 603.46. Bot: +$0.11, Broker: -$5.20 (flat day).
+
+#### Research AI Recommendations (from 20260219-03 report)
+1. **CHOP Hysteresis (Schmitt trigger)**: Enter Trend Rescue at CHOP<30, exit at CHOP>45 — prevent flickering
+2. **PH-specific Trend parameters**: MinVelocityThreshold=0.000030 (2×Base), TrendWindowSeconds=1800 (30min vs 90min Base)
+3. **Unlock Displacement during MR**: Remove MR guard, add displacement interrupt in ProcessTick
+
+#### Code Changes (all implemented)
+1. **ChopTrendExitThreshold setting**: Added to full 6-file pipeline (TradingSettings×2, TimeBasedRule, TimeRuleApplier×5 sections, ProgramRefactored×2)
+2. **Schmitt trigger in DetermineStrategyMode()**: `_trendRescueActive` bool field with hysteresis: CHOP < lower → activate, stays until CHOP > exit threshold. Reset in ColdReset/PartialReset.
+3. **PH TimeRule overrides**: `MinVelocityThreshold: 0.000030`, `TrendWindowSeconds: 1800`
+4. **BBW gate on scramble**: Scramble now requires BBW > SMA(BBW) in addition to slope/CHOP checks
+5. **MR guard architecture**: Kept `_activeStrategy != MeanReversion` guard on displacement and scramble. Displacement naturally unlocks when CHOP hysteresis activates Trend Rescue (switches _activeStrategy to Trend).
+
+#### Failed Approach: Displacement MR Interrupt
+Initially implemented displacement as a "high-priority interrupt" per Research AI Task 3:
+- Removed MR guard from displacement/scramble
+- Added displacement interrupt in ProcessTick: if `_isDisplacementReentry` && trend signal is directional, override MR signal
+- **Result**: -$82.31 regression over 8 days. Displacement entered trades during choppy MR conditions (poor entry quality) and the interrupt kept positions alive against MR exit logic.
+- **Lesson**: Displacement re-entry during genuine MR conditions is counterproductive. The trend signals that trigger entry don't match the mean-reverting market reality.
+- **Solution**: Reverted to MR guard. Displacement is unlocked naturally via CHOP hysteresis — when CHOP drops low enough to activate Trend Rescue, `_activeStrategy` becomes Trend, MR guard passes, and displacement fires with proper trend management.
+
+#### 8-Day Replay Results (Feb 9-13, 17-19)
+
+| Configuration | 8-day P/L | vs Baseline |
+|---------------|-----------|-------------|
+| **Baseline (all dormant)** | **$627.15** | — |
+| All features ON (CHOP=30) | $473.72 | -$153.43 |
+| Disp interrupt only | $544.84 | -$82.31 |
+| CHOP hysteresis (30) + PH params | $549.50 | -$77.65 |
+| **CHOP hysteresis (25) + PH params** | **$627.15** | **$0 (dormant)** |
+
+Per-day baseline (8 days): +$5.55, +$12.92, +$196.96, +$186.92, +$174.99, +$89.22, +$157.08, -$196.49
+
+**Key Finding**: Feb 19 is a -$196.49 day regardless of features. 7-day baseline = $823.64.
+
+CHOP during PH in our dataset stays in the 25-40 range:
+- ChopLowerThreshold=30 → Trend Rescue activates on some days, hurts Feb 12 (-$81.20), helps Feb 17 (+$3.55)
+- ChopLowerThreshold=25 → CHOP never drops below 25, features dormant, baseline-identical
+- ChopLowerThreshold=20 → Same as 25 (dormant)
+
+#### Final Configuration (deployed)
+```json
+{
+  "ChopOverrideEnabled": true,
+  "ChopLowerThreshold": 25,
+  "ChopTrendExitThreshold": 45,
+  "ChopUpperThreshold": 61.8,
+  "DisplacementReentryEnabled": true,
+  "DisplacementMinSlope": 0.0002,
+  "PH TimeRule Overrides": { "MinVelocityThreshold": 0.000030, "TrendWindowSeconds": 1800 }
+}
+```
+
+Features are safe/dormant at ChopLowerThreshold=25 — infrastructure ready for activation when CHOP < 25 occurs during PH (strong end-of-day trend). The Schmitt trigger hysteresis prevents flickering. PH-specific trend parameters ensure proper velocity/window when Trend Rescue does activate.
+
+#### What Still Needs Investigation
+1. **Feb 12 regression at CHOP=30**: Why did Trend Rescue produce poor trades despite CHOP signaling strong trend?
+2. **Feb 19 deep trough (-$199.46 at 12:42)**: Losing day regardless of features. Investigate Base phase behavior.
+3. **More diverse dataset needed**: Current 8-day dataset doesn't have genuine PH trend days where CHOP < 25.
+4. **TrimRatio**: Stays at 0.75 per user instruction. User saw 102/136 shares trimmed (75%). Will be reviewed next tuning round.

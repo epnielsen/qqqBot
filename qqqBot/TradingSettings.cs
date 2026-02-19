@@ -37,7 +37,8 @@ class TradingSettings
     public string PhDefaultStrategy { get; set; } = "Trend";     // Trend or MeanReversion
     public bool ChopOverrideEnabled { get; set; } = false;       // CHOP can dynamically flip strategy
     public decimal ChopUpperThreshold { get; set; } = 61.8m;     // CHOP above = choppy → MR
-    public decimal ChopLowerThreshold { get; set; } = 38.2m;     // CHOP below = trending → Trend
+    public decimal ChopLowerThreshold { get; set; } = 38.2m;     // CHOP below = trending → Trend (entry into Trend Rescue)
+    public decimal ChopTrendExitThreshold { get; set; } = 45m;  // Schmitt trigger: exit Trend Rescue when CHOP > this
     public int BollingerWindow { get; set; } = 20;               // BB SMA period
     public decimal BollingerMultiplier { get; set; } = 2.0m;     // BB std dev multiplier
     public int ChopPeriod { get; set; } = 14;                    // CHOP lookback periods

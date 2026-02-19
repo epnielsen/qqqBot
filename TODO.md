@@ -228,8 +228,9 @@
 - [x] **Test Research AI parameter tuning recommendations**
   **DONE (2026-02-16)**: Tested BB(10), mult 1.5/1.8, RSI 35/65 in 5 configs (Y/Z/AA/AB) × 5 dates = 25 runs. **Every recommendation lost money vs Config W**: Y=-$22, Z/AA=-$244, AB=-$206. RSI relaxation (35/65) is the primary destructive factor — enters on premature reversals that haven't bottomed. BB multiplier change (1.5 vs 1.8) has literally zero impact. BB window shrink (20→10) marginally hurts. **Config W (conservative BB20, RSI 30/70, PH Resume) confirmed as best.** See EXPERIMENTS.md "Session: Research AI Tuning Recommendations Sweep".
 
-- [ ] **Fix CHOP override phase-awareness**
-  CHOP override currently applies globally across all phases. When enabled, it overrides BaseDefaultStrategy during Base phase, destroying good Trend performance. Should only override within the designated phase (e.g., only override during PH when PhDefaultStrategy=MR). Fix in `AnalystEngine.DetermineStrategyMode()`.
+- [x] **Fix CHOP override phase-awareness**
+  ~~CHOP override currently applies globally across all phases. When enabled, it overrides BaseDefaultStrategy during Base phase, destroying good Trend performance. Should only override within the designated phase (e.g., only override during PH when PhDefaultStrategy=MR). Fix in `AnalystEngine.DetermineStrategyMode()`.~~
+  **DONE (2026-02-19 Part 4)**: CHOP override already restricted to PH-only (Part 3). Part 4 added Schmitt trigger hysteresis (enter at CHOP<25, stay until CHOP>45) via `ChopTrendExitThreshold` setting + `_trendRescueActive` state field. Prevents mode-switching flickering. Currently dormant — CHOP never drops below 25 during PH in 8-day dataset. Infrastructure ready for activation.
 
 - [x] **Separate BB candle interval from CHOP** *(prerequisite for viable MR)*
   **DONE (2026-02-19)**: `ChopCandleSeconds` now controls aggregation for BB, CHOP, ATR, and RSI together (all share same 5-min candle). Tested in sweep R-V. The wider bands did solve the bandwidth-vs-execution-cost problem, but 5-min candles produce too few signals (BB %B rarely reaches 0.1/0.9 extremes).
@@ -305,6 +306,9 @@
 - [ ] **Tune Drift Mode thresholds further**
   Current defaults (60 ticks, 0.2% displacement, 0.35% drift stop) are sweep-validated across 7 days. Only 2 of 7 days are affected by drift stop changes — monitor on future data for overfitting.
   Consider: different thresholds per phase (OV vs Base), shorter tick window with higher displacement requirement.
+
+- [ ] **TrimRatio weekly re-optimization**
+  Current TrimRatio=0.75 was set during Feb 14 sweep. User saw 102/136 shares trimmed (75%) on Feb 19. Keep at 0.75 until next full tuning round. Evaluate with expanded dataset (10+ days) whether 0.5 or 0.33 produces better results.
 
 - [x] **Evaluate Displacement Re-Entry with CVD gating**
   ~~Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).~~
