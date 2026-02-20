@@ -202,7 +202,7 @@ public sealed class ReplayMarketDataSource : IAnalystMarketDataSource
             // Feed price to SimulatedBroker so it can fill orders at correct prices
             _onPriceUpdate?.Invoke(tick.Symbol, tick.Price, tick.TimestampUtc);
 
-            var priceTick = new PriceTick(tick.Symbol, tick.Price, isBenchmark, tick.TimestampUtc);
+            var priceTick = new PriceTick(tick.Symbol, tick.Price, isBenchmark, tick.TimestampUtc, tick.Volume);
             
             // In replay mode the analyst may complete the channel early (e.g. session end at 16:00 ET).
             // TryWrite returns false if the channel is completed; for a bounded(1) channel we need
