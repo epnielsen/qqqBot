@@ -31,11 +31,61 @@ class TradingSettings
     public bool ResumeInPowerHour { get; set; } = false; // true = resume trading in PH after daily target fires
     public string AnalystPhaseResetMode { get; set; } = "None"; // None, Cold, or Partial — controls indicator reset at phase boundaries
     public int AnalystPhaseResetSeconds { get; set; } = 120; // Seconds of history to keep in Partial mode
+    
+    // Mean Reversion Strategy
+    public string BaseDefaultStrategy { get; set; } = "Trend";   // Trend or MeanReversion
+    public string PhDefaultStrategy { get; set; } = "Trend";     // Trend or MeanReversion
+    public bool ChopOverrideEnabled { get; set; } = false;       // CHOP can dynamically flip strategy
+    public decimal ChopUpperThreshold { get; set; } = 61.8m;     // CHOP above = choppy → MR
+    public decimal ChopLowerThreshold { get; set; } = 38.2m;     // CHOP below = trending → Trend (entry into Trend Rescue)
+    public decimal ChopTrendExitThreshold { get; set; } = 45m;  // Schmitt trigger: exit Trend Rescue when CHOP > this
+    public int BollingerWindow { get; set; } = 20;               // BB SMA period
+    public decimal BollingerMultiplier { get; set; } = 2.0m;     // BB std dev multiplier
+    public int ChopPeriod { get; set; } = 14;                    // CHOP lookback periods
+    public int ChopCandleSeconds { get; set; } = 60;             // Candle interval for CHOP/ATR
+    public decimal MrEntryLowPctB { get; set; } = 0.2m;         // %B below this → MR_LONG
+    public decimal MrEntryHighPctB { get; set; } = 0.8m;        // %B above this → MR_SHORT
+    public decimal MrExitPctB { get; set; } = 0.5m;             // %B crosses this → MR_FLAT
+    public decimal MeanRevStopPercent { get; set; } = 0.003m;    // Hard stop for MR trades (0.3%) — fallback when ATR unavailable
+    public decimal MrAtrStopMultiplier { get; set; } = 2.0m;     // ATR-based stop: multiplier × ATR on benchmark; 0 = use fixed %
+    public bool MrRequireRsi { get; set; } = true;               // Require RSI confirmation for MR entries
+    public int MrRsiPeriod { get; set; } = 14;                   // RSI lookback periods
+    public decimal MrRsiOversold { get; set; } = 30m;            // RSI below this confirms MR_LONG
+    public decimal MrRsiOverbought { get; set; } = 70m;          // RSI above this confirms MR_SHORT
+    
     public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
     public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
     public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
+    public decimal TrendRescueTrailingStopPercent { get; set; } = 0m; // 0 = use normal TrailingStopPercent. >0 = wider stop for trendRescue entries.
     public decimal TrailingStopPercent { get; set; } = 0.0m; // 0 = disabled, e.g. 0.002 = 0.2%
     public int StopLossCooldownSeconds { get; set; } = 10; // Washout latch duration
+    
+    // ADAPTIVE TREND WINDOW (Opening Blindness Fix)
+    public bool EnableAdaptiveTrendWindow { get; set; } = true;
+    public int ShortTrendSlopeWindow { get; set; } = 90;
+    public decimal ShortTrendSlopeThreshold { get; set; } = 0.00002m;
+    
+    // END-OF-DAY ENTRY CUTOFF
+    public decimal LastEntryMinutesBeforeClose { get; set; }
+    
+    // DRIFT MODE: velocity-independent entry for sustained directional moves
+    public bool DriftModeEnabled { get; set; }
+    public int DriftModeConsecutiveTicks { get; set; } = 60;
+    public decimal DriftModeMinDisplacementPercent { get; set; } = 0.002m;
+    public decimal DriftModeAtrMultiplier { get; set; } = 0m; // 0 = use fixed percent only. >0 = use max(fixed, K × ATR / price) for adaptive threshold
+    public decimal DriftTrailingStopPercent { get; set; } = 0m; // 0 = use normal TrailingStopPercent. >0 = wider stop for drift entries
+    
+    // DISPLACEMENT RE-ENTRY: re-enter after stop-out when price has drifted significantly
+    // Regime-validated (AND logic): requires trending market (low CHOP) AND volatility expansion (BBW > SMA(BBW))
+    // Slope filter: blocks re-entry if price velocity is flat (filters drift from drive)
+    public bool DisplacementReentryEnabled { get; set; }
+    public decimal DisplacementReentryPercent { get; set; } = 0.005m;
+    public decimal DisplacementAtrMultiplier { get; set; } = 2.0m;
+    public decimal DisplacementChopThreshold { get; set; } = 50m;
+    public int DisplacementBbwLookback { get; set; } = 20;
+    public int DisplacementSlopeWindow { get; set; } = 10;
+    public decimal DisplacementMinSlope { get; set; } = 0m;
+    
     public bool UseMarketableLimits { get; set; } = false; // Use limit orders instead of market orders
     public decimal MaxSlippagePercent { get; set; } = 0.002m; // 0.2% max slippage for limit orders
     public decimal MaxChaseDeviationPercent { get; set; } = 0.003m; // 0.3% max price move before aborting entry chase
@@ -53,6 +103,11 @@ class TradingSettings
     public int IocRemainingSharesTolerance { get; set; } = 2; // Max remaining shares to treat as "good enough" liquidation
     public int KeepAlivePingSeconds { get; set; } = 5;    // HTTP connection keep-alive ping interval
     public int WarmUpIterations { get; set; } = 10000;    // JIT warm-up iterations before market open
+    
+    // STREAM HEALTH MONITORING — detects data feed disconnections (not strategic non-trading)
+    public int StreamStaleWarnSeconds { get; set; } = 30;       // WARN after N seconds with no incoming tick
+    public int StreamStaleCriticalSeconds { get; set; } = 120;  // CRITICAL after N seconds — likely disconnected
+    public int StreamWatchdogIntervalSeconds { get; set; } = 10; // How often the watchdog checks for stale stream
     
     // Derived: Calculate queue size dynamically from window and interval
     public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);

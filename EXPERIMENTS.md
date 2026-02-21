@@ -52,19 +52,19 @@
 
 ## Current Production Settings
 
-**As of: 2026-02-14 (Systematic Re-Optimization + OV Extension Session)**
+**As of: 2026-02-20 (Comprehensive SimBroker-Era Sweep)**
 
-> **NOTE**: Full phase-by-phase re-optimization using corrected replay infrastructure.
-> Swept ~200+ configs across 5 dates (Feb 9-13). Result: -$436→+$503 (+$939 improvement).
-> Base settings significantly changed. OV settings partially changed. PH unchanged.
-> OV window extended from 09:50→10:13 (+$60 improvement, $549→$609).
+> **NOTE**: Full 6-round cascading sweep with realistic SimulatedBroker (spread+slippage+vol-aware).
+> Swept ~270 scenarios across 9 primary dates (Feb 9-13, 17-20) + Feb 6 OOS.
+> Only 1 change found: SMA 180→210. Everything else was already optimal.
+> 9-day P/L: +$664.34 (102 trades). Feb 6 OOS: -$36.63.
 
 ### Base Config (10:13–14:00, also default for unspecified times)
 
 | Setting | Value | Previous | Notes |
 |---------|-------|----------|-------|
 | MinVelocityThreshold | 0.000015 | 0.000008 | ↑ 1.9×, biggest single improvement |
-| SMAWindowSeconds | 180 | 180 | Unchanged |
+| SMAWindowSeconds | 210 | 180 | ↑ from 180, +$16 on 9 days (R1 winner) |
 | SlopeWindowSize | 20 | 20 | Unchanged |
 | ChopThresholdPercent | 0.0011 | 0.0011 | Unchanged |
 | MinChopAbsolute | 0.02 | 0.02 | Unchanged (zero effect at current price) |
@@ -1479,3 +1479,1646 @@ The original $721.42 script result that motivated PH Resume was inflated by a co
 **Regression verified**: 5-day replay with dormant feature = **$608.90** (exact match, zero regressions).
 
 **Insight for future work**: PH trading needs an entirely different strategy — not settings tweaks on a trend/momentum bot. Choppy sessions require a fundamentally different approach (mean-reversion, range-bound strategies, or simply sitting out).
+
+---
+
+### Session: 2026-02-16 — Mean Reversion Strategy Implementation & Testing
+
+**Context**: Following the Session 15 insight that PH needs a fundamentally different strategy, we implemented a complete Mean Reversion (MR) infrastructure and ran systematic replay tests.
+
+#### Code Changes (Phase 0)
+
+**New file**: `MarketBlocks.Bots/Domain/StrategyMode.cs` — enum `Trend=0, MeanReversion=1`
+
+**Modified files** (7 files across both repos):
+- `MarketBlocks.Bots/Domain/TradingSettings.cs` — 13 new MR settings: `BaseDefaultStrategy`, `PhDefaultStrategy`, `ChopOverrideEnabled`, `ChopUpperThreshold` (61.8), `ChopLowerThreshold` (38.2), `BollingerWindow` (20), `BollingerMultiplier` (2.0), `ChopPeriod` (14), `ChopCandleSeconds` (60), `MeanRevStopPercent` (0.3%), `MrEntryLowPctB` (0.2), `MrEntryHighPctB` (0.8), `MrExitPctB` (0.5)
+- `MarketBlocks.Bots/Domain/TimeBasedRule.cs` — All 13 as nullable overrides in `TradingSettingsOverrides`
+- `MarketBlocks.Bots/Domain/MarketRegime.cs` — Extended with `ActiveStrategy`, `PercentB`, `BollingerUpper/Middle/Lower`, `ChopIndex`
+- `MarketBlocks.Bots/Services/AnalystEngine.cs` — BB/CHOP indicators, `DetermineStrategyMode()`, `DetermineMeanReversionSignal()`, `FeedChopCandle()` (candle aggregation for both CHOP and BB)
+- `MarketBlocks.Bots/Services/TraderEngine.cs` — MR_LONG/MR_SHORT/MR_FLAT signal dispatch, MR hard stop
+- `MarketBlocks.Bots/Services/TimeRuleApplier.cs` — All 13 settings wired through Snapshot, Restore, Apply, Log, IndicatorSettingsChanged, SettingsSnapshot
+- `MarketBlocks.Trade/Core/Math/StreamingBollingerBands.cs` — Added public `Multiplier` property
+
+**qqqBot wiring**: `TradingSettings.cs` (13 mirrored), `ProgramRefactored.cs` (BuildTradingSettings + ParseOverrides)
+
+**Bug fix during testing**: BB was originally fed every raw tick (`_bollingerBands.Add(tick.Price)`), making BB(20) = 20 ticks ≈ 20 seconds lookback. Bands were impossibly tight, causing 460 trades and -$5K loss in 2 hours. Fixed to feed BB on candle closes (same as CHOP), so BB(20) = 20 candle closes = 20 minutes lookback.
+
+**Build**: 0 errors both solutions. **Tests**: 325 pass (42+159+61+63). **Regression**: $608.90 exact match (MR dormant by default).
+
+#### Phase 1 Results — PH Segment Sweep (14:00-16:00 only, cold start)
+
+BB on candle closes. All configs deeply negative due to cold-start (BB needs 20 minutes to warm up):
+
+| Config | Entry Low/High | Stop | Total P/L | Trades | Notes |
+|--------|---------------|------|-----------|--------|-------|
+| A | 0.2 / 0.8 | 0.3% | -$2,550.84 | 161 | Default thresholds |
+| B | 0.1 / 0.9 | 0.3% | -$2,200.20 | 132 | Tighter entry reduces trades |
+| C | 0.2 / 0.8 | 0.5% | -$1,707.22 | 100 | Wider stop reduces trades more |
+
+Per-day detail (Config A): Feb 9=-$395, Feb 10=-$400, Feb 11=-$323, Feb 12=-$736, Feb 13=-$696
+
+**Conclusion**: Cold-start segment replays are not viable for BB-based MR. BB needs pre-warming.
+
+#### Phase 2 Results — CHOP Override (PH segment, cold start)
+
+| Config | CHOP | Total P/L | Trades | Notes |
+|--------|------|-----------|--------|-------|
+| D | Off | -$2,563.88 | 161 | Control (≈ Config A) |
+| E | On (61.8/38.2) | -$3,069.17 | 186 | **Worse** — cold CHOP can't filter effectively |
+
+**Conclusion**: CHOP on cold start adds noise, doesn't help.
+
+#### Phase 3 Results — Full-Day Replays (BB/CHOP pre-warmed from open)
+
+Baseline: **$608.90** (38 trades)
+
+| Config | CHOP | Total P/L | Trades | Delta vs Baseline | Notes |
+|--------|------|-----------|--------|-------------------|-------|
+| F | Off | -$377.49 | 102 | **-$986.39** | MR PH only |
+| G | On | -$1,623.93 | 186 | **-$2,232.83** | CHOP overrides Base phase too |
+
+Per-day detail (Config F vs Baseline):
+| Date | Baseline | Config F | Delta | Notes |
+|------|----------|----------|-------|-------|
+| Feb 9 | +$14.16 (4t) | -$530.39 (36t) | -$544.55 | MR fires in PH, loses big |
+| Feb 10 | +$46.24 (7t) | -$395.60 (39t) | -$441.84 | MR fires in PH, loses big |
+| Feb 11 | +$196.96 (6t) | +$196.96 (6t) | $0.00 | Daily target hit before PH |
+| Feb 12 | +$172.36 (15t) | +$172.36 (15t) | $0.00 | Daily target hit before PH |
+| Feb 13 | +$179.18 (6t) | +$179.18 (6t) | $0.00 | Daily target hit before PH |
+
+**Key findings**:
+1. **Daily profit target masks MR**: On 3/5 days, the daily target fires before PH. MR only activates on the 2 weakest days.
+2. **MR on trending PH = catastrophe**: Feb 9/10 PH was trending. MR fought the trend and lost ~$500/day.
+3. **CHOP override is phase-unaware**: When enabled, CHOP overrides during ALL phases (including Base), destroying good Base performance. Design flaw — CHOP should only override within the designated phase.
+4. **BB warm-up is critical**: Cold-start segment replays are invalid for BB-based strategies. BB(20) on 60s candles needs 20 minutes to become ready.
+
+#### Failed Experiments
+- Raw tick BB feeding (460 trades, -$5K in 2h)
+- PH segment replays with cold indicators
+- CHOP global override (destroys Base phase performance)
+
+#### Decisions
+- **MR infrastructure code is preserved** — dormant by default (`BaseDefaultStrategy=Trend`, `PhDefaultStrategy=Trend`, `ChopOverrideEnabled=false`)
+- **All sweep configs preserved** in `qqqBot/sweep_configs/` for future reference
+- **Regression verified**: $608.90 exact match with dormant MR
+
+#### Future Work Ideas
+1. **CHOP phase-gating**: Make CHOP override phase-aware (only override during PH, not Base/OV)
+2. **Longer BB window**: BB(50) or BB(100) on 60s candles for broader bands that reduce whipsawing
+3. **Market regime pre-filter**: Only enable MR on days where early session CHOP indicates choppy character
+4. **MR + trend confirmation**: Require both BB entry signal AND trend slope alignment (e.g., MR_LONG only when short-term slope is also turning up)
+5. **Test on known choppy days**: The 5-day sample (Feb 9-13) may have been trending. Need to specifically find/record choppy days for better MR testing
+
+---
+
+### Session: MR Root Cause Investigation & Bug Fixes (continued)
+**Date**: 2026-02-13 (continued from previous session)
+**Context**: User corrected earlier analysis — PH IS choppy (not trending). These 5 days historically identified as choppy. MR should theoretically work. Root cause investigation required.
+
+#### Bugs Found & Fixed
+
+**Bug 1: Cascading re-entry after hard stop (CRITICAL)**
+- **Root cause**: After hard stop fires and exits to CASH, AnalystEngine's `_lastMrSignal` stays "MR_LONG" (hysteresis holds until %B > 0.5). TraderEngine sees MR_LONG + CASH → immediately re-enters. Price continues against → another stop → re-enter → repeat. Trades 5→6→7→8 on Feb 12 were 6-11 seconds apart.
+- **Fix**: Added `_mrHardStopCooldown` flag in TraderEngine. After hard stop, MR_LONG/MR_SHORT signals are ignored until MR_FLAT resets the cycle (i.e., %B must cross midline before re-entering). 
+- **Impact**: Config A Feb 12 went from 161 trades / -$2,551 to 13 trades / -$132 (92% trade reduction, 95% loss reduction)
+- **File**: `MarketBlocks.Bots/Services/TraderEngine.cs`
+
+**Bug 2: Trailing stop overriding MR signals**
+- **Root cause**: `EvaluateTrailingStop()` runs before MR signal dispatch and can return `("NEUTRAL", false)`, forcing exit regardless of MR's own logic. MR has its own exit (MR_FLAT at midline) and loss protection (hard stop).
+- **Fix**: Gated trailing stop with `regime.ActiveStrategy != StrategyMode.MeanReversion`
+- **File**: `MarketBlocks.Bots/Services/TraderEngine.cs`
+
+**Bug 3: Trim logic destroying MR positions**
+- **Root cause**: Trim fires at +0.25% profit, selling 75% of position. Trade 1 on Feb 12 was trimmed from 139→35 shares. MR needs full position until %B exits at midline.
+- **Fix**: Added `regime.ActiveStrategy != StrategyMode.MeanReversion` guard to trim check.
+- **File**: `MarketBlocks.Bots/Services/TraderEngine.cs`
+
+**Regression**: All 3 fixes verified — $608.90 / 38 trades exact match (MR dormant by default).
+
+#### Comprehensive Sweep Results (Post-Fixes)
+
+**PH Segment Replays (14:00-16:00, cold start — BB warms up during PH)**
+
+| Config | BB | Entry | Exit | Stop | Total P/L | Trades | Avg/Trade |
+|--------|-----|-------|------|------|-----------|--------|-----------|
+| A | 20,2.0 | 0.2/0.8 | 0.5 | 0.3% | -$921 | 58 | -$15.88 |
+| B | 20,2.0 | 0.1/0.9 | 0.5 | 0.3% | -$713 | 42 | -$16.98 |
+| H | 20,2.0 | 0.2/0.8 | 0.5 | 0.9% | -$1,028 | 58 | -$17.72 |
+| I | 20,2.5 | 0.15/0.85 | 0.5 | 0.9% | -$780 | 38 | -$20.53 |
+| J | 30,2.0 | 0.1/0.9 | 0.5 | 0.9% | -$704 | 26 | -$27.08 |
+| K | 30,2.0 | 0.1/0.9 | 0.5 | none | -$694 | 26 | -$26.70 |
+| L | 30,2.0 | 0.1/0.9 | 0.4 | 0.9% | -$735 | 32 | -$22.97 |
+| **M** | **20,3.0** | **0.1/0.9** | **0.5** | **none** | **-$441** | **20** | **-$22.07** |
+| N | 30,3.0 | 0.1/0.9 | 0.5 | none | -$478 | 18 | -$26.54 |
+
+**Full-Day Replays (09:30-16:00, BB pre-warmed from morning) — baseline $608.90**
+
+| Config | BB | Entry | Exit | Stop | Total P/L | MR Contrib | Trades |
+|--------|-----|-------|------|------|-----------|------------|--------|
+| O | 60,2.0 | 0.1/0.9 | 0.5 | none | +$362 | **-$247** | 48 |
+| P | 60,3.0 | 0.1/0.9 | 0.5 | none | +$462 | **-$147** | 42 |
+| Q | 20,3.0 | 0.1/0.9 | 0.5 | none | +$427 | **-$182** | 50 |
+
+*MR Contrib = (Full-day P/L) - (Baseline $608.90). Negative = MR destroys existing trend engine profits.*
+
+#### Key Insight: BB Bandwidth vs Execution Costs
+
+The fundamental problem is that BB bands on 1-minute candles are too narrow relative to execution costs:
+
+1. **BB(20,2.0) bandwidth**: ~$0.40 on $604 QQQ = 0.066%. Entry at %B=0.1 → exit at %B=0.5 = ~$0.12 QQQ move → ~$0.029/share TQQQ profit → ~$5.80 on 200 shares
+2. **Execution costs**: IOC offset $0.08 × 200 shares = $16 per round trip (buy + sell)
+3. **Profit < costs**: The expected profit per MR trade is SMALLER than execution costs
+4. Wider BB multiplier (3.0) helps but doesn't overcome the fundamental cost structure
+5. The SMA adapts too quickly on 1-min candles — the "mean" shifts before reversion completes
+
+**Why all configs lose every day**: The BB bandwidth on 1-min candles during a 2-hour PH window produces profit targets of ~$5-20 per trade, while each round-trip costs ~$16 in IOC slippage alone. This is a structural impossibility.
+
+#### Decisions
+- **3 bug fixes committed**: Cooldown, trailing stop bypass, trim bypass for MR. All structurally correct.
+- **MR remains dormant** (`PhDefaultStrategy=Trend`) — no profitable settings found
+- **Regression preserved**: $608.90 exact match
+
+#### Next Steps for MR Viability
+1. **Separate BB candle interval from CHOP**: Allow BB to use 5-min or 15-min candle aggregation while CHOP stays on 60s. This would produce much wider bands (~3-5x wider) where profit exceeds costs.
+2. **Remove IOC slippage for MR**: Use market/limit orders instead of IOC for MR entries/exits, since MR doesn't need latency-sensitive execution.
+3. **BB bandwidth filter**: Only enter MR trades when bandwidth exceeds a minimum threshold (ensures profit potential > cost).
+4. **Market-on-close exit**: For MR trades still open at 15:55, exit at market close rather than forcing MR_FLAT.
+
+---
+
+## Session: 2026-02-19 — Research AI Recommendations: 5-min Candles + RSI + ATR Stops
+
+**Context**: Prior session (A-Q sweep) showed all MR configs on 1-min candles lose money — BB bandwidth (~$0.40) too narrow vs IOC execution costs (~$16 round-trip). Consulted a Research AI ("Adaptive Architectures for Systematic Trading and Regime Detection") for specific parameter recommendations.
+
+### Research AI Recommendations Implemented
+
+1. **5-min candles** (`ChopCandleSeconds=300`) — BB, CHOP, ATR, RSI all share same aggregation
+2. **ATR-based stops** (`MrAtrStopMultiplier=2.0`) — replaces fixed % stop, computed on QQQ benchmark, dynamic protection
+3. **RSI confirmation REQUIRED** (`MrRequireRsi=true`, RSI(14), oversold<30, overbought>70) — filters bad entries
+4. **Shared candle interval** — BB and CHOP both on 5-min to avoid mixed-resolution confusion
+
+### Code Changes
+
+| File | Change |
+|------|--------|
+| `StreamingRSI.cs` (NEW) | Wilder's smoothing RSI, 140 lines, same pattern as StreamingATR |
+| `MarketRegime.cs` | Added `Rsi` and `Atr` nullable decimal fields |
+| `TradingSettings.cs` (both repos) | 5 new settings: `MrAtrStopMultiplier`, `MrRequireRsi`, `MrRsiPeriod`, `MrRsiOversold`, `MrRsiOverbought` |
+| `TimeBasedRule.cs` | 5 matching nullable overrides in `TradingSettingsOverrides` |
+| `AnalystEngine.cs` | `_mrAtr`/`_mrRsi` fields, candle feeding, RSI filter in `DetermineMeanReversionSignal`, MarketRegime population, reconfig/reset |
+| `TraderEngine.cs` | `_mrEntryBenchmarkPrice`/`_mrEntryIsLong`, ATR-based stop (benchmark space), benchmark tracking |
+| `TimeRuleApplier.cs` | Snapshot/Restore/Apply/Log/IndicatorSettingsChanged for 5 new settings |
+| `ProgramRefactored.cs` | Config loading for 5 new settings in `BuildTradingSettings` + `ParseOverrides` |
+
+### Verification
+- Build: 0 errors both solutions
+- Tests: 575 pass (159 Bots + 61 Trade + 63 qqqBot + rest)
+- Regression: **$608.90 / 38 trades** exact match (MR dormant baseline)
+
+### Sweep 3 — Configs R through V (5-min candle + RSI + ATR)
+
+**Key constraint**: BB(20) on 5-min candles = 20 × 300s = 100 min warmup. PH-cold useless. All configs full-day pre-warmed.
+
+| Config | Variable | Key Difference |
+|--------|----------|----------------|
+| **R** | Research AI baseline | 5min, BB20/2.0, entry 0.1/0.9, ATR 2.0×, RSI required, PH-only MR |
+| **S** | + CHOP override | `ChopOverrideEnabled=true` (MR can fire during Base if choppy) |
+| **T** | RSI ablation | `MrRequireRsi=false` (measure RSI's filtering contribution) |
+| **U** | Wider ATR stop | `MrAtrStopMultiplier=3.0` (more breathing room) |
+| **V** | Wider entry | `MrEntryLowPctB=0.2, MrEntryHighPctB=0.8` (more trade signals) |
+
+### Results (Feb 9-13 2026, full-day replays)
+
+| Config | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | **Total P/L** | Trades | **MR Contrib** |
+|--------|-------|--------|--------|--------|--------|---------------|--------|----------------|
+| **R** | $33.27/6 | $12.92/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$594.69** | 42 | **-$14.21** |
+| **S** | $14.16/4 | -$49.74/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$512.92** | 40 | **-$95.98** |
+| **T** | -$27.75/8 | -$62.40/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$458.35** | 44 | **-$150.55** |
+| **U** | $33.27/6 | $12.92/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$594.69** | 42 | **-$14.21** |
+| **V** | $33.27/6 | $12.92/9 | $196.96/6 | $172.36/15 | $179.18/6 | **$594.69** | 42 | **-$14.21** |
+| *Baseline* | — | — | — | — | — | *$608.90* | *38* | *$0.00* |
+
+### Analysis
+
+**Major finding — MR fires extremely rarely with 5-min candles:**
+- Feb 11, 12, 13: ALL configs produce **identical** results to baseline. MR generates ZERO signals on these 3 days.
+- Feb 9 and 10 are the only days with any MR differentiation.
+- Configs R, U, V are **perfectly identical** — ATR multiplier (2.0 vs 3.0) and entry bands (0.1/0.9 vs 0.2/0.8) make zero difference because the few MR trades that fire don't trigger ATR stops and the wider entry bands don't capture additional signals.
+
+**RSI filter is working and critical:**
+- Config T (no RSI) vs R: -$150.55 vs -$14.21 MR contribution. RSI prevents **$136 in losses**.
+- Feb 10 detail: Without RSI, MR_LONG fires at 15:07 → 50 min underwater position → -$62.40. With RSI, MR_LONG delayed to 15:57 (RSI finally < 30) → smaller late loss → +$12.92. RSI saved $75 on a single day.
+
+**CHOP override during Base hurts badly:**
+- Config S vs R: -$95.98 vs -$14.21. Enabling MR during Base (when CHOP > 61.8) destroys $82 in value.
+- Feb 10: S loses -$49.74 vs R's +$12.92. CHOP override switches profitable Base trend trades to losing MR trades.
+
+**Why MR fires so rarely on 5-min candles:**
+1. BB(20) on 5-min candles has ~2.2× wider bandwidth than 1-min (√5 scaling). %B rarely reaches 0.1/0.9 extremes.
+2. RSI(14) at 30/70 thresholds requires genuine oversold/overbought confirmation, further filtering rare %B extremes.
+3. On "good" days (Feb 11, 13), daily profit target ($175) hit before PH → trading stops → MR never gets a chance.
+4. On Feb 12, 15 trend trades generate $172.36 (close to target) — trend strategy dominates, no MR signals.
+
+**Improvement vs prior sweeps (A-Q):**
+- Prior sweeps (1-min candles): MR contribution ranged from **-$147 to -$921**. Catastrophic.
+- This sweep (5-min + RSI): Best configs at **-$14.21**. A 90%+ improvement. The 5-min candle width + RSI filter has nearly eliminated MR damage.
+- But still slightly net negative — MR adds 4 extra trades across 5 days, losing ~$3.55/trade.
+
+### Decisions
+- **MR remains dormant** (`PhDefaultStrategy=Trend`) — still not profitable
+- **RSI filter validated** — essential if MR is ever enabled
+- **CHOP override during Base disabled** — clearly harmful
+- **5-min candle approach validated** — dramatically reduces MR damage vs 1-min
+
+### Root Cause: MR Is Solving the Wrong Problem on These Dates
+
+The 5-day sample (Feb 9-13) averages $121.78/day with trend-only strategy. MR is designed for "lost" PH days where price chops sideways. But on 3 of 5 days, the profit target fires before PH. On the 2 remaining days (Feb 9-10), the trend strategy still produces positive P/L ($33-46 range before MR interference). There are no truly "choppy PH disaster" days in this sample to test MR against.
+
+### Next Steps
+1. **Need data from genuinely choppy PH days** — Feb 9-13 may not include days where PH trend trading loses money
+2. **Consider BB window reduction** — BB(10) or BB(15) on 5-min for faster warmup and tighter bands
+3. **Consider RSI relaxation** — RSI 35/65 instead of 30/70 to allow more MR trades
+4. **Consider 3-min candles** — Compromise between 1-min (too narrow) and 5-min (too few signals)
+5. **Bandwidth minimum filter** — Only enter when BB bandwidth > some threshold ensuring profit potential > cost
+
+---
+
+## Session: PH Resume + MR Investigation (continuation)
+
+**Context**: R-V sweep showed profit target fires before PH on 3/5 days (Feb 11-13), so MR never activates. Question: would PH Resume + MR add value on those days?
+
+### Configs Tested
+- **Config W**: Config R + `ResumeInPowerHour=true` + `PhDefaultStrategy=MeanReversion` — MR in PH after target fires
+- **Config X**: Same as W but `PhDefaultStrategy=Trend` — trend-following in PH after target fires (control)
+
+### Results: 3 Target-Fire Days (Feb 11-13)
+
+| Date | No Resume (R) | PH Resume + MR (W) | PH Resume + Trend (X) |
+|------|---------------|---------------------|------------------------|
+| Feb 11 | $196.96 / 6t | $196.96 / 6t (MR_FLAT) | $196.96 / 6t (no PH trades) |
+| Feb 12 | $172.36 / 15t | **$186.92 / 17t** | **-$4.71 / 27t** |
+| Feb 13 | $179.18 / 6t | **$181.26 / 8t** | **$166.80 / 15t** |
+| **Subtotal** | **$548.50** | **$565.14** | **$359.05** |
+
+Non-target days (Feb 9-10): No change — PH Resume doesn't fire, results identical to Config R.
+
+### 5-Day Totals
+
+| Config | Total P/L | Trades | vs Baseline |
+|--------|-----------|--------|-------------|
+| R (no PH Resume) | $594.69 | 42 | — |
+| W (PH Resume + MR) | $611.33 | 46 | **+$16.64** |
+| X (PH Resume + Trend) | **$405.37** | 57 | **-$189.32** |
+
+### Key Findings
+
+1. **PH Resume + Trend is catastrophic**: Trend-following during PH on target-fire days destroyed $189 of gains. Feb 12 alone went from +$172 to -$5 — entire day's profit plus more wiped out.
+2. **PH Resume + MR is net positive**: +$16.64 incremental gain. MR correctly identifies choppy conditions and trades conservatively.
+3. **MR advantage over Trend in PH**: $206 difference ($565 vs $359). MR exists to protect against exactly this choppy-PH scenario.
+4. **Feb 11 was truly flat**: Both strategies stayed in cash — PH had no actionable entry signals.
+5. **MR fires late (15:51+)**: RSI + BB(20) on 5-min candles is conservative — only enters after significant band penetration late in session.
+6. **This answers "Next Step #1"**: We found the choppy PH days — they're the target-fire days where trend would resume and get destroyed.
+
+### Implications
+
+- **MR + PH Resume is the correct combined strategy**: Use MR (not trend) when resuming in PH after profit target fires
+- The old question "need data from genuinely choppy PH days" is answered: **Feb 12-13 are exactly that** — trend loses money, MR preserves/adds gains
+- MR's value isn't in replacing trend-following during normal PH (where it can subtract $14) — it's in **protecting profits during PH on high-volatility/choppy days**
+- Consider making PH Resume + MR the default configuration for days where daily target fires early
+
+### Open Tuning Questions
+1. ~~Could MR fire earlier with relaxed RSI (35/65) or smaller BB window (15)?~~ → **Answered below** (no — relaxation is destructive)
+2. Would 3-min candles give more MR signals without the 1-min noise problem?
+3. Should PH Resume automatically select MR regardless of PhDefaultStrategy?
+
+---
+
+## Session: Research AI Tuning Recommendations Sweep (2026-02-16)
+
+**Context**: Research AI recommended: BB(10), mult 1.5-1.8, RSI 35/65 to address "late fire" (15:51+) issue. Hypothesis: shorter lookback + relaxed filters = earlier signals = more upside.
+
+### Configs Tested (all with PH Resume=true)
+
+| Config | BB Window | BB Mult | RSI | Change vs W |
+|--------|-----------|---------|-----|-------------|
+| **W** (baseline) | 20 | 2.0 | 30/70 | — |
+| **Y** | 10 | 2.0 | 30/70 | BB window only |
+| **Z** | 10 | 1.5 | 35/65 | Full aggressive |
+| **AA** | 10 | 1.8 | 35/65 | Moderate |
+| **AB** | 20 | 2.0 | 35/65 | RSI only |
+
+### Full Results (5 dates × 5 configs = 25 runs)
+
+| Config | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | **Total** | **vs W** |
+|--------|-------|--------|--------|--------|--------|-----------|----------|
+| **W** | $33.27 | $12.92 | $196.96 | $186.92 | $181.26 | **$611.33** | — |
+| **Y** | $11.22 | $12.92 | $196.96 | $186.92 | $181.26 | $589.28 | -$22 |
+| **Z** | -$15.24 | -$37.61 | $213.13 | $116.47 | $90.60 | $367.35 | **-$244** |
+| **AA** | -$15.24 | -$37.61 | $213.13 | $116.47 | $90.60 | $367.35 | **-$244** |
+| **AB** | $6.81 | -$37.61 | $229.30 | $116.47 | $90.60 | $405.57 | **-$206** |
+
+### Isolation Analysis
+
+**BB multiplier (1.5 vs 1.8)**: Zero impact. Z and AA are **bitwise identical** across all 5 dates. The multiplier is not a binding constraint — %B extremes are driven by BB window and price action, not std dev width.
+
+**BB window (10 vs 20)**: Minor impact. Y lost $22 vs W, all from Feb 9 (-$22.05); Feb 11-13 identical. BB(10) makes bands more reactive → marginal worse entries on non-target days. The "warmup lag" thesis is wrong — BB(20) on 5-min is warm (54 candles) by PH start at 14:00.
+
+**RSI relaxation (35/65 vs 30/70)**: **Dominant destructive factor**. Every config with RSI 35/65 lost $200+ vs W:
+- Feb 10: -$50 (new MR entries in PH hit stop losses)
+- Feb 12: -$70 (entered MR_LONG 5 min early at 15:46 — caught false bottom, run P/L -$45 vs W's +$14)
+- Feb 13: -$91 (similar premature entry, price hadn't actually bottomed)
+- Feb 11: +$32 (the one win — unlocked a trade W's strict RSI blocked)
+- Net: +$32 - $50 - $70 - $91 = **-$179 from RSI relaxation**
+
+### Why the Research AI's Diagnosis Was Wrong
+
+1. **"100-minute warmup lag" is not the issue**: Indicators run all day (full-day mode, not PH-cold). By 14:00, BB(20) has 270 min of data. The "late fire" at 15:51 isn't warmup lag — price genuinely doesn't reach %B 0.1/0.9 until then.
+
+2. **"Catching shallow reversals" backfires**: RSI 35/65 enters on marginal oversold/overbought that hasn't fully developed. On Feb 12, the "shallow" RSI ~35 entry at 15:46 caught a false bottom that continued lower. The "deep" RSI <30 entry at 15:51 (Config W) caught the actual reversal. Strict RSI = better fill quality.
+
+3. **"More signals = more upside" is wrong for MR**: In MR, trade quality matters more than quantity. One clean reversion from a genuine extreme (RSI <30 + %B <0.1) outperforms multiple noisy entries from marginal conditions.
+
+### Conclusion
+
+**Config W is definitively the best MR configuration.** The conservative RSI 30/70 filter correctly rejects premature MR entries. The "late fire" problem is not actually a problem — it's the bot waiting for high-quality setups. The research AI's thesis that faster/more-permissive parameters would unlock upside is empirically falsified.
+
+### Updated Tuning Priorities
+1. ~~BB window shrink~~ → Tested, hurts marginally
+2. ~~RSI relaxation~~ → Tested, destructive (-$179 to -$206)
+3. ~~BB multiplier reduction~~ → Tested, zero impact
+4. 3-min candles — untested, could provide more data points while keeping strict filters
+5. Slope confirmation for MR entries — untested, could improve entry timing without relaxing RSI
+
+---
+
+## Production Deployment: Config W (2026-02-16)
+
+**Changes to `appsettings.json`:**
+- `ResumeInPowerHour`: `false` → `true`
+- Added MR settings block: `PhDefaultStrategy=MeanReversion`, `ChopCandleSeconds=300`, `BollingerWindow=20`, `BollingerMultiplier=2.0`, `MrEntryLowPctB=0.1`, `MrEntryHighPctB=0.9`, `MrExitPctB=0.5`, `MeanRevStopPercent=0.003`, `MrAtrStopMultiplier=2.0`, `MrRequireRsi=true`, `MrRsiPeriod=14`, `MrRsiOversold=30`, `MrRsiOverbought=70`, `ChopOverrideEnabled=false`
+
+**Regression verified**: Feb 12 replay = $186.92 / 17 trades (exact Config W match)
+
+**Expected behavior**:
+- OV + Base: Unchanged trend-following (MR indicators warm up silently)
+- PH (no target fired): MR signals during PH; typically MR_FLAT (no trades) unless extreme %B reached
+- PH (after target fired): PH Resume activates → MR protects profits instead of trend whipsaws
+- 5-day backtest: $611.33 / 46 trades (+$3 vs no-resume baseline)
+
+---
+
+## Session: Feb 17 Missed Uptrend Investigation (2026-02-20)
+
+### Context
+Feb 17, 2026: QQQ rose ~$7.56 (+1.27%) from $593.63→$601.19 between 10:40-11:13 ET. The bot was in CASH the entire time, missing significant TQQQ upside. Additionally, smaller missed opportunities at 11:26 ET and 12:37-12:45 ET.
+
+### Baseline Replay (Feb 17)
+- **Result**: -$21.93 P/L, 15 trades
+- Peak: +$75.72 at 09:56 ET, Trough: -$173.66 at 09:46 ET
+- Bot went to CASH at 10:44 ET and **never re-entered for the rest of the day**
+- All 15 trades were OV or early Base phase; none captured the 10:40-11:13 uptrend
+
+### Root Cause #1: TrendRescue Deadlock Bug (CONFIRMED)
+**Location**: `AnalystEngine.cs`, `DetermineSignal()`, line ~773 (original)
+
+**Original code**:
+```csharp
+else if (activeSlope > entryVelocity ||
+         (trendRescue && _sustainedVelocityTicks >= _settings.EntryConfirmationTicks))
+```
+
+**Problem**: Classic chicken-and-egg deadlock. `_sustainedVelocityTicks` only increments INSIDE this block, but the trendRescue path requires `_sustainedVelocityTicks >= EntryConfirmationTicks` to ENTER the block. When `activeSlope` is below `entryVelocity`, trendRescue can never fire.
+
+**Math on Feb 17 uptrend**:
+- maintenance velocity = $595 × 0.000015 = $0.00893/tick
+- entry velocity = $0.00893 × 2.0 = $0.01785/tick
+- Actual SMA slope during 10:44-11:13 uptrend ≈ $0.0175/tick
+- Shortfall: $0.0003 (1.7%) — slope was JUST below the entry threshold
+- TrendRescue was designed to catch exactly this case, but deadlock prevented it
+
+### Root Cause #2: Trailing Stop Too Aggressive for Gradual Trends
+**Location**: `TraderEngine.cs`, `EvaluateTrailingStop()`, line ~1829
+
+**Problem**: Even if trendRescue correctly enters BULL, the 0.2% trailing stop on QQQ benchmark ($1.19 distance at $596) ejects positions within minutes during gradual uptrends. The DynamicStopLoss ratchet further tightens stops as profit grows, making it even worse.
+
+**Evidence**: Fix v6 (trendRescue working) produced 41 trades on Feb 17 — the bot correctly entered BULL during Base phase uptrend via trendRescue, but every entry was immediately stopped out by the trailing stop, creating an enter→stop→enter→stop churn cycle.
+
+### Root Cause #3: `--override` CLI Flag Is Broken
+**Location**: `CommandLineOverrides.cs`
+
+The `--override KEY=VALUE` flag is silently ignored — there is no handler for it in `Parse()`. All earlier parameter sweeps (TrendWindowSeconds, MinVelocityThreshold) using `--override` produced identical results because the overrides were never applied. Must modify `appsettings.json` directly for parameter changes.
+
+### CycleTracker Audit
+Zero `[RHYTHM]` log lines on Feb 17 replay. CycleTracker confirmed **NOT a factor** in the missed uptrend.
+
+### Fix Iteration Results
+
+All fixes cross-validated on Feb 9-13 + Feb 17. Build: `dotnet clean && dotnet build` both repos between each.
+
+**Note**: Feb 9-13 baseline = $611.33 (Config W production settings, see "Production Deployment: Config W" above). The "Total" column below is the **6-day** sum including Feb 17.
+
+| Fix | Description | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | Feb 17 | 6-Day Total |
+|-----|------------|-------|--------|--------|--------|--------|--------|-------------|
+| **Baseline** | Config W (production) | +$33 (6tr) | +$13 (9tr) | +$197 (6tr) | +$187 (17tr) | +$181 (8tr) | -$22 (15tr) | **+$589** |
+| v1 | trendRescue, no gate | +$83 (15) | -$63 (13) | -$395 (35) | +$187 (17) | -$527 (49) | +$169 (6) | -$546 |
+| v3 | trendRescue, 3x confirm | +$22 (15) | -$67 (13) | +$197 (6) | +$187 (17) | -$509 (47) | +$185 (6) | +$16 |
+| v4 | trendRescue, 5x confirm | +$66 (9) | -$67 (13) | +$197 (6) | +$187 (17) | -$570 (45) | -$244 (41) | -$431 |
+| v5 | trendRescue, 10x+min20 | +$33 (6) | +$26 (11) | +$197 (6) | +$187 (17) | +$181 (8) | -$150 (37) | +$475 |
+| v6 | Base-only, 3x confirm | +$34 (13) | -$84 (11) | +$197 (6) | +$187 (17) | +$181 (8) | -$198 (41) | +$317 |
+| EVM=1.9 | Lower velocity multiplier | +$33 (6) | +$13 (9) | +$197 (6) | +$187 (17) | +$181 (8) | -$191 (21) | +$420 |
+
+### Key Insight
+v1 and v3's good Feb 17 results (+$169/+$185 with only 6 trades) came from changed **OV behavior** (earlier BULL switch, daily target hit by 09:55 ET), NOT from capturing the Base phase uptrend. The 10:44-11:13 ET uptrend was never successfully captured by ANY fix iteration because:
+
+1. Fixes that allow trendRescue during OV: change OV entry timing → earlier daily target → stops trading before the uptrend even starts (appears to "fix" Feb 17 but is coincidental and wildly regresses other days)
+2. Fixes restricted to Base phase (v6): correctly enter BULL via trendRescue during uptrend, but trailing stop ejects every position within minutes → 41 trades, massive churn loss
+
+**Solving the missed uptrend requires addressing BOTH root causes simultaneously:**
+1. Fix the trendRescue deadlock (entry problem)
+2. Widen or adapt the trailing stop for trendRescue-initiated entries during gradual trends (exit problem)
+
+### Infrastructure Added
+- **EntryVelocityMultiplier** setting: configurable multiplier for entry velocity = maintenance × multiplier (was hardcoded 2.0). Added to:
+  - `MarketBlocks.Bots/Domain/TradingSettings.cs` (property, default 2.0m)
+  - `MarketBlocks.Bots/Domain/TimeBasedRule.cs` (nullable override)
+  - `MarketBlocks.Bots/Services/TimeRuleApplier.cs` (snapshot/restore/apply/changes/SettingsSnapshot)
+  - `qqqBot/ProgramRefactored.cs` (loading, phase config, logging)
+  - All tests pass (159 Bots tests, 63 qqqBot tests)
+
+### Code State After Session
+- **Fix v6 currently applied** to AnalystEngine.cs (phase-restricted trendRescue, 3x confirmation, Base/PH only)
+- **EntryVelocityMultiplier infrastructure** in both repos
+- No changes committed
+
+### Open Questions for Next Session
+1. Should we implement a "trend hold" mode that widens trailing stop for trendRescue-initiated entries?
+2. Should we disable the DynamicStopLoss ratchet tightening during trendRescue entries?
+3. Alternative: signal-based exit only (no trailing stop) for trendRescue entries?
+4. The `--override` CLI bug needs fixing for efficient parameter sweeps
+5. Smaller missed trades at 11:26 and 12:37-12:45 ET not yet investigated
+
+---
+
+## Session: Combined TrendRescue + Wider Stop Fix (2026-02-20, continued)
+
+### Approach
+Combined entry fix (trendRescue deadlock) with exit fix (Option A: wider trailing stop, no ratchet).
+
+### v7: Maintenance Velocity Floor + 5x Confirmation + 0.5% Wider Stop (WINNER)
+
+**Entry changes** (AnalystEngine.cs):
+1. Fixed trendRescue deadlock: trendRescue ticks now accumulate independently of `activeSlope > entryVelocity`
+2. Phase restriction: trendRescue only fires during Base/PH (after 10:13 ET)
+3. Minimum slope floor: `activeSlope > maintenanceVelocity` required (was just `> 0`). Filters out weak/noisy trends.
+4. Higher confirmation: 5x normal EntryConfirmationTicks (= 10 ticks). Prevents false positives on choppy days.
+5. `IsTrendRescueEntry` flag propagated through `MarketRegime` record to TraderEngine.
+
+**Exit changes** (TraderEngine.cs):
+1. `_isTrendRescuePosition` tracked per position
+2. When `TrendRescueTrailingStopPercent > 0`, trendRescue positions use that as trailing stop distance
+3. DynamicStopLoss ratchet is SKIPPED for trendRescue positions (ratchet causes immediate churn on gradual trends)
+4. Non-trendRescue positions: completely unchanged behavior
+
+**Settings** (appsettings.json):
+- `TrendRescueTrailingStopPercent`: 0.005 (0.5%) — only applies to trendRescue entries
+
+### v7 Results
+
+| Date | Baseline | v7 | Delta |
+|------|----------|-----|-------|
+| Feb 9 | +$33 (6tr) | +$33 (6tr) | = |
+| Feb 10 | +$13 (9tr) | +$13 (9tr) | = |
+| Feb 11 | +$197 (6tr) | +$197 (6tr) | = |
+| Feb 12 | +$187 (17tr) | +$187 (17tr) | = |
+| Feb 13 | +$181 (8tr) | +$181 (8tr) | = |
+| **5-day (Feb 9-13)** | **+$611** | **+$611** | **=** |
+| Feb 17 | -$22 (15tr) | **+$8** (23tr) | **+$30** |
+| **6-day total** | **+$589** | **+$619** | **+$30** |
+
+**Zero regression on all 5 other days. Feb 17 turns from losing (-$22) to profitable (+$8).**
+
+- 4 trendRescue entries on Feb 17 (confirmed via [TREND RESCUE] log lines)
+- 0 trendRescue entries on Feb 10 (maintenance velocity floor correctly filters it)
+- Feb 9, 11, 12, 13: no trendRescue entries (identical trade counts and P/L)
+- All tests pass: 159 Bots + 63 qqqBot
+
+### Earlier v7 Iterations (Rejected)
+
+| Config | Feb 10 | Feb 17 | Issue |
+|--------|--------|--------|-------|
+| 3x confirm, no floor, 0.5% stop | -$118 (11tr) | -$10 (27tr) | False trendRescue on Feb 10, $132 loss |
+| 3x confirm, no floor, no wide stop | -$84 (11tr) | -$198 (41tr) | Entry alone regresses Feb 10 + churn on Feb 17 |
+
+**Key insight**: The maintenance velocity floor (`activeSlope > maintenanceVelocity`) is the critical filter that prevents false trendRescue entries. Without it, even with high confirmation ticks, trendRescue fires on weak slopes that don't sustain.
+
+### CycleTracker Deep Audit (2026-02-20)
+
+Comprehensive code audit found CycleTracker has exactly **one** influence point: `HandleNeutralAsync()` in TraderEngine, where it can reduce the neutral timeout (`effectiveWaitSeconds`). This reduction:
+1. Only fires when 3 conditions are all met (cycle > 30s, stability < 20s std, and cap < configured wait)
+2. Always logs `[RHYTHM]` when it fires — cannot act silently
+3. Does not modify signals, bands, slopes, stops, or entry decisions
+
+**Assessment**: CycleTracker is clean. No `[RHYTHM]` = zero effect on trading decisions.
+
+### Code Changes (Committed State)
+
+**MarketBlocks** (4 files):
+- `MarketBlocks.Bots/Domain/MarketRegime.cs`: Added `bool IsTrendRescueEntry = false`
+- `MarketBlocks.Bots/Domain/TradingSettings.cs`: Added `EntryVelocityMultiplier` (2.0 default), `TrendRescueTrailingStopPercent` (0 default)
+- `MarketBlocks.Bots/Domain/TimeBasedRule.cs`: Added nullable overrides for both
+- `MarketBlocks.Bots/Services/TimeRuleApplier.cs`: Added to all 5 sections
+- `MarketBlocks.Bots/Services/AnalystEngine.cs`: Fixed trendRescue deadlock, added IsTrendRescueEntry propagation, `_currentSignalIsTrendRescue` tracking
+- `MarketBlocks.Bots/Services/TraderEngine.cs`: Added `_isTrendRescuePosition`, wider stop for trendRescue, reset on position close and latch clear
+
+**qqqBot** (2 files):
+- `qqqBot/ProgramRefactored.cs`: Added loading/logging for both new settings
+- `qqqBot/TradingSettings.cs`: Added `TrendRescueTrailingStopPercent`
+- `qqqBot/appsettings.json`: Added `TrendRescueTrailingStopPercent: 0.005`
+
+---
+
+## Session: Feb 17 Live vs Replay Divergence Investigation (2026-02-17)
+
+### Context
+After applying v7 (TrendRescue + wider stop), Feb 17 replay shows +$8.16 but live trading returned +$85.44 — a **$77.28 gap**. Prior divergence investigations found real bugs (Feb 12: $425 gap from Brownian bridge), so this was worth investigating.
+
+### Methodology
+1. Extracted complete trade logs from live (`qqqbot_20260217.log`, +$85.44, 9 trades)
+2. Ran v7 replay (`--mode=replay --date=20260217 --speed=0`, +$8.16, 23 trades)
+3. Side-by-side trade comparison with timestamps
+4. Audited `SimulatedBroker.cs` fill model
+5. Reviewed `TraderEngine.cs` pending order timeout / buy cooldown pathways
+
+### Root Cause: SimulatedBroker Instant Fill Model
+
+The entire divergence cascades from **one event at 09:31 ET**:
+
+| | Live (Alpaca) | Replay (SimulatedBroker) |
+|---|---|---|
+| 09:31 BEAR signal | SQQQ buy submitted | SQQQ buy submitted |
+| Fill result | **Timed out after 10s** (no fill) | **Filled instantly** |
+| Consequence | Cash rolled back, 15s buy cooldown | Entered SQQQ, lost **-$142.04** on trailing stop |
+| Next entry | TQQQ at 09:37:29 (after 3 more fill failures) | TQQQ at different time/price |
+
+**SimulatedBroker structural limitations:**
+- `SubmitOrderAsync` (L103-224): Every valid order fills instantly with `Status = Filled`
+- `CancelOrderAsync` (L231-235): Always returns `false` (nothing to cancel)
+- No `PendingNew/Accepted` state ever reached
+- The entire `ProcessPendingOrderAsync` pathway in TraderEngine (10s timeout, cancel, reconcile, buy cooldown backoff) is **dead code in replay**
+- Buy cooldown (15s/30s/60s escalating) never activates
+
+**Secondary divergence**: v7 TREND RESCUE trades (4 entries in replay) don't exist in live (live ran pre-v7 code). These contributed ~+$24 net for replay.
+
+**Cascading effect**: Different P/L from trade 1 → different capital → different share counts → different subsequent trade outcomes. Makes simple arithmetic reconciliation impossible.
+
+### Decision
+**Accepted as inherent** (Option 1). Fill failures are non-deterministic (market depth, latency, queue position). The gap is fully explained by the SimulatedBroker's instant fill model vs real-world order timeouts.
+
+### Future Enhancement (Backlog)
+A combination of fill latency simulation + stochastic fill failure could narrow the gap while preserving determinism via seeded RNG. This would:
+- Exercise the `ProcessPendingOrderAsync` pathway in replay
+- Model OV-phase fill failures (where standard limit orders often timeout)
+- Remain deterministic for regression testing (seeded random generator)
+- Not yet implemented — added to TODO.md
+
+### Historical Divergence Summary
+
+| Date | Gap | Root Cause | Status |
+|------|-----|------------|--------|
+| Feb 12 | $425 | Brownian bridge synthetic ticks | Fixed |
+| Feb 11 | $48 | IOC partial fills + latency | Documented (expected) |
+| **Feb 17** | **$77** | **SimulatedBroker instant fill** | **Documented (expected)** |
+
+---
+
+## Session: 2026-02-18 — Adaptive Trend & EOD Cutoff
+
+### Context
+Feb 18 live trading: bot went BEAR at 09:30 (2x SQQQ buy timeouts, broker errors), then stayed NEUTRAL-CASH from 09:31 to 13:42 while QQQ rallied from $601 to $607. Ended at -$17.04 (3 trades). Suspected "Opening Blindness" — trend SMA unreliable during OV→Base warmup.
+
+### Changes Implemented
+
+**Block 1: Adaptive Trend Detection (AnalystEngine)**
+- Added `EnableAdaptiveTrendWindow` (bool, default true → later set false)
+- Added `ShortTrendSlopeWindow` (int, 90) and `ShortTrendSlopeThreshold` (decimal, 0.00002)
+- Two mechanisms in `DetermineSignal()`:
+  1. **FillRatio scaling**: `effectiveTrendWidth *= _trendSma.FillRatio` during warmup — makes trend detection proportionally easier
+  2. **Slope override**: Forces `isBullTrend`/`isBearTrend` when `_shortTrendSlope.CurrentSlope` exceeds threshold — re-enables TrendRescue/CruiseControl during warmup
+- Added `_shortTrendSlope` (StreamingSlope) field, constructor init, ProcessTick feed, ReconfigureIndicators resize+seed, ColdResetIndicators clear, PartialResetIndicators seed
+- Full TimeRuleApplier plumbing (all 7 sections), ProgramRefactored loading, TimeBasedRule overrides
+
+**Block 2: End-of-Day Entry Cutoff (TraderEngine)**
+- Added `LastEntryMinutesBeforeClose` (decimal, default 0 — disabled unless set in appsettings.json)
+- `EnsureBullPositionAsync` and `EnsureBearPositionAsync`: early-return when ET time ≥ `15:58 - LastEntryMinutesBeforeClose`
+- appsettings.json sets `LastEntryMinutesBeforeClose: 2` (cutoff at 15:56 ET)
+
+**Block 3: Broker Timeout Fix (appsettings.json)**
+- Changed OV overrides: `UseMarketableLimits: false, UseIocOrders: false` → `true, true`
+- **REVERTED**: This caused massive regression in replay — SimulatedBroker fills IOC instantly but the order flow changes. OV Market orders have much lower simulated slippage.
+- **Root cause preserved**: Market orders during first ~60s of OV sit in `Accepted` state >10s on Alpaca. IOC would fix live but harms replay determinism. Left as `false, false` in config; fix is a live-only concern that needs SimulatedBroker latency modeling first.
+
+**Block 4: TODO.md Updates**
+- Added "Bidirectional MR Research" item (separate branch exploration)
+- Added "Broker Timeout During OV" item (documented as identified, workaround noted)
+
+### Replay Sweep Results
+
+**Adaptive Trend — All Variants Tested on Feb 9-13 + 17-18:**
+
+| Config | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | Feb 17 | Feb 18 | Total |
+|--------|-------|--------|--------|--------|--------|--------|--------|-------|
+| **Baseline (adaptive off)** | +$33 (6) | +$13 (9) | +$197 (6) | +$187 (17) | +$181 (8) | +$8 (23) | -$88 (6) | **+$531** |
+| FillRatio only, OV gated | +$33 (6) | +$4 (11) | +$197 (6) | +$187 (17) | +$181 (8) | — | — | **+$603** |
+| Both mechanisms, OV gated | +$48 (9) | -$73 (13) | +$197 (6) | +$187 (17) | +$181 (8) | +$37 (35) | -$88 (6) | **+$489** |
+| Both mechanisms, everywhere | -$72 (15) | — | — | — | — | — | — | **heavily negative** |
+| Split OV: Early (09:30-09:50 off) + Late (09:50-10:13 on) | -$2 (10) | +$13 (9) | +$197 (6) | +$179 (17) | +$181 (8) | +$8 (23) | -$88 (6) | **+$488** |
+
+### Key Findings
+
+1. **Feb 18 Opening Blindness is an OV-phase problem, NOT a Base-warmup problem.** The QQQ rally (601→607) happened during OV (09:50-10:05). By Base start (10:13), QQQ was already at 607-608 and no longer trending. Adaptive trend detection during Base warmup makes zero difference on Feb 18.
+
+2. **Slope override is the main damage source.** It forces false `isBullTrend`/`isBearTrend` based on noisy 90-tick slopes, enabling bad TrendRescue entries that get stopped out. Feb 10 regression: -$86 from slope override alone.
+
+3. **FillRatio scaling is near-neutral.** Only marginal effect (-$8 on 5-day total), not enough to justify the added complexity.
+
+4. **OV gating helps but doesn't eliminate harm.** Disabling adaptive during OV and only running during Base warmup reduces damage but the slope override still causes whipsaws during Base transition.
+
+5. **The adaptive approach as designed doesn't work.** The Feb 18 problem requires a fundamentally different approach — likely one that operates during OV itself (where the rally happened), not during the post-OV warmup period the adaptive was designed for.
+
+### Decision
+- `EnableAdaptiveTrendWindow: false` in appsettings.json (feature disabled)
+- All infrastructure code committed and available for future tuning
+- OV `UseIocOrders` left as `false` (original value) — IOC during OV is a live-only concern that needs SimBroker latency modeling
+- `LastEntryMinutesBeforeClose: 2` enabled in appsettings.json (prevents entries after 15:56 ET)
+
+### Baseline Established
+Current 5-day baseline (Feb 9-13) with v7 TrendRescue + adaptive off: **+$611.33** (46 trades)
+Prior baseline reference: +$608.90 (without v7 TrendRescue changes)
+
+---
+
+## Session 2026-02-18 (continued) — Drift Mode & Displacement Re-Entry
+
+### Context
+Research AI consultation identified the fundamental architectural gap: qqqBot has no velocity-independent entry path. Gradual price drifts where SMA tracks price don't breach Bollinger Bands, so the velocity gate blocks entries even when the trend is clear from price position alone. Feb 18 missed a 1% QQQ rally ($601→$607) during OV because of this gap.
+
+Research AI proposed 3 changes:
+1. **Remove noisy slope override** — `_shortTrendSlope` (90-tick) override was proven harmful  
+2. **Drift Mode (TimeInZone counter)** — enter when price sustains above/below SMA for N ticks  
+3. **Displacement Re-Entry** — re-enter after directional→NEUTRAL transition when price moves significantly
+
+### Changes Made
+
+#### 1. Slope Override Removed
+- Deleted the `_shortTrendSlope` override block from `DetermineSignal` (was gated by `EnableAdaptiveTrendWindow`)
+- FillRatio scaling kept (near-neutral, harmless)
+- `_shortTrendSlope` field/init/feed kept to avoid plumbing churn (dead code when `EnableAdaptiveTrendWindow=false`)
+
+#### 2. Drift Mode Implemented
+New fields in AnalystEngine:
+- `_consecutiveTicksAboveSma` / `_consecutiveTicksBelowSma` — counters updated every tick
+- `_isDriftEntry` — flag for drift position maintenance (bypass velocity exit)
+- `_bullDriftConsumedThisPhase` / `_bearDriftConsumedThisPhase` — per-direction one-shot flags
+
+Drift mode logic in `DetermineSignal`:
+- **Counter update**: Before velocity logic, price compared to `currentSma`
+- **Position maintenance**: If `_isDriftEntry && isInTrade`, maintain signal while price stays on correct side of SMA (bypasses velocity gate exit)
+- **Entry path**: After main signal logic, if `!isInTrade && newSignal == "NEUTRAL"`:
+  - Check duration: consecutive ticks ≥ `DriftModeConsecutiveTicks`
+  - Check magnitude: displacement from SMA ≥ `DriftModeMinDisplacementPercent`
+  - Check one-shot: per-direction consumed flag not set
+  - If all pass → override to BULL or BEAR
+- **Exit**: Position releases when price crosses SMA; `_isDriftEntry = false`
+
+New settings:
+- `DriftModeEnabled` (bool, default false) — globally enable/disable
+- `DriftModeConsecutiveTicks` (int, default 60) — ~3min at ~3s/tick
+- `DriftModeMinDisplacementPercent` (decimal, default 0.002) — 0.2% minimum distance from SMA
+
+#### 3. Displacement Re-Entry Implemented (disabled)
+New field: `_lastNeutralTransitionPrice` — records price when signal transitions from BULL/BEAR to NEUTRAL.
+
+Logic: If `!isInTrade && newSignal == "NEUTRAL"` and `_lastNeutralTransitionPrice` has value:
+- Compute displacement % from recorded price
+- If > `DisplacementReentryPercent` → BULL re-entry
+- If < -`DisplacementReentryPercent` → BEAR re-entry
+
+New settings:
+- `DisplacementReentryEnabled` (bool, default false) — left disabled (caused regressions in testing)
+- `DisplacementReentryPercent` (decimal, default 0.005) — 0.5% displacement threshold
+
+#### 4. Plumbing
+All new settings added to: MarketBlocks TradingSettings, qqqBot TradingSettings, TimeBasedRule, TimeRuleApplier (Snapshot/Restore/Apply/Log/SettingsSnapshot), ProgramRefactored (BuildTradingSettings + ParseOverrides), appsettings.json.
+
+Reset logic in ColdReset and PartialReset: counters, flags, and displacement price all cleared.
+
+### Development Iterations
+
+**Iteration 1: Naive drift (global, 60 ticks, no filters)**
+- Feb 18: +$149 ✓ (captured OV rally!)
+- Feb 9: -$458 ✗ (53 trades, oscillation every 2 ticks — BEAR→NEUTRAL→BEAR cycling)
+- Fix needed: oscillation prevention
+
+**Iteration 2: Added `_isDriftEntry` sticky hold + counter reset**
+- Fixed 2-tick oscillation — drift holds until price crosses SMA
+- Still cycling: enter→hold→SMA cross→exit→60 ticks→re-enter (15+ entries per OV)
+- Feb 9: -$458 still (drift cycling throughout Base/PH)
+
+**Iteration 3: OV-only phase gating**
+- DriftModeEnabled=false global, true in OV override
+- Feb 9: +$4 (improved but -$29 from baseline)
+- Feb 18: +$149 ✓ BUT...
+- Feb 11/12/13: massive regressions (37 trades each — displacement re-entry was still enabled)
+
+**Iteration 4: OV-only + displacement disabled**
+- Standard displacement ReEntry disabled, drift OV-only
+- Still too many trades from drift cycling within OV
+
+**Iteration 5: One-shot per phase**
+- `_driftConsumedThisPhase` prevents re-entry after first drift
+- Feb 18: Wrong direction first — BEAR consumed the one-shot before BULL could catch the rally
+
+**Iteration 6: Per-direction one-shot**
+- Separate `_bullDriftConsumedThisPhase` / `_bearDriftConsumedThisPhase`
+- Better but still not effective on Feb 18 (-$84)
+
+**Iteration 7: Displacement filter (FINAL)**
+- Added `DriftModeMinDisplacementPercent` (0.2%) — price must be ≥0.2% from SMA when ticks threshold met
+- **Globally enabled** (not OV-gated) — the displacement filter naturally prevents entries on low-volatility/choppy days
+- Per-direction one-shot preserved
+
+### Final Replay Results (Drift Mode with displacement filter)
+
+| Date | Baseline P/L | Drift P/L | Delta | Base Trades | Drift Trades |
+|------|-------------|-----------|-------|-------------|--------------|
+| Feb 9 | +$33 | +$33 | $0 | 6 | 6 |
+| Feb 10 | +$13 | +$13 | $0 | 9 | 9 |
+| Feb 11 | +$197 | +$197 | $0 | 6 | 6 |
+| Feb 12 | +$187 | +$187 | $0 | 17 | 17 |
+| Feb 13 | +$181 | +$175 | -$6 | 8 | 8 |
+| Feb 17 | +$8 | +$41 | +$33 | 23 | 25 |
+| **Feb 18** | **-$88** | **+$157** | **+$245** | 6 | 4 |
+| **7-day Total** | **+$531** | **+$803** | **+$272** | — | — |
+
+### Key Findings
+
+1. **Displacement filter is the breakthrough.** Duration-only drift (consecutive ticks) generates too many false entries. Adding a magnitude filter (price must be ≥0.2% from SMA) makes drift selective enough to be net positive.
+
+2. **Zero regression on 4 of 7 days.** The displacement filter prevents drift from firing at all on choppy/rangebound days (Feb 9, 10, 11, 12). Only fires on days with genuine sustained displacement from SMA.
+
+3. **Feb 18 fix works.** Target day went from -$88 to +$157 — drift entered BULL during OV rally and held through the move. Trade count actually decreased (6→4) because drift captured the move in fewer, larger trades.
+
+4. **Displacement Re-Entry too noisy.** Enabled it caused regressions on every day. Left infrastructure in place but disabled (`DisplacementReentryEnabled: false`).
+
+5. **Drift maintenance is essential.** Without `_isDriftEntry` sticky hold, the velocity gate immediately exits drift positions on the next tick (stalled→NEUTRAL). The maintenance block bypasses velocity logic while price stays on correct side of SMA.
+
+### Current Settings (after Drift Mode session)
+```json
+"DriftModeEnabled": true,
+"DriftModeConsecutiveTicks": 60,
+"DriftModeMinDisplacementPercent": 0.002,
+"DisplacementReentryEnabled": false,
+"DisplacementReentryPercent": 0.005,
+"EnableAdaptiveTrendWindow": false
+```
+
+---
+
+## Session 2026-02-18 (continued) — ATR-Dynamic Drift Threshold & Drift Trailing Stop
+
+### Context
+Research AI consultation proposed 4 improvements to Drift Mode. After feasibility assessment, two were selected:
+1. **#1: ATR-dynamic drift displacement threshold** — scale displacement threshold with intraday volatility so the bar rises automatically on high-vol days
+2. **#3: ATR trailing stop for drift entries** — use a wider stop (like TrendRescue) for drift entries since they catch gradual moves that need more breathing room
+
+Also researched: **Tradier streaming API volume data** for future CVD-gated Displacement Re-Entry.
+
+### Changes Implemented
+
+#### 1. ATR-Dynamic Drift Threshold (AnalystEngine)
+
+**Design evolution:**
+- **Initial approach**: Replace fixed threshold with `K × ATR / price`. At K=1.0, ATR=$0.59, price=$614 → dynamic threshold = 0.097%. This was **half** the fixed 0.2%, admitting noise entries.
+- **Feb 9 regression**: -$93 swing (+$33→-$60) because 0.097% threshold let drift fire on marginal price displacement that wasn't a real trend.
+- **Final design**: `max(fixed, K × ATR / price)` — ATR only RAISES the displacement bar in high-volatility conditions, never lowers below the proven fixed floor.
+
+**Implementation** (AnalystEngine.cs, drift threshold computation):
+```csharp
+decimal atrThreshold = _settings.DriftModeAtrMultiplier * _mrAtr.CurrentValue / currentSma;
+driftThreshold = Math.Max(_settings.DriftModeMinDisplacementPercent, atrThreshold);
+```
+
+Log format: `max(Fixed 0.200%, ATR 0.097%)=0.200%` — shows which side of the max won.
+
+**New setting**: `DriftModeAtrMultiplier` (decimal, default 0m). 0 = use fixed threshold only. >0 = use `max(fixed, K × ATR / price)`. Currently set to 1.0.
+
+**Result**: Neutral on current 7-day data (ATR threshold never exceeds fixed 0.2% on any tested day). Infrastructure is ready for high-vol days where ATR will automatically raise the bar.
+
+#### 2. Drift Trailing Stop (TraderEngine)
+
+**Design**: Drift entries use a separate, wider trailing stop that bypasses the DynamicStopLoss ratchet — identical pattern to TrendRescue trailing stop. Priority chain in `EvaluateTrailingStop`:
+1. If `_isDriftPosition && DriftTrailingStopPercent > 0` → use drift stop
+2. Else if `_isTrendRescuePosition && TrendRescueTrailingStopPercent > 0` → use TrendRescue stop
+3. Else → normal TrailingStopPercent with ratchet
+
+**New field**: `_isDriftPosition` (bool) — set when entering on a drift signal, cleared at all 3 position-clear locations.
+
+**New MarketRegime field**: `IsDriftEntry` (bool) — propagated from AnalystEngine to TraderEngine via the regime channel.
+
+**New setting**: `DriftTrailingStopPercent` (decimal, default 0m). 0 = use normal TrailingStopPercent.
+
+**Bug fix discovered**: BEAR entry setup at ~L2208 never set `_isTrendRescuePosition` — only used `_settings.TrailingStopPercent`. Fixed by adding full drift/rescue priority logic matching the BULL entry pattern.
+
+#### 3. Full Plumbing (10 files changed)
+
+| File | Changes |
+|------|---------|
+| `MarketRegime.cs` | Added `bool IsDriftEntry = false` parameter |
+| `TradingSettings.cs` (MarketBlocks) | Added `DriftModeAtrMultiplier`, `DriftTrailingStopPercent` |
+| `TradingSettings.cs` (qqqBot) | Mirror of above |
+| `TimeBasedRule.cs` | Added nullable override properties |
+| `TimeRuleApplier.cs` | Updated all 5 sections: snapshot, restore, apply, log, SettingsSnapshot |
+| `ProgramRefactored.cs` | BuildTradingSettings + ParseOverrides |
+| `AnalystEngine.cs` | max() threshold, IsDriftEntry propagation |
+| `TraderEngine.cs` | _isDriftPosition field, EvaluateTrailingStop, BULL/BEAR entry, 3 resets |
+| `appsettings.json` | New settings added |
+
+### Replay Sweep Results
+
+**Baseline**: $803.55 (Drift Mode ON, new features OFF = DriftTrailingStopPercent=0, DriftModeAtrMultiplier=1.0 with max() = neutral)
+
+**DriftTrailingStopPercent sweep** (7 dates: Feb 9-13, 17, 18):
+
+| DriftStop | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | Feb 17 | Feb 18 | Total | Delta |
+|-----------|-------|--------|--------|--------|--------|--------|--------|-------|-------|
+| 0% (baseline) | +$33.27 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$41.41 | +$157.08 | **$803.55** | — |
+| 0.25% | +$23.37 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$14.06 | +$157.08 | $766.30 | -$37 |
+| **0.30%** | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$82.98 | +$157.08 | $817.40 | +$14 |
+| **0.35%** | **+$5.55** | **+$12.92** | **+$196.96** | **+$186.92** | **+$174.99** | **+$89.22** | **+$157.08** | **$823.64** | **+$20** |
+| 0.40% | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$74.52 | +$157.08 | $808.94 | +$5 |
+| 0.50% | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$44.34 | +$157.08 | $778.76 | -$25 |
+| 0.80% | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$44.34 | +$157.08 | $778.76 | -$25 |
+
+**Observations:**
+- Only **2 of 7 days** are affected by drift trailing stop (Feb 9 and Feb 17). All other days show identical P/L regardless of setting.
+- **Feb 9 regression**: Any stop ≥0.3% causes -$28 (binary — same result at 0.3%, 0.35%, 0.4%, 0.5%, 0.8%). A wider stop lets a bad drift entry hold too long.
+- **Feb 17 improvement**: Smoothly increases from +$14 at 0.25% to peak at +$89 at 0.35%, then declines. The wider stop lets a good drift entry ride through a pullback.
+- **0.35% is the optimum**: Feb 17 gain (+$48) outweighs Feb 9 loss (-$28). Net: +$20 improvement.
+- **0.35% is between normal (0.2%) and TrendRescue (0.5%)**: Makes sense — drift entries are less confident than TrendRescue but more confident than normal velocity entries.
+
+**ATR threshold test** (replace fixed with K×ATR/price, no max()):
+
+| Config | Feb 9 | Total | Notes |
+|--------|-------|-------|-------|
+| ATR replaces fixed, DriftStop=0.8% | -$59.83 | $629.22 | ATR threshold too low (0.097%) |
+| max() + DriftStop=0.8% | +$5.55 | $694.60 | Fixed floor restored |
+| max() + DriftStop=0% | +$33.27 | $803.55 | Identical to baseline (ATR neutral) |
+
+The ATR threshold at K=1.0 produces 0.097% on current data — always below the 0.2% fixed floor. The max() design makes it invisible on normal-vol days but will automatically protect on high-vol days when ATR spikes.
+
+### Tradier Streaming Volume Research
+
+Fetched Tradier streaming API documentation. Key findings for future CVD implementation:
+
+- **Trade events**: Include `size` (per-trade volume in shares) and `cvol` (cumulative session volume). Direct feed of individual trade prints.
+- **Timesale events**: Include `size` + `bid` + `ask` at time of trade. This enables CVD computation by comparing trade price to bid/ask midpoint.
+- **CVD computation**: `if (trade_price > midpoint) → CVD += size; else CVD -= size` — standard tick-level CVD.
+- **Implication**: Tradier migration (Phase 1 — market data) is prerequisite for CVD-gated Displacement Re-Entry. Alpaca streaming does not provide per-trade volume or bid/ask context needed for CVD.
+
+### Key Findings
+
+1. **max() design is critical for ATR threshold.** Replacing fixed threshold with ATR alone halves the bar on normal days (0.097% vs 0.2%). The asymmetric `max()` preserves the proven floor while adding upside protection for volatile days.
+
+2. **0.35% drift trailing stop is the sweet spot.** Wider than normal (0.2%) to give gradual moves breathing room. Narrower than TrendRescue (0.5%) because drift entries are less directionally confident. Net +$20 improvement across 7 days.
+
+3. **Two-day overfitting risk.** Only Feb 9 and Feb 17 are affected by drift stop changes. The 0.35% value is optimal on this sample but should be monitored on future data.
+
+4. **BEAR entry had missing TrendRescue handling.** Fixed as part of this implementation — BEAR entry setup now has full drift/rescue/normal stop priority logic matching BULL.
+
+5. **Drift trailing stop must use max(drift, phase) — not drift alone.** Initial implementation used `DriftTrailingStopPercent` directly. During OV where `TrailingStopPercent=0.50%`, the drift stop of 0.35% was actually *tighter* — the "wider stop" label was wrong. Fixed by applying `Math.Max(DriftTrailingStopPercent, TrailingStopPercent)` at all 5 usage sites (EvaluateTrailingStop, BULL entry, BEAR entry). Log now shows `(drift=0.35%, phase=0.50%, max applied)`.
+
+6. **Feb 9 $5.55 cliff explained: DynamicStopLoss ratchet skip.** The drift/TrendRescue code path intentionally skips the DynamicStopLoss ratchet (which tightens the stop as profit grows: 0.3%→0.15%, 0.5%→0.10%, 0.8%→0.08%). In the baseline (DriftTrailingStopPercent=0), the drift entry falls through to the normal code path where the ratchet runs, locks in profit, and fires the stop at $50.49 (+$43.56). With DriftTrailingStopPercent>0, the ratchet is skipped, the wide stop doesn't fire, and the dynamic exit timer (ScalpWait/TrendWait) fires at $50.34 (+$15.84) — $28 worse. This is a design tradeoff, not a bug: ratchet skip prevents churn on gradual moves (Feb 17: +$48) at the cost of not locking in profits on reversals (Feb 9: -$28). Net is still +$20.
+
+### Current Settings
+```json
+"DriftModeEnabled": true,
+"DriftModeConsecutiveTicks": 60,
+"DriftModeMinDisplacementPercent": 0.002,
+"DriftModeAtrMultiplier": 1.0,
+"DriftTrailingStopPercent": 0.0035,
+"DisplacementReentryEnabled": true,
+"DisplacementReentryPercent": 0.005,
+"DisplacementAtrMultiplier": 2.0,
+"DisplacementChopThreshold": 40,
+"DisplacementBbwLookback": 20,
+"EnableAdaptiveTrendWindow": false
+```
+
+---
+
+### Session: Feb 19, 2026 — Regime-Validated Displacement Re-Entry
+
+**Context**: Research AI proposed using price-derived proxies for conviction (CHOP + BBW) to bypass the lack of volume data from Alpaca streaming. The old displacement re-entry was a blind percentage check. Upgraded to ATR-based displacement + regime validation.
+
+**Changes Made**:
+1. **ATR-based displacement threshold**: `Abs(price - stopOutPrice) > DisplacementAtrMultiplier × ATR` (falls back to fixed `DisplacementReentryPercent` when ATR unavailable)
+2. **Regime validation gate**: Displacement only fires if `CHOP(14) < DisplacementChopThreshold` (trending) **OR** `BBW > SMA(BBW, DisplacementBbwLookback)` (volatility expanding)
+3. **BBW SMA tracking**: `IncrementalSma` fed from `StreamingBollingerBands.Bandwidth` on each candle completion
+4. **One-shot guard**: `_displacementConsumedThisPhase` prevents cascading re-entries (same pattern as drift mode)
+5. **Indicators-required**: Displacement blocked during first ~7 min while CHOP/BBW warm up (no bypass of regime validation)
+6. **`IsDisplacementReentry` flag** added to `MarketRegime` record for TraderEngine awareness
+
+**Files modified** (both repos):
+- `TradingSettings.cs` (both) — `DisplacementAtrMultiplier`, `DisplacementChopThreshold`, `DisplacementBbwLookback`
+- `TimeBasedRule.cs` — nullable overrides for new settings
+- `MarketRegime.cs` — `IsDisplacementReentry` field
+- `AnalystEngine.cs` — BBW SMA init/feed, regime-validated displacement logic, one-shot guard, indicators-required, reset locations
+- `TimeRuleApplier.cs` — all 5 sections (snapshot, restore, apply, log, SettingsSnapshot)
+- `ProgramRefactored.cs` — BuildTradingSettings + ParseOverrides
+- `appsettings.json` — new settings
+
+**7-Day Replay Results** (Feb 9-13, 17, 18):
+
+| Config | Feb 9 | Feb 10 | Feb 11 | Feb 12 | Feb 13 | Feb 17 | Feb 18 | Total | vs Baseline |
+|--------|-------|--------|--------|--------|--------|--------|--------|-------|-------------|
+| Baseline (off) | +$5.55 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$89.22 | +$157.08 | **$823.64** | — |
+| Enabled (CHOP<50, bypass) | -$95.65 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$89.22 | +$157.08 | $722.44 | -$101 |
+| Enabled (CHOP<40, one-shot, bypass) | +$7.49 | +$12.92 | +$196.96 | +$186.92 | +$174.99 | +$89.22 | +$157.08 | $825.58 | +$2 |
+| **Enabled (CHOP<40, one-shot, require indicators)** | **+$9.43** | **+$12.92** | **+$196.96** | **+$186.92** | **+$174.99** | **+$89.22** | **+$157.08** | **$827.52** | **+$4** |
+
+**CHOP Threshold Sweep** (with one-shot + indicators-required):
+
+| CHOP Threshold | Total |
+|----------------|-------|
+| <30 | $827.52 |
+| <35 | $827.52 |
+| <38 | $827.52 |
+| <40 | $827.52 |
+| <45 | $827.52 |
+| <50 | $827.52 |
+| <55 | $827.52 |
+
+**ATR Multiplier Sweep** (with CHOP<40, one-shot, indicators-required):
+
+| ATR× | Total |
+|------|-------|
+| 1.5 | $827.52 |
+| 2.0 | $827.52 |
+| 2.5 | $827.52 |
+| 3.0 | $827.52 |
+| 4.0 | $827.52 |
+
+**Key Findings**:
+
+1. **One-shot guard is critical.** Without it, stop-out → displacement → stop-out → displacement cascades destroy P/L. Feb 9 went from +$5.55 to -$95.65 without the guard. With one-shot: +$9.43.
+
+2. **Indicators-required prevents unvalidated entries.** The early-phase entries (before CHOP/BBW warm up after ~14 candles) bypass regime validation. Blocking these gave a further +$2 improvement on Feb 9.
+
+3. **CHOP and ATR multiplier are invariant on this dataset.** BBW expansion (`BBW > SMA(BBW)`) alone validates all entries that fire. The OR logic makes CHOP redundant when BBW passes. This is likely due to limited test data (7 days) — keep both gates for robustness.
+
+4. **Displacement trades are mostly P/L-neutral.** Fires on 6/7 days but only changes P/L on Feb 9 (+$3.88). On other days the entry/exit prices are near-breakeven. This means the feature is safe (harmless when wrong) but modestly helpful.
+
+5. **Feb 9 winning trade anatomy**: CHOP=37.3 (trending, < 40), displacement 2.90 > 2.0×ATR=2.87, bought TQQQ at $51.32, sold at $51.34, profit +$3.88.
+
+6. **Research AI was right about CHOP < 40.** Feb 9 triggers with validated CHOP=37.3 and the Feb 9 entries at CHOP=43-49 (which cascaded under the old code) would have been correctly rejected by CHOP<40 + one-shot.
+
+---
+
+### Session: 2026-02-19 (Part 2) — AND Logic, Slope Filter, MR Suppression
+
+**Context**: Research AI evaluated the Part 1 implementation and identified three improvements:
+1. **OR→AND logic**: BBW expansion alone (without CHOP confirmation) allows entries in high-volatility chop (shakeouts)
+2. **Slope filter**: Add price velocity check to distinguish "drift" from "drive"
+3. **MR phase suppression**: Displacement is a trend mechanism, shouldn't fire during MR (Power Hour)
+
+**Changes Made**:
+- **OR→AND gate**: `chopValid || bbwValid` → `chopValid && bbwValid`. Disabled indicators default to `true` (pass).
+- **Slope filter**: Added `DisplacementSlopeWindow` (10) and `DisplacementMinSlope` (0m) settings. New `StreamingSlope` tracks candle close prices. Directional check: slope must match displacement direction.
+- **CHOP threshold**: Raised from 40 → 50 per Research AI recommendation
+- **MR suppression**: Added `_activeStrategy != StrategyMode.MeanReversion` guard to displacement check
+- **Settings pipeline**: 2 new settings wired through TradingSettings (×2), TimeBasedRule, TimeRuleApplier (5 sections), ProgramRefactored (2 sections), appsettings.json
+
+**Critical Discovery — MR Override Bug**:
+During debugging, discovered that displacement entries fire inside `DetermineSignal()` but are overridden by `DetermineMeanReversionSignal()` in `ProcessTick()` during MR phases (Power Hour). The displacement signal sets `newSignal = "BULL"` but MR replaces `signal` with `MR_FLAT/MR_SHORT`.
+
+This means the previous session's $827.52 was likely measured from a transient code state. The committed code's displacement entries all fired during Power Hour (MR mode) and were silently overridden to zero effect.
+
+Attempted fix: restoring displacement signal over MR override in ProcessTick. **Result: -$40.02 on Feb 9** (was +$5.55). The displacement entered BULL during a directionless Power Hour market and lost $32.30. This validates the Research AI's warning about entries in non-trending markets.
+
+**Final fix**: Added `_activeStrategy != StrategyMode.MeanReversion` to displacement guard. This prevents:
+1. Wasted computation during MR phases
+2. State inconsistency (`_lastSignal` diverging from emitted signal)
+3. Log spam from "Restoring" overrides
+
+**Replay Results (7-day, Feb 9-13 + 17-18)**:
+
+| Configuration | Total P/L | Delta vs Baseline |
+|---|---|---|
+| Baseline (displacement off) | $823.64 | — |
+| AND logic + CHOP<50 + slope=0 | $823.64 | $0.00 |
+| MR override attempted (unsafe) | $700.07 | -$123.57 |
+
+**Per-day breakdown (AND logic, final)**:
+| Date | P/L | Displacement | Notes |
+|---|---|---|---|
+| Feb 9 | $5.55 | Fires (14:27 MR) | Suppressed — MR phase |
+| Feb 10 | $12.92 | Fires (MR phase) | Suppressed |
+| Feb 11 | $196.96 | Fires (MR phase) | Suppressed |
+| Feb 12 | $186.92 | None | No stop-out → no displacement |
+| Feb 13 | $174.99 | Fires (MR phase) | Suppressed |
+| Feb 17 | $89.22 | None | No stop-out → no displacement |
+| Feb 18 | $157.08 | Fires (MR phase) | Suppressed |
+
+**Key Findings**:
+
+1. **All displacement opportunities in this dataset occur during Power Hour (MR mode).** The Base phase (Trend mode) stop-outs don't lead to sufficient displacement before Power Hour begins. This means displacement re-entry is effectively dormant on this dataset.
+
+2. **MR override is dangerous.** Forcing displacement entries during MR mode lost $123.57 over 7 days. The MR regime correctly suppresses these entries because post-stop-out price movements during Power Hour are mean-reverting, not trending.
+
+3. **AND logic is structurally correct.** Even though it's P/L-neutral on this dataset, it prevents the theoretical "high-volatility chop" entry that OR logic would allow. This is a safety improvement for when displacement activates during Trend phases.
+
+4. **Slope filter is plumbed but untested.** `DisplacementMinSlope = 0` (disabled) because displacement doesn't fire during Trend phases in this dataset. The infrastructure (StreamingSlope feeding, directional check, normalization) is ready for when displacement has trend-phase opportunities.
+
+5. **Previous $827.52 was likely invalid.** The displacement entries that produced +$3.88 in the prior session were probably from a transient code state between edits, not from the final committed code.
+
+**Current Settings** (appsettings.json):
+```json
+{
+  "DisplacementReentryEnabled": true,
+  "DisplacementReentryPercent": 0.005,
+  "DisplacementAtrMultiplier": 2.0,
+  "DisplacementChopThreshold": 50,
+  "DisplacementBbwLookback": 20,
+  "DisplacementSlopeWindow": 10,
+  "DisplacementMinSlope": 0
+}
+```
+
+---
+
+### Session: 2026-02-19 (Part 3) — Dynamic Regime Switching, Slope Activation, Scramble
+
+**Context**: Research AI provided detailed evaluation of Part 2's implementation report ("20260219-02"). Three specific action items:
+1. **Dynamic Regime Switching**: Enable `ChopOverrideEnabled` so CHOP < 38.2 during PH switches from MR → Trend (allows displacement to fire during end-of-day trend runs)
+2. **Slope Activation**: Set `DisplacementMinSlope = 0.0002` to enable the velocity filter
+3. **Scramble (One-Shot Reset)**: Reset `_displacementConsumedThisPhase` when `|slope| > 2× threshold && CHOP < 35` — allows second re-entry when momentum accelerates
+
+**Changes Made**:
+
+1. **`ChopOverrideEnabled`**: Set `true` in appsettings.json. Modified `DetermineStrategyMode()` to restrict CHOP override to Power Hour only (prevents Base phase MR override that kills profitable trend trades).
+
+2. **`DisplacementMinSlope`**: Set `0.0002` in appsettings.json. Slope filter infrastructure from Part 2 already complete.
+
+3. **Scramble code**: Added between displacement block and displacement tracking block in `DetermineSignal()`. Logic:
+   ```
+   if (consumed && !MR && MinSlope > 0 && slope.Ready && chop.Ready)
+       if (|normalizedSlope| > 2× MinSlope && CHOP < 35)
+           _displacementConsumedThisPhase = false  // unlock for next re-entry
+   ```
+
+**Replay Results — Full CHOP Override (global):**
+
+First attempt: `ChopOverrideEnabled = true` globally (affects both Base and PH phases).
+
+| Date | Baseline | Global Override | Delta |
+|---|---|---|---|
+| Feb 9 | +$5.55 | -$51.56 | -$57.11 |
+| Feb 10 | +$12.92 | -$49.74 | -$62.66 |
+| Feb 11 | +$196.96 | +$196.96 | $0.00 |
+| Feb 12 | +$186.92 | +$105.72 | -$81.20 |
+| Feb 13 | +$174.99 | +$174.28 | -$0.71 |
+| Feb 17 | +$89.22 | +$13.62 | -$75.60 |
+| Feb 18 | +$157.08 | -$41.74 | -$198.82 |
+| **Total** | **$823.64** | **$347.54** | **-$476.10** |
+
+**Catastrophic.** Global CHOP override switches Base phase to MR when CHOP > 61.8, destroying profitable trend trades.
+
+**Replay Results — PH-Only CHOP Override:**
+
+Modified `DetermineStrategyMode()` to add `currentPhase == "Power Hour"` guard. Base phase unaffected.
+
+| Date | Baseline | PH-Only Override | Delta |
+|---|---|---|---|
+| Feb 9 | +$5.55 | -$51.56 | -$57.11 |
+| Feb 10 | +$12.92 | +$12.92 | $0.00 |
+| Feb 11 | +$196.96 | +$196.96 | $0.00 |
+| Feb 12 | +$186.92 | +$105.72 | -$81.20 |
+| Feb 13 | +$174.99 | +$174.28 | -$0.71 |
+| Feb 17 | +$89.22 | +$77.10 | -$12.12 |
+| Feb 18 | +$157.08 | -$41.74 | -$198.82 |
+| **Total** | **$823.64** | **$473.68** | **-$349.96** |
+
+**Still catastrophic.** Even PH-only, the CHOP override destabilizes the MR strategy. When CHOP briefly dips below 38.2 during PH, the bot switches to un-tuned Trend logic. PH trend parameters (velocity, SMA, cruise control) are optimized for Base phase, not Power Hour dynamics.
+
+**Final Configuration**: Reverted `ChopOverrideEnabled = false`. Full 7-day replay: **$823.64** (baseline match).
+
+**Key Findings**:
+
+1. **CHOP override is destructive on this dataset.** PH CHOP readings oscillate around 38.2 frequently enough to cause harmful mode switches. The MR strategy's Bollinger Band %B logic is better suited to PH price action than the trend velocity/SMA logic.
+
+2. **Trend parameters aren't PH-tuned.** The Trend strategy uses Base-phase-optimized velocity thresholds, SMA window, slope gates, etc. These don't transfer to PH — different volatility profile, shorter time horizon, and different market microstructure.
+
+3. **Feature readiness preserved.** All three features have correct infrastructure:
+   - `DetermineStrategyMode()` restricted to PH (correct for future use)
+   - Slope filter active at 0.0002 (dormant — displacement suppressed during MR)
+   - Scramble logic plumbed (dormant — requires consumed displacement + CHOP < 35)
+
+4. **Displacement remains dormant.** With `ChopOverrideEnabled = false`, all displacement opportunities still fall during MR phases and are suppressed. Slope filter and scramble are correctly gated but have no opportunities to activate.
+
+5. **Research AI's theory vs practice.** The "Trend Rescue" concept is sound in principle — rare trend days during PH should allow trend re-entry. But the implementation requires PH-specific trend parameters, not reusing Base parameters. This is a larger architectural change.
+
+**What's Needed Before ChopOverrideEnabled Can Work**:
+- PH-specific Trend parameters (velocity, SMA window, slope gates) — possibly via TimeRules override
+- A wider date range with genuine PH trend days for testing
+- Tighter CHOP threshold (e.g., < 25 instead of 38.2) to reduce false switches
+
+**Current Settings** (appsettings.json):
+```json
+{
+  "DisplacementReentryEnabled": true,
+  "DisplacementReentryPercent": 0.005,
+  "DisplacementAtrMultiplier": 2.0,
+  "DisplacementChopThreshold": 50,
+  "DisplacementBbwLookback": 20,
+  "DisplacementSlopeWindow": 10,
+  "DisplacementMinSlope": 0.0002,
+  "ChopOverrideEnabled": false,
+  "ChopLowerThreshold": 38.2,
+  "ChopUpperThreshold": 61.8
+}
+```
+
+### Session: 2026-02-19 (Part 4) — CHOP Hysteresis, PH Trend Params, Displacement Strategy Pivot
+
+**Date**: Feb 19, 2026 (evening)
+**Context**: Implementing Research AI's 3-part strategy to unlock dormant displacement re-entry system.
+**Live results**: QQQ Open 602.81 → Close 603.46. Bot: +$0.11, Broker: -$5.20 (flat day).
+
+#### Research AI Recommendations (from 20260219-03 report)
+1. **CHOP Hysteresis (Schmitt trigger)**: Enter Trend Rescue at CHOP<30, exit at CHOP>45 — prevent flickering
+2. **PH-specific Trend parameters**: MinVelocityThreshold=0.000030 (2×Base), TrendWindowSeconds=1800 (30min vs 90min Base)
+3. **Unlock Displacement during MR**: Remove MR guard, add displacement interrupt in ProcessTick
+
+#### Code Changes (all implemented)
+1. **ChopTrendExitThreshold setting**: Added to full 6-file pipeline (TradingSettings×2, TimeBasedRule, TimeRuleApplier×5 sections, ProgramRefactored×2)
+2. **Schmitt trigger in DetermineStrategyMode()**: `_trendRescueActive` bool field with hysteresis: CHOP < lower → activate, stays until CHOP > exit threshold. Reset in ColdReset/PartialReset.
+3. **PH TimeRule overrides**: `MinVelocityThreshold: 0.000030`, `TrendWindowSeconds: 1800`
+4. **BBW gate on scramble**: Scramble now requires BBW > SMA(BBW) in addition to slope/CHOP checks
+5. **MR guard architecture**: Kept `_activeStrategy != MeanReversion` guard on displacement and scramble. Displacement naturally unlocks when CHOP hysteresis activates Trend Rescue (switches _activeStrategy to Trend).
+
+#### Failed Approach: Displacement MR Interrupt
+Initially implemented displacement as a "high-priority interrupt" per Research AI Task 3:
+- Removed MR guard from displacement/scramble
+- Added displacement interrupt in ProcessTick: if `_isDisplacementReentry` && trend signal is directional, override MR signal
+- **Result**: -$82.31 regression over 8 days. Displacement entered trades during choppy MR conditions (poor entry quality) and the interrupt kept positions alive against MR exit logic.
+- **Lesson**: Displacement re-entry during genuine MR conditions is counterproductive. The trend signals that trigger entry don't match the mean-reverting market reality.
+- **Solution**: Reverted to MR guard. Displacement is unlocked naturally via CHOP hysteresis — when CHOP drops low enough to activate Trend Rescue, `_activeStrategy` becomes Trend, MR guard passes, and displacement fires with proper trend management.
+
+#### 8-Day Replay Results (Feb 9-13, 17-19)
+
+| Configuration | 8-day P/L | vs Baseline |
+|---------------|-----------|-------------|
+| **Baseline (all dormant)** | **$627.15** | — |
+| All features ON (CHOP=30) | $473.72 | -$153.43 |
+| Disp interrupt only | $544.84 | -$82.31 |
+| CHOP hysteresis (30) + PH params | $549.50 | -$77.65 |
+| **CHOP hysteresis (25) + PH params** | **$627.15** | **$0 (dormant)** |
+
+Per-day baseline (8 days): +$5.55, +$12.92, +$196.96, +$186.92, +$174.99, +$89.22, +$157.08, -$196.49
+
+**Key Finding**: Feb 19 is a -$196.49 day regardless of features. 7-day baseline = $823.64.
+
+CHOP during PH in our dataset stays in the 25-40 range:
+- ChopLowerThreshold=30 → Trend Rescue activates on some days, hurts Feb 12 (-$81.20), helps Feb 17 (+$3.55)
+- ChopLowerThreshold=25 → CHOP never drops below 25, features dormant, baseline-identical
+- ChopLowerThreshold=20 → Same as 25 (dormant)
+
+#### Final Configuration (deployed)
+```json
+{
+  "ChopOverrideEnabled": true,
+  "ChopLowerThreshold": 25,
+  "ChopTrendExitThreshold": 45,
+  "ChopUpperThreshold": 61.8,
+  "DisplacementReentryEnabled": true,
+  "DisplacementMinSlope": 0.0002,
+  "PH TimeRule Overrides": { "MinVelocityThreshold": 0.000030, "TrendWindowSeconds": 1800 }
+}
+```
+
+Features are safe/dormant at ChopLowerThreshold=25 — infrastructure ready for activation when CHOP < 25 occurs during PH (strong end-of-day trend). The Schmitt trigger hysteresis prevents flickering. PH-specific trend parameters ensure proper velocity/window when Trend Rescue does activate.
+
+#### What Still Needs Investigation
+1. **Feb 12 regression at CHOP=30**: Why did Trend Rescue produce poor trades despite CHOP signaling strong trend?
+2. **Feb 19 deep trough (-$199.46 at 12:42)**: Losing day regardless of features. Investigate Base phase behavior.
+3. **More diverse dataset needed**: Current 8-day dataset doesn't have genuine PH trend days where CHOP < 25.
+4. **TrimRatio**: Stays at 0.75 per user instruction. User saw 102/136 shares trimmed (75%). Will be reviewed next tuning round.
+
+---
+
+### Session 4b: 2026-02-19 — Replay Broker Realism Upgrade
+
+**Context**: Research AI recommended upgrading replay broker with realistic transaction costs (spread, slippage, market-aware tick generation) before expanding dataset or adding ATR-based position sizing.
+
+**Goal**: Make backtests on 1-minute data more realistic by adding synthetic spread, volatility-scaled slippage, and OHLC-aware tick interpolation.
+
+#### Changes Made
+
+##### Phase 1: OHLC in CSV (HistoricalDataFetcher.cs)
+- CSV header expanded: `TimestampUTC,Symbol,Price,Volume,Source,Open,High,Low`
+- `SaveBarsToCsv` now writes Open/High/Low as columns 5-7
+- Backward-compatible: existing CSVs without OHLC still parse correctly
+
+##### Phase 2: Market-Aware Tick Generation (ReplayMarketDataSource.cs)
+- `CsvTick` record expanded with `decimal? Open, High, Low` fields
+- `LoadCsvFile` parses OHLC columns when present (≥8 columns)
+- New `GenerateOhlcTicks()` — ABM-lite tick generation:
+  - Analyzes candle character (body/range ratio, bullish/bearish)
+  - Creates waypoint path (e.g., Open→Low→High→Close for bullish candles)
+  - Momentum-clustered segments with acceleration/deceleration
+  - All ticks clamped to [Low, High] range
+  - Exponential decay volume distribution with noise
+- Legacy `GenerateBrownianBridgeTicks()` extracted for backward compatibility
+- Dispatch: OHLC data → ABM-lite, Close-only → Brownian bridge
+
+##### Phase 3+4: Synthetic Spread + Configurable Slippage (SimulatedBroker.cs)
+- New `SimulatedBroker` config section in appsettings.json (separate from TradingSettings)
+- **Phase-aware spread**: OV (09:30-10:13 ET) gets 2× multiplier, PH (14:00-16:00 ET) gets 1.25×, Base gets 1×
+- **Base slippage**: Configurable in basis points (default 0.5 bps)
+- **Volatility-scaled slippage**: Rolling σ of last 60 price updates × configurable multiplier
+- **Cumulative cost tracking**: Reports total spread cost, slippage cost, and avg cost/trade in summary
+- Constructor expanded from 3 params to 9 (all with defaults for backward compatibility)
+- `ProgramRefactored.cs` reads `SimulatedBroker` config section and passes to constructor
+
+##### Configuration (appsettings.json SimulatedBroker section)
+```json
+{
+  "SlippageBasisPoints": 0.5,
+  "SpreadBasisPoints": 1.0,
+  "OvSpreadMultiplier": 2.0,
+  "PhSpreadMultiplier": 1.25,
+  "VolatilitySlippageEnabled": true,
+  "VolatilitySlippageMultiplier": 0.15,
+  "VolatilityWindowTicks": 60
+}
+```
+
+##### Tests (SimulatedBrokerTests.cs)
+- Updated `CreateBroker` helper: new signature with `slippageBps`, `spreadBps`, `volatilitySlippageEnabled` params
+- All 63 tests updated and passing
+- Tests use spread=0, volSlippage=false by default for deterministic assertions
+
+#### Results
+
+**Determinism**: 3× identical runs confirmed (Feb 10: P/L=-$39.66 with aggressive defaults, then switched to calibrated defaults)
+
+**Initial defaults (too aggressive):**
+| Metric | Value |
+|--------|-------|
+| 8-day P/L | -$980.64 |
+| Total Txn Cost | $1,263.66 |
+| Spread Cost | $429.37 |
+| Slippage Cost | $834.29 |
+Caused: Spread 2 bps, Slippage 1 bps, Vol multiplier 0.5, OV 3×
+
+**Calibrated defaults (shipped):**
+| Date | P/L | Trades | Spread | Slippage |
+|------|-----|--------|--------|----------|
+| Feb 09 | -$8.35 | 6 | $10.45 | $12.05 |
+| Feb 10 | $0.55 | 9 | $10.47 | $16.89 |
+| Feb 11 | $180.91 | 6 | $12.04 | $12.56 |
+| Feb 12 | $176.80 | 21 | $25.44 | $46.02 |
+| Feb 13 | $168.13 | 8 | $14.53 | $17.44 |
+| Feb 17 | $30.17 | 21 | $26.78 | $44.53 |
+| Feb 18 | $147.03 | 4 | $8.54 | $8.16 |
+| Feb 19 | -$234.80 | 21 | $27.58 | $57.85 |
+| **TOTAL** | **$460.44** | **96** | **$135.83** | **$215.50** |
+
+**Comparison:**
+| Metric | Old Broker (flat 1 bps) | New Broker (calibrated) | Delta |
+|--------|------------------------|------------------------|-------|
+| 8-day P/L | $627.15 | $460.44 | -$166.71 |
+| Total Txn Cost | ~$12 | $351.33 | +$339 |
+| 8-day Trades | 126 | 96 | -30 |
+
+**Observations:**
+- New broker absorbs ~$351 in realistic transaction costs, bringing replay closer to live trading fills
+- Trade count dropped from 126 to 96 — some borderline fills changed outcomes at slightly different prices
+- The OHLC-aware tick generation produces different intra-minute paths than the old Brownian bridge, which affects signal timing
+- Feb 12 and Feb 13 dramatically improved (was -$294/-$354 with aggressive defaults, now +$177/+$168 with calibrated)
+- Feb 19 remains the worst day at -$235 (was -$270 aggressive, -$197 old broker)
+- Default settings can be tuned per-sweep via `-config=` pattern with `SimulatedBroker` section overrides
+
+#### Files Modified
+- `qqqBot/HistoricalDataFetcher.cs` — OHLC columns in CSV output
+- `qqqBot/ReplayMarketDataSource.cs` — OHLC parsing, ABM-lite tick gen, volume distribution
+- `qqqBot/SimulatedBroker.cs` — phase-aware spread, vol slippage, cost tracking
+- `qqqBot/ProgramRefactored.cs` — SimulatedBroker config section wiring
+- `qqqBot/appsettings.json` — `SimulatedBroker` config section
+- `qqqBot.Tests/SimulatedBrokerTests.cs` — updated for new constructor signature
+
+---
+
+### Session: 2026-02-20 (Comprehensive SimBroker-Era Parameter Sweep)
+
+**Context**: After Feb 20 live loss of -$207.76 (OpEx Friday whipsaws), user requested comprehensive parameter sweep since the SimulatedBroker with realistic spread/slippage is fundamentally different from the old flat-fee broker.
+
+**Branch**: `tuning/small-dataset-v1` (from `feature/mean-reversion-ph`)
+
+**Infrastructure**: Created `sweep-comprehensive.ps1` — 6-round cascading sweep script with Quick mode (3 dates: Feb 11, 12, 20) and full mode (9 dates). Uses `-config=<absolute_path>` with temp JSON files.
+
+**Dataset**: 9 primary dates (Feb 9-13, 17-20), Feb 6 as out-of-sample.
+
+#### Pre-Sweep Baseline (8 dates, pre-SMA change)
+| Date | P/L | Trades | Spread | Slippage |
+|------|-----|--------|--------|----------|
+| Feb 09 | -$8.35 | 6 | $10.45 | $12.05 |
+| Feb 10 | -$3.15 | 9 | $10.47 | $17.10 |
+| Feb 11 | +$180.91 | 6 | $12.04 | $12.69 |
+| Feb 12 | +$186.57 | 19 | $23.44 | $42.58 |
+| Feb 13 | +$168.13 | 8 | $14.53 | $17.48 |
+| Feb 17 | -$38.70 | 23 | $28.68 | $52.82 |
+| Feb 18 | +$147.03 | 4 | $8.54 | $8.16 |
+| Feb 19 | -$158.01 | 21 | $22.69 | $42.63 |
+| Feb 20 | +$189.91 | 6 | $12.03 | $21.21 |
+| **TOTAL** | **+$664.34** | **102** | | |
+| Feb 06 (OOS) | -$36.63 | 6 | $8.46 | $9.62 |
+
+#### Whipsaw Diagnosis
+- **Feb 19** worst day (-$158.01): Base period generates 21 trades with $63 friction. Pure whipsaw.
+- **Feb 20** replay: +$189.91 vs -$207.76 live. OV captures all profit in 6 trades. Daily profit target stops trading, preventing catastrophic Base period (in isolation: -$617.88, 37 trades, $125 friction).
+- **DailyProfitTargetPercent=1.75%** is the single most important protective parameter.
+
+#### Sweep Results Summary
+
+| Round | Focus | Scenarios | Winner | Change |
+|-------|-------|-----------|--------|--------|
+| R1 | Signal Generation (SMA, Velocity, Chop, Trend) | 52 | **SMA=210** | +$16 on 9 days. **Baked.** |
+| R2 | Stops & DSL (TrailingStop, DSL tiers, Cooldown) | 25 | CURRENT | No change |
+| R3 | Exit Strategy (HoldNeutral, TrimRatio, Scalp/Trend wait) | 26 | CURRENT | No change |
+| R4 | Trimming & Drift (EnableTrimming, Drift params) | 40 | CURRENT | No change (DriftDisp=0.3% catastrophic) |
+| R5 | Daily Targets (ProfitTarget%, LossLimit, ReinvestPct) | 29 | CURRENT | No change (Target OFF = -$919) |
+| R6 | Phase Boundaries (OV end, PH start, phase overrides) | 48 | CURRENT | No change |
+
+**Total scenarios tested**: ~220 (Quick mode) + full 9-day validation for R1 winner
+
+#### Key Findings
+
+1. **The bot is remarkably well-tuned.** Only SMA 180→210 improved performance (+$16 = 2.4% improvement over 9 days, +$77 improvement on worst day Feb 19).
+
+2. **Catastrophic parameters to NEVER change:**
+   - DailyProfitTargetPercent OFF or ≥3%: -$919 (allows Base period whipsaw blowups)
+   - HoldNeutralIfUnderwater=false: -$553 on Feb 20
+   - DriftModeMinDisplacementPercent=0.3%: massive blowup
+   - OV_ChopThresholdPercent ≥0.002: -$866 to -$900 (too loose, admits bad signals)
+   - OV_End ≤10:00: -$453 to -$464 (OV too short, falls into Base period churn)
+   - OV_TrailingStop=0.3%: -$235 (too tight, stopped out prematurely)
+   - OV_SMA=60s or 180s: -$145 to -$652
+
+3. **Many parameters have zero effect** on these dates because the daily profit target stops trading before Base/PH phases activate (PH velocity, PH trend window, PH start time all identical to CURRENT).
+
+4. **OV_End=10:13 (current) is the precise optimal boundary.** Even 10:15 is slightly worse (-$10).
+
+#### Only Change Applied
+```
+SMAWindowSeconds: 180 → 210  (appsettings.json)
+```
+
+#### Final Post-Sweep Baseline
+- 9-day P/L: **+$664.34** (102 trades)
+- Feb 6 OOS: **-$36.63** (6 trades)
+
+#### Files Created/Modified
+- `qqqBot/sweep-comprehensive.ps1` — 6-round cascading sweep script (new)
+- `qqqBot/validate-r1.ps1` — R1 validation helper (new)
+- `qqqBot/appsettings.json` — SMAWindowSeconds 180→210
+- `qqqBot/sweep_configs/` — temporary sweep config files
+- `qqqBot/sweep_results/` — CSV result files per round
+
+---
+
+### Session: 2026-02-20 — Feb 20 Live vs Replay Discrepancy Analysis
+
+**Date**: 2026-02-20
+**Branch**: `tuning/small-dataset-v1`
+**Context**: Live bot lost -$207.76 on Feb 20 while replay of the same day shows +$189.91. Investigated root cause and seed-based testing feasibility.
+
+#### Live vs Replay Summary
+
+| Metric | Live | Replay |
+|--------|------|--------|
+| Final P/L | **-$207.76** | **+$189.91** |
+| Trades | ~40+ | 6 (3 round trips) |
+| Peak SessionPnL | +$142.75 | +$197.99 |
+| Daily Target Hit? | **NO** | YES (1.90%) |
+| SMA Setting | 180 | 210 |
+| First Entry Type | DRIFT (95 shares) | DRIFT (206 shares) |
+| First Trade Profit | +$57.00 | +$105.06 |
+| Trading Duration | 08:32 – 13:00 (4.5 hrs) | 08:32 – 10:01 (1.5 hrs) |
+
+#### Root Cause Analysis
+
+**Primary cause: Partial fill on first trade cascaded into full-day exposure.**
+
+1. **Partial Fill (the butterfly wing)**:
+   - Live bot submitted BUY 205 TQQQ at 08:32:12
+   - Order was canceled but 95 fills had already executed ("GHOST SHARES DETECTED: Canceled Buy order had 95 fills @ $48.31")
+   - Only 95/205 shares (46%) filled → first trade profit was +$57 instead of ~$105-123
+   - Replay's SimulatedBroker fills all 206 shares instantly → first trade profit +$105.06
+
+2. **Daily Target Never Triggered**:
+   - Replay: First trade (+$105) + second trade (+$2) + third trade (+$83) = +$189.91 → daily target (1.75%) triggered → bot stopped trading at 10:01 ET
+   - Live: First trade (+$57) left SessionPnL too low. Peaked at +$142.75 at 11:27 ET — **$32.25 short of the $175 threshold**
+   - If the first trade had fully filled (adding ~$48-66 more profit), the daily target likely would have triggered
+
+3. **Extended Whipsaw Exposure**:
+   - Without daily target protection, the live bot continued trading through the choppy Base period
+   - Key losses after peak: -$39.25 (11:30), -$61.65 (11:40), -$41.07 (11:56), -$40.84 (12:24), -$87.15 (12:31), -$71.47 (12:35)
+   - Final MR exit at 13:00 ET (-$23.98)
+   - The last 2 hours of trading (11:27-13:00) turned +$142.75 into -$207.76 = **-$350 swing**
+
+4. **SMA Setting Difference is Irrelevant**:
+   - Ran replay with SMA=180 (matching live config): **identical result +$189.91**
+   - Feb 20's first entry is DRIFT-based (displacement ≥0.2% from SMA), not velocity-based
+   - SMA window size doesn't affect drift entry timing on this day
+
+#### Seed Testing Investigation
+
+**Conclusion: Seeds have ZERO effect on recorded tick data.**
+
+- `ReplayMarketDataSource` accepts optional `int? replaySeed` (defaults to `DateOnly.DayNumber`)
+- Seed is ONLY used in `InterpolateWithBrownianBridge()` → `new Random(seed)` at line 242
+- For Feb 20's recorded data (avg tick gap ~3s), `IsHighResolutionData()` returns true → `skipInterpolation=true`
+- When `skipInterpolation=true`, raw ticks are used directly — `Random` is never instantiated
+- Different seeds would produce **byte-identical** replays
+- No `--seed` CLI parameter exists in `CommandLineOverrides.cs`
+
+**Added HIGH PRIORITY TODO**: `--seed` parameter that seeds `SimulatedBroker` for stochastic partial fills, fill latency, and slippage variance. This is the only way to simulate execution variance for high-res data. See TODO.md "Execution Variance Simulation".
+
+#### Live P/L Path (Full)
+
+```
+08:40  +$57.00   SessionPnL: $57.00    (DRIFT ENTRY, 95 shares partial fill)
+09:01  +$44.67   SessionPnL: $101.67
+09:01  +$0.55    SessionPnL: $102.22
+09:03  -$86.00   SessionPnL: $16.22    (BULL→BEAR regime switch)
+09:07  +$67.62   SessionPnL: $83.84
+09:13  -$5.18    SessionPnL: $78.66
+09:14  +$1.80    SessionPnL: $80.46
+09:15  +$13.16   SessionPnL: $93.62
+09:17  +$17.50   SessionPnL: $111.12
+09:17  -$54.99   SessionPnL: $56.13    (trailing stop whipsaw)
+09:27  +$1.75    SessionPnL: $57.88
+09:33  +$18.65   SessionPnL: $76.53
+09:36  -$9.00    SessionPnL: $67.53
+10:06  +$49.17   SessionPnL: $116.70
+10:11  +$8.10    SessionPnL: $124.80
+10:12  +$2.17    SessionPnL: $126.97
+10:12  +$3.77    SessionPnL: $130.74
+10:29  -$3.84    SessionPnL: $126.90
+10:32  -$59.60   SessionPnL: $67.30    (trailing stop, gives back gains)
+10:56  +$16.06   SessionPnL: $83.36
+10:58  +$2.45    SessionPnL: $85.81
+11:15  +$5.95    SessionPnL: $91.76
+11:15  +$10.88   SessionPnL: $102.64
+11:17  +$9.10    SessionPnL: $111.74
+11:20  +$2.52    SessionPnL: $114.26
+11:20  +$12.60   SessionPnL: $126.86
+11:25  +$9.31    SessionPnL: $136.17
+11:25  +$3.50    SessionPnL: $139.67
+11:27  +$3.08    SessionPnL: $142.75   ← PEAK (never reaches $175 target)
+11:30  -$39.25   SessionPnL: $103.50   ← DECLINE BEGINS
+11:40  -$61.65   SessionPnL: $41.85
+11:56  -$41.07   SessionPnL: $0.78
+12:20  +$15.30   SessionPnL: $16.08
+12:21  +$2.55    SessionPnL: $18.63
+12:23  -$4.41    SessionPnL: $14.22
+12:24  -$40.84   SessionPnL: $-26.62   ← TURNS NEGATIVE
+12:31  -$87.15   SessionPnL: $-113.77
+12:35  -$71.47   SessionPnL: $-185.24
+12:35  +$12.80   SessionPnL: $-172.44
+12:36  -$3.42    SessionPnL: $-175.86
+12:36  -$7.08    SessionPnL: $-182.94
+13:00  -$23.98   SessionPnL: $-206.92  (MR exit, final trade)
+```
+
+#### Replay P/L Path
+
+```
+08:40  +$105.06  SessionPnL: $105.06   (DRIFT ENTRY, 206 shares FULL fill)
+09:01  +$2.03    SessionPnL: $107.09
+09:01  +$82.82   SessionPnL: $189.91   ← DAILY TARGET HIT (1.90%)
+                  Bot goes NEUTRAL/CASH for rest of day
+```
+
+#### Key Insight
+
+The daily profit target is the bot's most critical protective mechanism. When the first trade's profit is large enough to push SessionPnL toward the target quickly, the bot stops early and preserves gains. When execution issues (partial fills) reduce early profits, the bot keeps trading and is exposed to the full day's whipsaw — which reliably destroys capital in the Base period.
+
+**The $400 gap was caused by ~$48 in missing first-trade profit** (from partial fill) that kept the daily target from triggering 5 hours earlier.
+
+#### Actionable Items
+
+1. **Deploy SMA=210 to live** — The sweep-optimized value needs to be merged from `tuning/small-dataset-v1` to the production branch and deployed
+2. **Implement `--seed` for stochastic SimulatedBroker** — Monte Carlo testing to quantify execution sensitivity (HIGH PRIORITY TODO added)
+3. **Consider SimulatedBroker partial fill simulation** — The "fill latency + stochastic fill failure" TODO (already in TODO.md) directly addresses this gap
+4. **Monitor live partial fills** — Track frequency and impact of ghost share events to understand how often this failure mode occurs
+
+#### Files Modified
+- `TODO.md` — Added "Execution Variance Simulation" section (HIGH PRIORITY)
+- `EXPERIMENTS.md` — This session log
+
+---
+
+## Session: 2026-02-21 — Inactivity Alerts + Stochastic Execution Simulation
+
+### Context
+
+Two high-priority issues from live trading analysis (Feb 12-20, 6 trading days):
+
+1. **Feb 18 signal loss incident**: Bot lost signal at 09:31 ET after 2 order timeouts, then sat in CASH for **4 hours 11 minutes** (09:31–13:42 ET) generating ~1,835 identical INFO-level status lines with **zero escalation**. No WARN, no heartbeat, no inactivity detection. The bot's console output was indistinguishable from normal operation.
+
+2. **SimulatedBroker has ZERO randomness**: No `Random`, no RNG, no stochastic effects whatsoever. All fills are instant and full. This makes the entire `ProcessPendingOrderAsync` → timeout → cancel → reconcile pathway **dead code** in replay. The Feb 20 live-vs-replay gap ($400) proved that a single partial fill can cascade catastrophically.
+
+### Live Fill Difficulty Data (6 Trading Days)
+
+| Date | 1st Order (ET) | 1st Fill | Delay | Attempts | Result | Shares |
+|------|----------------|----------|-------|----------|--------|--------|
+| Feb 12 | 09:44:13 | 09:44:19 | 6s | 1 | Clean | 145→145 |
+| Feb 13 | 09:30:32 | 09:35:30 | 4m 58s | 2 | 1 timeout → clean | 135→135 |
+| Feb 17 | 09:31:03 | 09:37:35 | 6m 32s | 5 | 4 timeouts → clean | 134→206 |
+| Feb 18 | 09:30:17 | 13:42:57 | 4h 12m | 3 | 2 timeouts → 4h gap | 137→141 |
+| Feb 19 | 09:35:42 | 09:35:46 | 4s | 1 | Clean | 137→137 |
+| Feb 20 | 09:32:12 | 09:32:26 | 14s | 1 | Partial fill (ghost) | 205→95 |
+
+**Ghost share events**: Feb 19 (21+2 IOC ghost fills), Feb 20 (95 partial fill cascade).
+**Fill difficulty at open**: 4/5 days with OV orders had timeouts in 09:30-09:37 window.
+
+### Implementation
+
+#### A. Escalating Inactivity Alerts (TraderEngine.cs)
+
+**Problem**: `LogStatusAsync` fires every 5s at INFO level with no inactivity detection.
+
+**Solution**: Three-tier escalating system in `LogStatusAsync`:
+- **15 min** CASH (no fills): `LogWarning("[INACTIVITY]")` — appends `| IDLE {N}m` to status line
+- **30 min** CASH: `LogWarning("[EXTENDED INACTIVITY]")` — adds diagnostic reason via `GetInactivityReason()`
+- **60 min** CASH: `LogError("[CRITICAL INACTIVITY]")` — repeats every 5 min until resolved
+
+`GetInactivityReason()` diagnoses: "chop band" / "velocity below threshold" / "buy cooldown" / "halted" / "unknown"
+
+Correctly excludes ProfitTarget and LossLimit halts from triggering alerts.
+
+Settings (configurable in `appsettings.json`):
+- `InactivityWarnMinutes: 15`
+- `InactivityAlertMinutes: 30`
+- `InactivityCriticalMinutes: 60`
+- `InactivityAlertRepeatMinutes: 5`
+
+#### B. Cooldown WARN Spam Throttle
+
+**Problem**: `IsBuyCooldownActive` logged `LogWarning` on EVERY tick during cooldown (25-55 identical lines per cooldown period).
+
+**Solution**: `_buyCooldownLoggedStart` flag — log once at cooldown start, once at expiry. Reduced log noise by ~50x per cooldown event.
+
+#### C. Stochastic Execution Simulation (SimulatedBroker.cs)
+
+**Problem**: `SimulatedBroker` had zero `Random`, zero RNG. All fills instant and full. Replay could not exercise timeout/cancel/reconcile code paths.
+
+**Solution**:
+1. **Seeded RNG**: `new Random(seed)` in constructor. Default seed = `replayDate.DayNumber` (deterministic per day).
+2. **`--seed=<int>` CLI**: Set via `CommandLineOverrides`, passed through `ProgramRefactored` to `SimulatedBroker`.
+3. **Stochastic slippage**: `totalSlippage *= (1.0 + (rng.NextDouble() - 0.5) × SlippageVarianceFactor)`. Default factor: 0.5 (±25%).
+4. **Alpaca Auction mode**: During configurable auction window (default 09:30-09:37 ET):
+   - Roll 1: `TimeoutProbability: 0.6` → return `BotOrderStatus.New` (TraderEngine times out → cancel → cooldown)
+   - Roll 2: `PartialFillProbability: 0.4` → partial fill with ratio ≥ `MinFillRatio: 0.3`
+   - Otherwise: full fill (lucky)
+5. `CancelOrderAsync` upgraded from no-op to properly handle pending/partial orders
+6. Auction stats in replay summary
+
+**Config** (`appsettings.json` → `SimulatedBroker` section):
+```json
+"SlippageVarianceFactor": 0.5,
+"AuctionMode": {
+  "Enabled": false,
+  "WindowMinutes": 7,
+  "TimeoutProbability": 0.6,
+  "PartialFillProbability": 0.4,
+  "MinFillRatio": 0.3
+}
+```
+
+### Files Modified
+
+**MarketBlocks repo** (`feature/mean-reversion-ph` branch):
+- `MarketBlocks.Bots/Domain/TradingSettings.cs` — Added 4 inactivity alert settings
+- `MarketBlocks.Bots/Services/TraderEngine.cs` — Inactivity alerts in `LogStatusAsync`, `GetInactivityReason()` helper, `_lastTradeCompletedUtc` tracking at 3 fill points, cooldown spam throttle in `IsBuyCooldownActive`/`ResetBuyCooldown`
+
+**qqqBot repo** (`tuning/small-dataset-v1` branch):
+- `qqqBot/TradingSettings.cs` — Added 4 inactivity alert settings (sync with MarketBlocks)
+- `qqqBot/SimulatedBroker.cs` — Added `Random _rng` + seed, stochastic slippage variance, Alpaca Auction mode (timeout, partial fill, stats), upgraded `CancelOrderAsync`, `IsInAuctionWindow()` helper, updated `PrintSummary`
+- `qqqBot/CommandLineOverrides.cs` — Added `--seed=<int>` CLI parameter
+- `qqqBot/ProgramRefactored.cs` — Wired seed (CLI → config → date default) to SimulatedBroker, added auction mode config loading, added inactivity settings to `BuildTradingSettings`
+- `qqqBot/appsettings.json` — Added inactivity settings, `SlippageVarianceFactor`, `AuctionMode` section
+- `TODO.md` — Marked seed + fill latency TODOs done, added "Signal Loss" and "DevOps" sections
+- `EXPERIMENTS.md` — This session log

@@ -205,6 +205,42 @@
   - Should interact properly with existing `DailyProfitTarget` (daily takes precedence)
   - Key challenge: unrealized P/L tracking requires equity watermark per phase, not just realized
 
+## Mean Reversion Strategy (Implemented, Dormant)
+
+- [x] **Implement MR infrastructure for choppy session PH trading**
+  **DONE (2026-02-16)**: Full MR pipeline implemented across MarketBlocks + qqqBot. StrategyMode enum, BB/CHOP indicators, MR_LONG/MR_SHORT/MR_FLAT signals, %B configurable thresholds, candle-based BB feeding. All dormant by default. See EXPERIMENTS.md "Session: 2026-02-16" for full details.
+
+- [x] **Fix cascading re-entry after MR hard stop**
+  **DONE (2026-02-17)**: Added `_mrHardStopCooldown` flag to TraderEngine. After hard stop, MR entry signals are ignored until MR_FLAT resets the cycle. Impact: Config A Feb 12 went from 161 trades/-$2,551 to 13 trades/-$132.
+
+- [x] **Fix trailing stop and trim interference with MR**
+  **DONE (2026-02-17)**: Gated trailing stop and trim logic on `regime.ActiveStrategy != StrategyMode.MeanReversion`. MR uses its own exit (%B midline) and loss protection (hard stop). Minimal P/L impact but structurally correct.
+
+- [x] **Comprehensive MR parameter sweep (14+ configs)**
+  **DONE (2026-02-17)**: Tested BB windows 20/30/60, multipliers 2.0/2.5/3.0, entries 0.1-0.2, stops 0/0.3/0.5/0.9%, exits 0.4/0.5, PH-cold and full-day pre-warmed modes. **Every configuration loses money.** Best PH-only: -$441 (BB20,3.0). Best full-day MR contribution: -$147 (BB60,3.0). Root cause: BB bandwidth on 1-min candles ($5-20 profit potential) is smaller than round-trip execution costs (~$16 IOC slippage). See EXPERIMENTS.md for full results table.
+
+- [x] **Implement Research AI recommendations (5-min candles + RSI + ATR stops)**
+  **DONE (2026-02-19)**: Added StreamingRSI (Wilder's smoothing), ATR-based dynamic stops on QQQ benchmark, RSI(14) entry confirmation filter (oversold<30, overbought>70), 5-min candle aggregation for all MR indicators. 5 new settings, 10 files changed. Sweep R-V (5 configs × 5 dates): Best MR contribution = -$14.21 (90%+ improvement vs A-Q sweep). RSI filter validated as critical (saves $136 in losses). MR fires extremely rarely on 5-min candles — only 2 of 5 days show any activity. **Still net negative — MR remains dormant.** See EXPERIMENTS.md "Session: 2026-02-19".
+
+- [x] **PH Resume + MR investigation**
+  **DONE (2026-02-19)**: Tested Config W (PH Resume + MR) vs Config X (PH Resume + Trend) on target-fire days (Feb 11-13). **PH Resume + Trend is catastrophic** (-$189 vs no resume). **PH Resume + MR is net positive** (+$16.64). MR advantage over Trend in PH: $206. MR is the only safe strategy for PH Resume. See EXPERIMENTS.md "Session: PH Resume + MR Investigation".
+
+- [x] **Test Research AI parameter tuning recommendations**
+  **DONE (2026-02-16)**: Tested BB(10), mult 1.5/1.8, RSI 35/65 in 5 configs (Y/Z/AA/AB) × 5 dates = 25 runs. **Every recommendation lost money vs Config W**: Y=-$22, Z/AA=-$244, AB=-$206. RSI relaxation (35/65) is the primary destructive factor — enters on premature reversals that haven't bottomed. BB multiplier change (1.5 vs 1.8) has literally zero impact. BB window shrink (20→10) marginally hurts. **Config W (conservative BB20, RSI 30/70, PH Resume) confirmed as best.** See EXPERIMENTS.md "Session: Research AI Tuning Recommendations Sweep".
+
+- [x] **Fix CHOP override phase-awareness**
+  ~~CHOP override currently applies globally across all phases. When enabled, it overrides BaseDefaultStrategy during Base phase, destroying good Trend performance. Should only override within the designated phase (e.g., only override during PH when PhDefaultStrategy=MR). Fix in `AnalystEngine.DetermineStrategyMode()`.~~
+  **DONE (2026-02-19 Part 4)**: CHOP override already restricted to PH-only (Part 3). Part 4 added Schmitt trigger hysteresis (enter at CHOP<25, stay until CHOP>45) via `ChopTrendExitThreshold` setting + `_trendRescueActive` state field. Prevents mode-switching flickering. Currently dormant — CHOP never drops below 25 during PH in 8-day dataset. Infrastructure ready for activation.
+
+- [x] **Separate BB candle interval from CHOP** *(prerequisite for viable MR)*
+  **DONE (2026-02-19)**: `ChopCandleSeconds` now controls aggregation for BB, CHOP, ATR, and RSI together (all share same 5-min candle). Tested in sweep R-V. The wider bands did solve the bandwidth-vs-execution-cost problem, but 5-min candles produce too few signals (BB %B rarely reaches 0.1/0.9 extremes).
+
+- [ ] **Reduce MR execution costs**
+  Use market/limit orders instead of IOC for MR entries/exits — MR doesn't need latency-sensitive execution. Or add a BB bandwidth filter (only trade when bandwidth > minimum threshold ensuring profit > cost).
+
+- [ ] **MR + trend slope confirmation**
+  Require both BB %B entry signal AND short-term slope alignment (e.g., MR_LONG only when slope is turning up) to reduce counter-trend entries.
+
   **Key data from analysis**:
   | Day | OV P/L | OV Peak | Base P/L | Full Day | Opportunity |
   |-----|--------|---------|----------|----------|-------------|
@@ -213,3 +249,138 @@
   | Feb 11 | +$47 | +$56 | +$150 | +$162 | $0 (full day better) |
   | Feb 12 | +$74 | +$81 | +$135 | +$127 | $0 (full day better) |
   | Feb 13 | +$179 | +$182 | -$156 | +$179 | $0 (daily target saved it) |
+
+## Bidirectional Mean Reversion (Research)
+
+- [ ] **Explore bidirectional MR: trade momentum toward BB extremes, not just contrarian**
+  Current MR is contrarian-only: MR_LONG at low %B (oversold), MR_SHORT at high %B (overbought). Alternative approach: trade *with* momentum toward BB extremes (SQQQ while dropping toward lower band, TQQQ on bounce from lower band). This would capture the directional move rather than bet on reversal. MR_SHORT already exists and works (BullOnlyMode=false by default). Research on a separate branch (`feature/bidirectional-mr`). Key questions:
+  - Does entering with momentum reduce counter-trend risk?
+  - Can slope direction + BB %B gradient identify "approaching extreme" entries?
+  - How does this interact with the existing MR exit (%B midline)?
+  - Does this produce positive expectancy on Feb 9-13 replay data?
+
+## Broker Timeout During OV (2026-02-18)
+
+- [x] **FIX: Market orders timing out during OV opening**
+  **FIXED (2026-02-20)**: Feb 17 and Feb 18 both showed identical pattern: plain Market/Day orders placed in the first ~30-60s of OV sat in `Accepted` state for >10s and timed out (`PendingOrderTimeoutSeconds=10`). Root cause: OV config had `UseMarketableLimits=false, UseIocOrders=false`, forcing plain Market orders that Alpaca's opening auction can hold. Fix: changed OV TimeRule overrides to `UseMarketableLimits=true, UseIocOrders=true` (same as Base phase). IOC orders have explicit fill-or-kill semantics that work better during volatile opens.
+
+## Bugs Found (2026-02-20)
+
+- [x] **FIX: TrendRescue deadlock in DetermineSignal()**
+  **FIXED (2026-02-20)**: v7 combined fix with maintenance velocity floor + 5x confirmation + 0.5% wider stop (no ratchet) for trendRescue positions. Feb 17 improved from -$22 to +$8. Zero regression on Feb 9-13. See EXPERIMENTS.md "Session: Combined TrendRescue + Wider Stop Fix".
+
+- [ ] **FIX: `--override` CLI flag silently ignored**
+  `CommandLineOverrides.cs` has no handler for `--override KEY=VALUE`. All parameter sweeps using this flag produced identical results because overrides were never applied. Need to add generic override handling or document the correct alternative (alternate appsettings files can already be passed on the command line).
+
+## Trailing Stop Adaptation (2026-02-20)
+
+- [x] **Investigate trailing stop behavior during gradual/trendRescue trends**
+  **FIXED (2026-02-20)**: Added `TrendRescueTrailingStopPercent` setting (Base: 0.005 = 0.5%). TrendRescue positions use this wider stop with DynamicStopLoss ratchet skipped. Prevents churn cycle on gradual uptrends. See EXPERIMENTS.md v7 results.
+
+- [ ] **Add CycleTracker toggle setting**
+  CycleTracker audited 2026-02-20: clean, single influence point with mandatory logging. Not a priority.
+
+## Execution Variance Simulation (HIGH PRIORITY)
+
+- [x] **Add `--seed` CLI parameter for stochastic fill simulation**
+  **Context (2026-02-20)**: Feb 20 live lost -$207.76 vs replay +$189.91. Root cause: partial fill on first trade (95/205 shares filled before cancel = "ghost shares"). This halved the first trade's profit ($57 vs $105), preventing the daily target from triggering, which left the bot exposed to 40+ whipsaw trades through the base period. The replay's `SimulatedBroker` fills every order instantly and fully — it cannot reproduce partial fills, latency, or stochastic execution variance.
+
+  **DONE (2026-02-21)**: Full implementation of stochastic execution simulation:
+  1. `--seed=<int>` CLI parameter in `CommandLineOverrides.cs`. Default seed = `replayDate.DayNumber` (deterministic per day).
+  2. Seeded `Random` in `SimulatedBroker` — all stochastic effects are reproducible per seed.
+  3. **Stochastic slippage variance**: `totalSlippage *= (1 + rng.NextDouble() - 0.5) × factor`. Default `SlippageVarianceFactor: 0.5` (±25%).
+  4. **Alpaca Auction mode**: Simulates opening fill difficulty during 09:30-09:37 ET:
+     - `TimeoutProbability: 0.6` — order returns `New` (TraderEngine times out after 10s → cancel → cooldown)
+     - `PartialFillProbability: 0.4` — partial fill with random ratio ≥ `MinFillRatio: 0.3`
+     - Exercises the full `ProcessPendingOrderAsync` → `ReconcileCanceledOrderAsync` pathway
+  5. `SimulatedBroker.CancelOrderAsync` now handles pending/partial orders (was no-op before)
+  6. Auction mode stats reported in replay summary
+  7. Config: `SimulatedBroker:AuctionMode:*` section in `appsettings.json` (disabled by default)
+  8. Multiple seeds = Monte Carlo-style confidence intervals on any day's replay
+
+## SimulatedBroker Realism (2026-02-17)
+
+- [x] **SimulatedBroker: Phase-aware spread + volatility-scaled slippage**
+  **DONE (2026-02-19)**: Replaced flat 1 bps slippage with realistic transaction cost model:
+  - Synthetic bid/ask spread (base 1.0 bps, OV ×2.0, PH ×1.25)
+  - Base slippage (0.5 bps) + volatility-scaled slippage (0.15 × rolling σ)
+  - Cumulative cost tracking in replay summary
+  - Separate `SimulatedBroker` config section in appsettings.json
+  - 8-day P/L: $627.15 → $460.44 (realistic friction absorbs ~$351)
+  - All 63 tests passing
+
+- [x] **SimulatedBroker: Add fill latency + stochastic fill failure**
+  ~~Current `SimulatedBroker.SubmitOrderAsync` fills every order instantly. This makes the entire `ProcessPendingOrderAsync` pathway (10s timeout, cancel, reconcile, buy cooldown backoff) dead code in replay.~~
+  **DONE (2026-02-21)**: Implemented as part of Alpaca Auction mode. During configurable auction window (default 09:30-09:37 ET), orders have configurable probability of returning `New` (timeout) or `PartiallyFilled`. `CancelOrderAsync` properly handles pending/partial orders. See "Execution Variance Simulation" section above.
+
+## Drift Mode & Displacement Re-Entry (2026-02-18)
+
+- [x] **Implement Drift Mode (velocity-independent entry)**
+  **DONE (2026-02-18)**: Added TimeInZone counter for sustained price-above/below-SMA entry. Requires BOTH duration (60 ticks) AND magnitude (≥0.2% displacement from SMA). Per-direction one-shot prevents cycling. Sticky `_isDriftEntry` hold bypasses velocity exit. Settings: `DriftModeEnabled`, `DriftModeConsecutiveTicks`, `DriftModeMinDisplacementPercent`. 7-day result: +$272 improvement (+$531→+$803), Feb 18 fix: -$88→+$157.
+
+- [x] **Implement Displacement Re-Entry (infrastructure)**
+  **DONE (2026-02-18)**: Infrastructure built and plumbed. Records `_lastNeutralTransitionPrice` when directional signal exits to NEUTRAL. Can re-enter when price displaces ≥`DisplacementReentryPercent` from that price. **Left disabled** (`DisplacementReentryEnabled: false`) — caused regressions in testing.
+  **UPGRADED (2026-02-19)**: Regime-validated displacement re-entry using price-derived conviction proxies (no volume needed). ATR-based displacement threshold + dual regime gates (CHOP < 40 trending OR BBW > SMA(BBW) volatility expanding). One-shot per phase prevents cascading. Indicators-required during warmup. **Enabled** — 7-day result: $823.64 → $827.52 (+$4). Safe: harmless on 6/7 days, +$3.88 on Feb 9.
+
+- [x] **Remove noisy slope override from DetermineSignal**
+  **DONE (2026-02-18)**: Deleted the `_shortTrendSlope` override block that forced `isBullTrend`/`isBearTrend` during warmup. Was proven harmful in adaptive trend experiments.
+
+- [x] **ATR-dynamic drift threshold + drift trailing stop**
+  **DONE (2026-02-18)**: Two enhancements to Drift Mode:
+  1. **ATR threshold**: `max(fixed, K × ATR / price)` — ATR raises displacement bar in high-vol, never lowers below 0.2% floor. Neutral on current data (ATR always below fixed). Setting: `DriftModeAtrMultiplier: 1.0`.
+  2. **Drift trailing stop**: Wider stop for drift entries (like TrendRescue pattern). Swept 0.25%-0.8%, optimum at **0.35%**. Net +$20 improvement ($803→$824). Setting: `DriftTrailingStopPercent: 0.0035`.
+  Also fixed: BEAR entry setup was missing TrendRescue handling. 10 files changed across both repos. See EXPERIMENTS.md.
+
+- [ ] **Tune Drift Mode thresholds further**
+  Current defaults (60 ticks, 0.2% displacement, 0.35% drift stop) are sweep-validated across 7 days. Only 2 of 7 days are affected by drift stop changes — monitor on future data for overfitting.
+  Consider: different thresholds per phase (OV vs Base), shorter tick window with higher displacement requirement.
+
+- [ ] **TrimRatio weekly re-optimization**
+  Current TrimRatio=0.75 was set during Feb 14 sweep. User saw 102/136 shares trimmed (75%) on Feb 19. Keep at 0.75 until next full tuning round. Evaluate with expanded dataset (10+ days) whether 0.5 or 0.33 produces better results.
+
+## Comprehensive SimBroker-Era Sweep (2026-02-20)
+
+- [x] **Full 6-round parameter sweep with realistic SimBroker**
+  **DONE (2026-02-20)**: Created `sweep-comprehensive.ps1` (6-round cascading sweep). Tested ~220 scenarios across 9 primary dates (Feb 9-13, 17-20) + Feb 6 OOS. Branch: `tuning/small-dataset-v1`.
+  - **R1 Signal Generation**: SMA=210 wins (+$16 on 9 days). **Baked into appsettings.json.**
+  - **R2 Stops & DSL**: CURRENT optimal. No changes.
+  - **R3 Exit Strategy**: CURRENT optimal. HoldNeutral=false catastrophic (-$553).
+  - **R4 Trimming & Drift**: CURRENT optimal. DriftDisp=0.3% catastrophic.
+  - **R5 Daily Targets**: CURRENT optimal. DailyTarget OFF = -$919 blowup.
+  - **R6 Phase Boundaries**: CURRENT optimal. OV_End≤10:00 catastrophic.
+  - **Result**: Only SMA 180→210 improved. Bot is remarkably well-tuned already.
+  - **Final 9-day P/L**: +$664.34 (102 trades). Feb 6 OOS: -$36.63.
+
+- [x] **Evaluate Displacement Re-Entry with CVD gating**
+  ~~Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).~~
+  **SUPERSEDED (2026-02-19)**: Implemented price-derived regime validation (CHOP + BBW) instead of volume-based CVD. Works without Tradier migration. CVD remains a future enhancement if/when Tradier streaming is active.
+
+## Signal Loss / Inactivity Monitoring (2026-02-21)
+
+- [x] **Implement escalating inactivity alerts in TraderEngine**
+  **Context (2026-02-21)**: Feb 18 live revealed a 4h 11m gap (09:31–13:42 ET) where the bot was in CASH with zero trades, generating ~1,835 identical INFO-level status lines with zero escalation. Two order timeouts at 09:30 → signal flipped to NEUTRAL → bot sat silently for the entire base period.
+  **DONE (2026-02-21)**: Three-level escalating alert system in `LogStatusAsync`:
+  - 15 min CASH: `LogWarning("[INACTIVITY]")` — first warning, appends `| IDLE {N}m` to status line
+  - 30 min CASH: `LogWarning("[EXTENDED INACTIVITY]")` — adds diagnostic reason (chop band, velocity, cooldown, halted)
+  - 60 min CASH: `LogError("[CRITICAL INACTIVITY]")` — repeats every 5 min until resolved
+  - Correctly excludes ProfitTarget/LossLimit halts from alerting
+  - `GetInactivityReason()` helper diagnoses root cause
+  - Settings: `InactivityWarnMinutes`, `InactivityAlertMinutes`, `InactivityCriticalMinutes`, `InactivityAlertRepeatMinutes`
+  - Files: TradingSettings.cs (both repos), TraderEngine.cs, ProgramRefactored.cs, appsettings.json
+
+- [x] **Throttle cooldown WARN spam**
+  **DONE (2026-02-21)**: `IsBuyCooldownActive` now logs once at cooldown start + once at expiry instead of every tick (was 25-55 identical `LogWarning` lines per cooldown period). Uses `_buyCooldownLoggedStart` flag.
+
+## DevOps / Infrastructure
+
+- [ ] **Console output differentiation for actionable events**
+  Currently live bot console output is a wall of identical status lines with no visual hierarchy. Actionable events (trades, errors, alerts) get buried. Options:
+  - Color-coded console output (ANSI escape codes for WARN/ERROR)
+  - Summary line every N minutes with trade count, P/L, signal history
+  - Desktop/push notification for CRITICAL inactivity or large losses
+
+- [ ] **Automated daily replay regression suite**
+  Run replay across all available dates after each code change to catch regressions early. Output: date, P/L, trade count, delta from baseline. Could be a PS1 script that diffs against a known-good baseline.
+
+- [ ] **Monte Carlo sweep infrastructure**
+  Extend sweep scripts to run each date × N seeds with auction mode enabled. Generate P/L distributions and confidence intervals rather than single-point estimates. Requires `--seed` CLI (now implemented).

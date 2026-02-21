@@ -10,8 +10,21 @@ namespace qqqBot.Tests;
 /// </summary>
 public class SimulatedBrokerTests
 {
-    private static SimulatedBroker CreateBroker(decimal initialCash = 30_000m, decimal slippagePercent = 0.0001m)
-        => new(NullLogger.Instance, initialCash, slippagePercent);
+    private static SimulatedBroker CreateBroker(
+        decimal initialCash = 30_000m,
+        decimal slippageBps = 0m,
+        decimal spreadBps = 0m,
+        bool volatilitySlippageEnabled = false)
+        => new(NullLogger.Instance, initialCash,
+            slippageBps: slippageBps,
+            spreadBps: spreadBps,
+            ovSpreadMultiplier: 1.0m,
+            phSpreadMultiplier: 1.0m,
+            volatilitySlippageEnabled: volatilitySlippageEnabled,
+            volSlippageMultiplier: 0m,
+            volWindowTicks: 60,
+            seed: 0,
+            slippageVarianceFactor: 0);
 
     // ───────────────────────── Buy Order Tests ─────────────────────────
 
@@ -21,7 +34,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task BuyOrder_DeductsCash_AndCreatesPosition()
     {
-        var broker = CreateBroker(initialCash: 10_000m, slippagePercent: 0m);
+        var broker = CreateBroker(initialCash: 10_000m);
         broker.UpdatePrice("TQQQ", 100m);
 
         var order = await broker.SubmitOrderAsync(
@@ -49,7 +62,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task BuyOrder_AppliesSlippageUpward()
     {
-        var broker = CreateBroker(initialCash: 50_000m, slippagePercent: 0.0001m);
+        var broker = CreateBroker(initialCash: 50_000m, slippageBps: 1m);
         broker.UpdatePrice("QQQ", 500m);
 
         var order = await broker.SubmitOrderAsync(
@@ -66,7 +79,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task BuyOrder_InsufficientFunds_IsRejected()
     {
-        var broker = CreateBroker(initialCash: 1_000m, slippagePercent: 0m);
+        var broker = CreateBroker(initialCash: 1_000m);
         broker.UpdatePrice("TQQQ", 100m);
 
         // Trying to buy 100 shares @ $100 = $10,000, but only have $1,000
@@ -105,7 +118,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task SellOrder_RealizesProfit_AndRemovesPosition()
     {
-        var broker = CreateBroker(initialCash: 10_000m, slippagePercent: 0m);
+        var broker = CreateBroker(initialCash: 10_000m);
         broker.UpdatePrice("TQQQ", 50m);
 
         // Buy 100 shares @ $50 → cash = 10000 - 5000 = 5000
@@ -136,7 +149,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task SellOrder_AppliesSlippageDownward()
     {
-        var broker = CreateBroker(initialCash: 50_000m, slippagePercent: 0.001m); // 0.1%
+        var broker = CreateBroker(initialCash: 50_000m, slippageBps: 10m); // 10 bps = 0.1%
         broker.UpdatePrice("QQQ", 500m);
 
         await broker.SubmitOrderAsync(BotOrderRequest.MarketBuy("QQQ", 10), CancellationToken.None);
@@ -144,7 +157,7 @@ public class SimulatedBrokerTests
         var sell = await broker.SubmitOrderAsync(
             BotOrderRequest.MarketSell("QQQ", 10), CancellationToken.None);
 
-        // Sell slippage: 500 - (500 * 0.001) = 500 - 0.50 = 499.50
+        // Sell slippage: 500 - (500 * 10/10000) = 500 - 0.50 = 499.50
         Assert.Equal(499.50m, sell.AverageFillPrice);
     }
 
@@ -157,7 +170,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task MultipleBuys_AverageEntryPriceIsWeightedCorrectly()
     {
-        var broker = CreateBroker(initialCash: 50_000m, slippagePercent: 0m);
+        var broker = CreateBroker(initialCash: 50_000m);
 
         broker.UpdatePrice("TQQQ", 100m);
         await broker.SubmitOrderAsync(BotOrderRequest.MarketBuy("TQQQ", 50), CancellationToken.None);
@@ -177,7 +190,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task PartialSell_ReducesPosition_KeepsAverage()
     {
-        var broker = CreateBroker(initialCash: 50_000m, slippagePercent: 0m);
+        var broker = CreateBroker(initialCash: 50_000m);
         broker.UpdatePrice("TQQQ", 100m);
 
         await broker.SubmitOrderAsync(BotOrderRequest.MarketBuy("TQQQ", 100), CancellationToken.None);
@@ -199,7 +212,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task MultiSymbol_PositionsAreIndependent()
     {
-        var broker = CreateBroker(initialCash: 100_000m, slippagePercent: 0m);
+        var broker = CreateBroker(initialCash: 100_000m);
         broker.UpdatePrice("TQQQ", 50m);
         broker.UpdatePrice("SQQQ", 30m);
 
@@ -287,7 +300,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task GetOrder_ReturnsSubmittedOrder()
     {
-        var broker = CreateBroker(slippagePercent: 0m);
+        var broker = CreateBroker();
         broker.UpdatePrice("TQQQ", 100m);
 
         var submitted = await broker.SubmitOrderAsync(
@@ -317,14 +330,14 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task LimitOrder_UsesLimitPriceForSlippageBase()
     {
-        var broker = CreateBroker(initialCash: 50_000m, slippagePercent: 0.001m); // 0.1%
+        var broker = CreateBroker(initialCash: 50_000m, slippageBps: 10m); // 10 bps = 0.1%
         broker.UpdatePrice("QQQ", 500m);
 
         // Limit buy at $495 — slippage applies to $495 not $500
         var order = await broker.SubmitOrderAsync(
             BotOrderRequest.LimitBuy("QQQ", 10, 495m), CancellationToken.None);
 
-        // Fill = 495 + (495 * 0.001) = 495 + 0.495 = 495.50 (rounded)
+        // Fill = 495 + (495 * 10/10000) = 495 + 0.495 = 495.50 (rounded)
         Assert.Equal(495.50m, order.AverageFillPrice);
     }
 
@@ -347,7 +360,7 @@ public class SimulatedBrokerTests
     [Fact]
     public async Task Position_ReflectsLatestMarketValue()
     {
-        var broker = CreateBroker(initialCash: 50_000m, slippagePercent: 0m);
+        var broker = CreateBroker(initialCash: 50_000m);
         broker.UpdatePrice("TQQQ", 100m);
         await broker.SubmitOrderAsync(BotOrderRequest.MarketBuy("TQQQ", 100), CancellationToken.None);
 

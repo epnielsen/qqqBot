@@ -29,6 +29,8 @@ public class CommandLineOverrides
     // Segment replay: restrict replay to a time window (Eastern)
     public TimeOnly? StartTime { get; set; }    // --start-time=10:00
     public TimeOnly? EndTime { get; set; }      // --end-time=11:30
+    // Replay RNG seed for SimulatedBroker stochastic fills
+    public int? Seed { get; set; }              // --seed=42
     
     public static CommandLineOverrides? Parse(string[] args)
     {
@@ -205,6 +207,19 @@ public class CommandLineOverrides
                 else
                 {
                     Console.Error.WriteLine($"[ERROR] --end-time must be HH:mm format (Eastern). Got: {value}");
+                    return null;
+                }
+            }
+            else if (arg.StartsWith("--seed=", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg.Substring("--seed=".Length).Trim();
+                if (int.TryParse(value, out var seed))
+                {
+                    overrides.Seed = seed;
+                }
+                else
+                {
+                    Console.Error.WriteLine($"[ERROR] --seed must be an integer. Got: {value}");
                     return null;
                 }
             }

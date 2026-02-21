@@ -1,0 +1,182 @@
+{
+  "TradingBot": {
+    "BotId": "main",
+    "LogDirectory": "C:\\dev\\TradeEcosystem\\logs\\qqqbot",
+    "MarketDataDirectory": "C:\\dev\\TradeEcosystem\\data\\market",
+    "PollingIntervalSeconds": 1,
+    "BullSymbol": "TQQQ",
+    "BearSymbol": "SQQQ",
+    "BenchmarkSymbol": "QQQ",
+    "CryptoBenchmarkSymbol": "BTC/USD",
+    "//_COMMENT_BASE": "--- BASE CONFIG: MID-DAY LULL defaults (10:13 - 14:00) ---",
+    "//_COMMENT_BASE2": "--- Open Volatility and Power Hour are overridden via TimeRules below ---",
+    "MinVelocityThreshold": 1.5E-05,
+    "SMAWindowSeconds": 210,
+    "SlopeWindowSize": 20,
+    "ChopThresholdPercent": 0.0011,
+    "MinChopAbsolute": 0.02,
+    "TrendWindowSeconds": 5400,
+    "EnableAdaptiveTrendWindow": false,
+    "ShortTrendSlopeWindow": 90,
+    "ShortTrendSlopeThreshold": 2E-05,
+    "DriftModeEnabled": true,
+    "DriftModeConsecutiveTicks": 60,
+    "DriftModeMinDisplacementPercent": 0.002,
+    "DriftModeAtrMultiplier": 1.0,
+    "DriftTrailingStopPercent": 0.0035,
+    "DisplacementReentryEnabled": true,
+    "DisplacementReentryPercent": 0.005,
+    "DisplacementAtrMultiplier": 2.0,
+    "DisplacementChopThreshold": 50,
+    "DisplacementBbwLookback": 20,
+    "DisplacementSlopeWindow": 10,
+    "DisplacementMinSlope": 0.0002,
+    "ExitStrategy": {
+      "ScalpWaitSeconds": 30,
+      "TrendWaitSeconds": 180,
+      "TrendConfidenceThreshold": 8E-05,
+      "HoldNeutralIfUnderwater": true
+    },
+    "UseMarketableLimits": true,
+    "UseIocOrders": true,
+    "IocLimitOffsetCents": 8,
+    "IocRetryStepCents": 5,
+    "TrailingStopPercent": 0.002,
+    "TrendRescueTrailingStopPercent": 0.005,
+    "DynamicStopLoss": {
+      "Enabled": true,
+      "Tiers": [
+        {
+          "TriggerProfitPercent": 0.003,
+          "StopPercent": 0.0015
+        },
+        {
+          "TriggerProfitPercent": 0.005,
+          "StopPercent": 0.001
+        },
+        {
+          "TriggerProfitPercent": 0.008,
+          "StopPercent": 0.0008
+        }
+      ]
+    },
+    "EnableTrimming": true,
+    "TrimTriggerPercent": 0.0025,
+    "TrimSlopeThreshold": 1E-06,
+    "TrimCooldownSeconds": 300,
+    "TrimRatio": 0.75,
+    "//_COMMENT_DAILY_TARGET": "--- DAILY PROFIT TARGET ---",
+    "DailyProfitTargetPercent": 1.75,
+    "DailyProfitTargetRealtime": true,
+    "DailyProfitTargetTrailingStopPercent": 0.3,
+    "//_COMMENT_DAILY_LOSS": "--- DAILY LOSS LIMIT ---",
+    "DailyLossLimit": 0,
+    "DailyLossLimitPercent": 0,
+    "//_COMMENT_PH_RESUME": "--- PH RESUME MODE ---",
+    "ResumeInPowerHour": true,
+    "//_COMMENT_ANALYST_RESET": "--- ANALYST PHASE RESET (None / Cold / Partial) ---",
+    "AnalystPhaseResetMode": "None",
+    "AnalystPhaseResetSeconds": 120,
+    "//_COMMENT_STATIC": "--- STATIC SETTINGS (same across all phases) ---",
+    "SlidingBand": false,
+    "SlidingBandFactor": 0.75,
+    "WatchBtc": false,
+    "MonitorSlippage": true,
+    "LastEntryMinutesBeforeClose": 0,
+    "StopLossCooldownSeconds": 10,
+    "MaxSlippagePercent": 0.002,
+    "MaxChaseDeviationPercent": 0.003,
+    "LowLatencyMode": true,
+    "IocMaxRetries": 5,
+    "IocMaxDeviationPercent": 0.005,
+    "IocRemainingSharesTolerance": 2,
+    "KeepAlivePingSeconds": 5,
+    "WarmUpIterations": 10000,
+    "StatusLogIntervalSeconds": 5,
+    "//_COMMENT_MR": "--- MEAN REVERSION (PH only via PhDefaultStrategy) ---",
+    "//_COMMENT_MR2": "--- BB/RSI/ATR indicators run all day for warmup; MR signals gated to Power Hour ---",
+    "PhDefaultStrategy": "MeanReversion",
+    "ChopCandleSeconds": 300,
+    "BollingerWindow": 20,
+    "BollingerMultiplier": 2.0,
+    "MrEntryLowPctB": 0.1,
+    "MrEntryHighPctB": 0.9,
+    "MrExitPctB": 0.5,
+    "MeanRevStopPercent": 0.003,
+    "MrAtrStopMultiplier": 2.0,
+    "MrRequireRsi": true,
+    "MrRsiPeriod": 14,
+    "MrRsiOversold": 30,
+    "MrRsiOverbought": 70,
+    "ChopOverrideEnabled": true,
+    "ChopLowerThreshold": 25,
+    "ChopTrendExitThreshold": 45,
+    "//_COMMENT_TIMERULES": "--- TIME-BASED PHASE SWITCHING ---",
+    "//_COMMENT_TIMERULES2": "--- Only overrides that DIFFER from base config are specified ---",
+    "TimeRules": [
+      {
+        "Name": "Open Volatility",
+        "StartTime": "09:30",
+        "EndTime": "10:13",
+        "Overrides": {
+          "MinVelocityThreshold": 1.5E-05,
+          "SMAWindowSeconds": 120,
+          "ChopThresholdPercent": 0.0015,
+          "MinChopAbsolute": 0.05,
+          "TrendWindowSeconds": 900,
+          "EnableAdaptiveTrendWindow": false,
+          "TrendWaitSeconds": 180,
+          "TrendConfidenceThreshold": 0.00012,
+          "UseMarketableLimits": false,
+          "UseIocOrders": false,
+          "IocLimitOffsetCents": 20,
+          "IocRetryStepCents": 10,
+          "TrailingStopPercent": 0.005,
+          "DynamicStopLossEnabled": true,
+          "DynamicStopLossTiers": [
+            {
+              "TriggerProfitPercent": 0.005,
+              "StopPercent": 0.003
+            },
+            {
+              "TriggerProfitPercent": 0.008,
+              "StopPercent": 0.002
+            },
+            {
+              "TriggerProfitPercent": 0.012,
+              "StopPercent": 0.0015
+            }
+          ],
+          "EnableTrimming": false,
+          "TrimTriggerPercent": 0.005,
+          "TrimSlopeThreshold": 2E-06,
+          "TrimCooldownSeconds": 60,
+          "TrimRatio": 0.33
+        }
+      },
+      {
+        "//_COMMENT": "PH overrides: 2x velocity + shorter Trend window for Trend Rescue during PH.",
+        "Name": "Power Hour",
+        "StartTime": "14:00",
+        "EndTime": "16:00",
+        "Overrides": {
+          "MinVelocityThreshold": 3E-05,
+          "TrendWindowSeconds": 1800
+        }
+      }
+    ],
+    "StartingAmount": 10000,
+    "ProfitReinvestmentPercent": 1.0
+  },
+  "SimulatedBroker": {
+    "//_COMMENT": "--- REPLAY BROKER REALISM SETTINGS ---",
+    "//_COMMENT2": "Controls spread, slippage, and fill modeling for replay backtests",
+    "SlippageBasisPoints": 0.5,
+    "SpreadBasisPoints": 1.0,
+    "OvSpreadMultiplier": 2.0,
+    "PhSpreadMultiplier": 1.25,
+    "VolatilitySlippageEnabled": true,
+    "VolatilitySlippageMultiplier": 0.15,
+    "VolatilityWindowTicks": 60
+  }
+}
