@@ -282,22 +282,21 @@
 
 ## Execution Variance Simulation (HIGH PRIORITY)
 
-- [ ] **Add `--seed` CLI parameter for stochastic fill simulation**
+- [x] **Add `--seed` CLI parameter for stochastic fill simulation**
   **Context (2026-02-20)**: Feb 20 live lost -$207.76 vs replay +$189.91. Root cause: partial fill on first trade (95/205 shares filled before cancel = "ghost shares"). This halved the first trade's profit ($57 vs $105), preventing the daily target from triggering, which left the bot exposed to 40+ whipsaw trades through the base period. The replay's `SimulatedBroker` fills every order instantly and fully — it cannot reproduce partial fills, latency, or stochastic execution variance.
 
-  **Problem**: For high-resolution recorded tick data, `skipInterpolation=true` and the existing `replaySeed` (which only affects Brownian bridge interpolation) has **zero effect**. There is currently NO way to simulate different execution outcomes on the same day's data.
-
-  **Proposed implementation**:
-  1. Add `--seed` to `CommandLineOverrides.cs`
-  2. Pass seed through to `SimulatedBroker` constructor
-  3. Use seeded RNG in SimulatedBroker for:
-     - **Stochastic partial fills**: Probability of partial fill (especially during OV), with random fill ratio (e.g., 30-100% of requested shares)
-     - **Fill latency**: Random delay before fill confirmation (0-5s), with timeout/cancel probability
-     - **Slippage variance**: Add random component to slippage (currently deterministic 0.5 bps)
-  4. Multiple seeds = Monte Carlo-style confidence intervals on any day's replay
-  5. Default seed = `DateOnly.DayNumber` (preserves current deterministic behavior)
-
-  **Priority**: HIGH — This is the only way to stress-test the bot's sensitivity to execution quality. The Feb 20 gap proves that a single partial fill can cascade into a $400 P/L difference.
+  **DONE (2026-02-21)**: Full implementation of stochastic execution simulation:
+  1. `--seed=<int>` CLI parameter in `CommandLineOverrides.cs`. Default seed = `replayDate.DayNumber` (deterministic per day).
+  2. Seeded `Random` in `SimulatedBroker` — all stochastic effects are reproducible per seed.
+  3. **Stochastic slippage variance**: `totalSlippage *= (1 + rng.NextDouble() - 0.5) × factor`. Default `SlippageVarianceFactor: 0.5` (±25%).
+  4. **Alpaca Auction mode**: Simulates opening fill difficulty during 09:30-09:37 ET:
+     - `TimeoutProbability: 0.6` — order returns `New` (TraderEngine times out after 10s → cancel → cooldown)
+     - `PartialFillProbability: 0.4` — partial fill with random ratio ≥ `MinFillRatio: 0.3`
+     - Exercises the full `ProcessPendingOrderAsync` → `ReconcileCanceledOrderAsync` pathway
+  5. `SimulatedBroker.CancelOrderAsync` now handles pending/partial orders (was no-op before)
+  6. Auction mode stats reported in replay summary
+  7. Config: `SimulatedBroker:AuctionMode:*` section in `appsettings.json` (disabled by default)
+  8. Multiple seeds = Monte Carlo-style confidence intervals on any day's replay
 
 ## SimulatedBroker Realism (2026-02-17)
 
@@ -310,8 +309,9 @@
   - 8-day P/L: $627.15 → $460.44 (realistic friction absorbs ~$351)
   - All 63 tests passing
 
-- [ ] **SimulatedBroker: Add fill latency + stochastic fill failure**
-  Current `SimulatedBroker.SubmitOrderAsync` fills every order instantly. This makes the entire `ProcessPendingOrderAsync` pathway (10s timeout, cancel, reconcile, buy cooldown backoff) dead code in replay. Feb 17 showed a $77.28 live-vs-replay gap caused entirely by a SQQQ order that timed out in live but filled instantly in replay. Enhancement: return `Status = New` initially, resolve to `Filled` after configurable delay, with seeded-RNG probability of fill failure (especially during OV phase where standard limit orders often timeout). Preserves determinism via seed.
+- [x] **SimulatedBroker: Add fill latency + stochastic fill failure**
+  ~~Current `SimulatedBroker.SubmitOrderAsync` fills every order instantly. This makes the entire `ProcessPendingOrderAsync` pathway (10s timeout, cancel, reconcile, buy cooldown backoff) dead code in replay.~~
+  **DONE (2026-02-21)**: Implemented as part of Alpaca Auction mode. During configurable auction window (default 09:30-09:37 ET), orders have configurable probability of returning `New` (timeout) or `PartiallyFilled`. `CancelOrderAsync` properly handles pending/partial orders. See "Execution Variance Simulation" section above.
 
 ## Drift Mode & Displacement Re-Entry (2026-02-18)
 
@@ -354,3 +354,33 @@
 - [x] **Evaluate Displacement Re-Entry with CVD gating**
   ~~Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).~~
   **SUPERSEDED (2026-02-19)**: Implemented price-derived regime validation (CHOP + BBW) instead of volume-based CVD. Works without Tradier migration. CVD remains a future enhancement if/when Tradier streaming is active.
+
+## Signal Loss / Inactivity Monitoring (2026-02-21)
+
+- [x] **Implement escalating inactivity alerts in TraderEngine**
+  **Context (2026-02-21)**: Feb 18 live revealed a 4h 11m gap (09:31–13:42 ET) where the bot was in CASH with zero trades, generating ~1,835 identical INFO-level status lines with zero escalation. Two order timeouts at 09:30 → signal flipped to NEUTRAL → bot sat silently for the entire base period.
+  **DONE (2026-02-21)**: Three-level escalating alert system in `LogStatusAsync`:
+  - 15 min CASH: `LogWarning("[INACTIVITY]")` — first warning, appends `| IDLE {N}m` to status line
+  - 30 min CASH: `LogWarning("[EXTENDED INACTIVITY]")` — adds diagnostic reason (chop band, velocity, cooldown, halted)
+  - 60 min CASH: `LogError("[CRITICAL INACTIVITY]")` — repeats every 5 min until resolved
+  - Correctly excludes ProfitTarget/LossLimit halts from alerting
+  - `GetInactivityReason()` helper diagnoses root cause
+  - Settings: `InactivityWarnMinutes`, `InactivityAlertMinutes`, `InactivityCriticalMinutes`, `InactivityAlertRepeatMinutes`
+  - Files: TradingSettings.cs (both repos), TraderEngine.cs, ProgramRefactored.cs, appsettings.json
+
+- [x] **Throttle cooldown WARN spam**
+  **DONE (2026-02-21)**: `IsBuyCooldownActive` now logs once at cooldown start + once at expiry instead of every tick (was 25-55 identical `LogWarning` lines per cooldown period). Uses `_buyCooldownLoggedStart` flag.
+
+## DevOps / Infrastructure
+
+- [ ] **Console output differentiation for actionable events**
+  Currently live bot console output is a wall of identical status lines with no visual hierarchy. Actionable events (trades, errors, alerts) get buried. Options:
+  - Color-coded console output (ANSI escape codes for WARN/ERROR)
+  - Summary line every N minutes with trade count, P/L, signal history
+  - Desktop/push notification for CRITICAL inactivity or large losses
+
+- [ ] **Automated daily replay regression suite**
+  Run replay across all available dates after each code change to catch regressions early. Output: date, P/L, trade count, delta from baseline. Could be a PS1 script that diffs against a known-good baseline.
+
+- [ ] **Monte Carlo sweep infrastructure**
+  Extend sweep scripts to run each date × N seeds with auction mode enabled. Generate P/L distributions and confidence intervals rather than single-point estimates. Requires `--seed` CLI (now implemented).

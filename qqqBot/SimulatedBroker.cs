@@ -33,6 +33,18 @@ public sealed class SimulatedBroker : IBrokerExecution
     private readonly decimal _volSlippageMultiplier;  // Multiplier for volatility slippage (k × σ)
     private readonly int _volWindowTicks;             // Rolling window for volatility calculation
 
+    // Stochastic execution RNG (seeded for reproducible replay results)
+    private readonly Random _rng;
+    private readonly int _seed;
+    private readonly double _slippageVarianceFactor;  // Variance multiplier on total slippage (0 = deterministic)
+
+    // Alpaca Auction mode: simulate realistic fill difficulty during market open
+    private readonly bool _auctionModeEnabled;
+    private readonly int _auctionWindowMinutes;           // Minutes after 09:30 ET where auction mode applies
+    private readonly double _auctionTimeoutProbability;    // Probability order returns New (will timeout)
+    private readonly double _auctionPartialFillProbability; // Probability of partial fill (vs full fill)
+    private readonly double _auctionMinFillRatio;          // Minimum partial fill ratio (e.g., 0.3 = 30% of requested)
+
     // Simulated state
     private decimal _cashBalance;
     private readonly Dictionary<string, SimulatedPosition> _positions = new();
@@ -61,6 +73,11 @@ public sealed class SimulatedBroker : IBrokerExecution
     private decimal _totalSpreadCost;
     private decimal _totalSlippageCost;
 
+    // Auction mode stats
+    private int _auctionTimeouts;
+    private int _auctionPartialFills;
+    private int _auctionFullFills;
+
     private record SimulatedPosition(string Symbol, long Quantity, decimal AverageEntryPrice);
 
     public SimulatedBroker(
@@ -72,7 +89,14 @@ public sealed class SimulatedBroker : IBrokerExecution
         decimal phSpreadMultiplier = 1.5m,
         bool volatilitySlippageEnabled = true,
         decimal volSlippageMultiplier = 0.5m,
-        int volWindowTicks = 60)
+        int volWindowTicks = 60,
+        int seed = 0,
+        double slippageVarianceFactor = 0.5,
+        bool auctionModeEnabled = false,
+        int auctionWindowMinutes = 7,
+        double auctionTimeoutProbability = 0.6,
+        double auctionPartialFillProbability = 0.4,
+        double auctionMinFillRatio = 0.3)
     {
         _logger = logger;
         _initialCash = initialCash;
@@ -84,6 +108,14 @@ public sealed class SimulatedBroker : IBrokerExecution
         _volatilitySlippageEnabled = volatilitySlippageEnabled;
         _volSlippageMultiplier = volSlippageMultiplier;
         _volWindowTicks = volWindowTicks;
+        _seed = seed;
+        _rng = new Random(seed);
+        _slippageVarianceFactor = slippageVarianceFactor;
+        _auctionModeEnabled = auctionModeEnabled;
+        _auctionWindowMinutes = auctionWindowMinutes;
+        _auctionTimeoutProbability = auctionTimeoutProbability;
+        _auctionPartialFillProbability = auctionPartialFillProbability;
+        _auctionMinFillRatio = auctionMinFillRatio;
         _easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
 
         _logger.LogInformation("[SIM-BROKER] ==========================================");
@@ -94,6 +126,13 @@ public sealed class SimulatedBroker : IBrokerExecution
             spreadBps, ovSpreadMultiplier, phSpreadMultiplier);
         _logger.LogInformation("[SIM-BROKER]  Vol Slippage:  {Enabled} (k={K}, window={W})",
             volatilitySlippageEnabled, volSlippageMultiplier, volWindowTicks);
+        _logger.LogInformation("[SIM-BROKER]  RNG Seed:      {Seed} | Slippage Variance: {Var:P0}",
+            seed, slippageVarianceFactor);
+        if (auctionModeEnabled)
+        {
+            _logger.LogInformation("[SIM-BROKER]  Auction Mode:  ENABLED (window={Win}m, timeout={TO:P0}, partial={PF:P0}, minRatio={MR:P0})",
+                auctionWindowMinutes, auctionTimeoutProbability, auctionPartialFillProbability, auctionMinFillRatio);
+        }
         _logger.LogInformation("[SIM-BROKER] ==========================================");
     }
 
@@ -223,6 +262,126 @@ public sealed class SimulatedBroker : IBrokerExecution
             }
             decimal totalSlippage = baseSlippage + volSlippage;
 
+            // Stochastic slippage variance: ±50% by default (seeded RNG for reproducibility)
+            if (_slippageVarianceFactor > 0)
+            {
+                var variance = 1.0 + (_rng.NextDouble() - 0.5) * _slippageVarianceFactor;
+                totalSlippage *= (decimal)variance;
+                if (totalSlippage < 0) totalSlippage = 0;
+            }
+
+            // --- Alpaca Auction mode: simulate opening fill difficulty ---
+            if (_auctionModeEnabled && IsInAuctionWindow())
+            {
+                var roll = _rng.NextDouble();
+                if (roll < _auctionTimeoutProbability)
+                {
+                    // Simulate order that won't fill (TraderEngine will timeout after 10s and cancel)
+                    _auctionTimeouts++;
+                    var pendingOrder = new BotOrder
+                    {
+                        OrderId = orderId,
+                        ClientOrderId = request.ClientOrderId,
+                        Symbol = request.Symbol,
+                        Side = request.Side,
+                        Type = request.Type,
+                        Status = BotOrderStatus.New,
+                        Quantity = request.Quantity,
+                        FilledQuantity = 0,
+                        SubmittedAtUtc = now
+                    };
+                    _orders[orderId] = pendingOrder;
+                    _logger.LogInformation("[SIM-BROKER] AUCTION: {Side} {Qty} {Symbol} submitted during auction window — simulating no fill (timeout expected)",
+                        request.Side, request.Quantity, request.Symbol);
+                    return Task.FromResult(pendingOrder);
+                }
+
+                var partialRoll = _rng.NextDouble();
+                if (partialRoll < _auctionPartialFillProbability)
+                {
+                    // Simulate partial fill (like Feb 20's 95/205 scenario)
+                    var fillRatio = _auctionMinFillRatio + _rng.NextDouble() * (1.0 - _auctionMinFillRatio);
+                    var filledQty = (long)Math.Max(1, Math.Round(request.Quantity * fillRatio));
+                    if (filledQty >= request.Quantity) filledQty = request.Quantity; // Cap at full
+
+                    _auctionPartialFills++;
+
+                    // Compute fill price for partial fill
+                    decimal partialFillPrice = request.Side == BotOrderSide.Buy
+                        ? basePrice + halfSpread + totalSlippage
+                        : basePrice - halfSpread - totalSlippage;
+                    partialFillPrice = Math.Round(partialFillPrice, 2);
+                    var partialFillValue = partialFillPrice * filledQty;
+
+                    if (request.Side == BotOrderSide.Buy)
+                    {
+                        if (partialFillValue > _cashBalance)
+                        {
+                            // Can't even afford partial — treat as timeout
+                            _auctionTimeouts++;
+                            var noFillOrder = new BotOrder
+                            {
+                                OrderId = orderId,
+                                ClientOrderId = request.ClientOrderId,
+                                Symbol = request.Symbol,
+                                Side = request.Side,
+                                Type = request.Type,
+                                Status = BotOrderStatus.New,
+                                Quantity = request.Quantity,
+                                FilledQuantity = 0,
+                                SubmittedAtUtc = now
+                            };
+                            _orders[orderId] = noFillOrder;
+                            return Task.FromResult(noFillOrder);
+                        }
+
+                        _cashBalance -= partialFillValue;
+
+                        // Update position with partial quantity
+                        if (_positions.TryGetValue(request.Symbol, out var existingPartial))
+                        {
+                            var totalCost = existingPartial.AverageEntryPrice * existingPartial.Quantity + partialFillPrice * filledQty;
+                            var totalQty = existingPartial.Quantity + filledQty;
+                            var newAvg = totalQty > 0 ? totalCost / totalQty : 0;
+                            _positions[request.Symbol] = new SimulatedPosition(request.Symbol, totalQty, newAvg);
+                        }
+                        else
+                        {
+                            _positions[request.Symbol] = new SimulatedPosition(request.Symbol, filledQty, partialFillPrice);
+                        }
+                    }
+
+                    _tradeCount++;
+                    _totalSpreadCost += halfSpread * filledQty;
+                    _totalSlippageCost += totalSlippage * filledQty;
+
+                    var partialOrder = new BotOrder
+                    {
+                        OrderId = orderId,
+                        ClientOrderId = request.ClientOrderId,
+                        Symbol = request.Symbol,
+                        Side = request.Side,
+                        Type = request.Type,
+                        Status = BotOrderStatus.PartiallyFilled,
+                        Quantity = request.Quantity,
+                        FilledQuantity = filledQty,
+                        AverageFillPrice = partialFillPrice,
+                        LimitPrice = request.LimitPrice,
+                        SubmittedAtUtc = now,
+                        FilledAtUtc = now
+                    };
+                    _orders[orderId] = partialOrder;
+
+                    _logger.LogWarning("[SIM-BROKER] AUCTION: Partial fill {Side} {Filled}/{Total} {Symbol} @ {Price:N2} (ratio: {Ratio:P0}). Cash: ${Cash:N2}",
+                        request.Side, filledQty, request.Quantity, request.Symbol, partialFillPrice, (double)filledQty / request.Quantity, _cashBalance);
+
+                    return Task.FromResult(partialOrder);
+                }
+
+                // Passed both rolls — full fill during auction (lucky)
+                _auctionFullFills++;
+            }
+
             // --- Apply: Buy pays more, Sell receives less ---
             decimal fillPrice = request.Side == BotOrderSide.Buy
                 ? basePrice + halfSpread + totalSlippage
@@ -333,8 +492,35 @@ public sealed class SimulatedBroker : IBrokerExecution
 
     public Task<bool> CancelOrderAsync(Guid orderId, CancellationToken cancellationToken = default)
     {
-        // All simulated orders fill immediately; nothing to cancel
-        return Task.FromResult(false);
+        lock (_lock)
+        {
+            if (_orders.TryGetValue(orderId, out var order) &&
+                (order.Status == BotOrderStatus.New || order.Status == BotOrderStatus.Accepted ||
+                 order.Status == BotOrderStatus.PartiallyFilled))
+            {
+                // Replace with canceled version (preserving any partial fill info)
+                _orders[orderId] = new BotOrder
+                {
+                    OrderId = order.OrderId,
+                    ClientOrderId = order.ClientOrderId,
+                    Symbol = order.Symbol,
+                    Side = order.Side,
+                    Type = order.Type,
+                    Status = BotOrderStatus.Canceled,
+                    Quantity = order.Quantity,
+                    FilledQuantity = order.FilledQuantity,
+                    AverageFillPrice = order.AverageFillPrice,
+                    LimitPrice = order.LimitPrice,
+                    SubmittedAtUtc = order.SubmittedAtUtc,
+                    FilledAtUtc = order.FilledAtUtc
+                };
+                _logger.LogInformation("[SIM-BROKER] Canceled order {OrderId} (was {Status}, filled {Filled}/{Total})",
+                    orderId, order.Status, order.FilledQuantity, order.Quantity);
+                return Task.FromResult(true);
+            }
+            // Already filled/canceled/rejected — nothing to cancel
+            return Task.FromResult(false);
+        }
     }
 
     public Task<int> CancelAllOpenOrdersAsync(string symbol, CancellationToken cancellationToken = default)
@@ -466,7 +652,29 @@ public sealed class SimulatedBroker : IBrokerExecution
                     pos.Quantity, pos.Symbol, pos.AverageEntryPrice, unrealized);
             }
 
+            _logger.LogInformation("[SIM-BROKER]  RNG Seed:       {Seed}", _seed);
+            if (_auctionModeEnabled)
+            {
+                var auctionTotal = _auctionTimeouts + _auctionPartialFills + _auctionFullFills;
+                _logger.LogInformation("[SIM-BROKER]  Auction Orders: {Total} (timeouts: {TO}, partial: {PF}, full: {FF})",
+                    auctionTotal, _auctionTimeouts, _auctionPartialFills, _auctionFullFills);
+            }
+
             _logger.LogInformation("[SIM-BROKER] ==========================================");
         }
+    }
+
+    /// <summary>
+    /// Check if the current timestamp is within the auction window (e.g., 09:30-09:37 ET).
+    /// During this window, Alpaca Auction mode may simulate fill difficulty.
+    /// </summary>
+    private bool IsInAuctionWindow()
+    {
+        if (_latestTimestampUtc == default) return false;
+        var eastern = TimeZoneInfo.ConvertTimeFromUtc(_latestTimestampUtc, _easternZone);
+        var tod = eastern.TimeOfDay;
+        var auctionStart = new TimeSpan(9, 30, 0);
+        var auctionEnd = auctionStart + TimeSpan.FromMinutes(_auctionWindowMinutes);
+        return tod >= auctionStart && tod < auctionEnd;
     }
 }

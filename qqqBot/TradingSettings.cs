@@ -104,6 +104,11 @@ class TradingSettings
     public int KeepAlivePingSeconds { get; set; } = 5;    // HTTP connection keep-alive ping interval
     public int WarmUpIterations { get; set; } = 10000;    // JIT warm-up iterations before market open
     
+    // STREAM HEALTH MONITORING — detects data feed disconnections (not strategic non-trading)
+    public int StreamStaleWarnSeconds { get; set; } = 30;       // WARN after N seconds with no incoming tick
+    public int StreamStaleCriticalSeconds { get; set; } = 120;  // CRITICAL after N seconds — likely disconnected
+    public int StreamWatchdogIntervalSeconds { get; set; } = 10; // How often the watchdog checks for stale stream
+    
     // Derived: Calculate queue size dynamically from window and interval
     public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
     

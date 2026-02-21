@@ -22,7 +22,9 @@ public class SimulatedBrokerTests
             phSpreadMultiplier: 1.0m,
             volatilitySlippageEnabled: volatilitySlippageEnabled,
             volSlippageMultiplier: 0m,
-            volWindowTicks: 60);
+            volWindowTicks: 60,
+            seed: 0,
+            slippageVarianceFactor: 0);
 
     // ───────────────────────── Buy Order Tests ─────────────────────────
 

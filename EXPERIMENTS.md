@@ -3027,3 +3027,98 @@ The daily profit target is the bot's most critical protective mechanism. When th
 #### Files Modified
 - `TODO.md` — Added "Execution Variance Simulation" section (HIGH PRIORITY)
 - `EXPERIMENTS.md` — This session log
+
+---
+
+## Session: 2026-02-21 — Inactivity Alerts + Stochastic Execution Simulation
+
+### Context
+
+Two high-priority issues from live trading analysis (Feb 12-20, 6 trading days):
+
+1. **Feb 18 signal loss incident**: Bot lost signal at 09:31 ET after 2 order timeouts, then sat in CASH for **4 hours 11 minutes** (09:31–13:42 ET) generating ~1,835 identical INFO-level status lines with **zero escalation**. No WARN, no heartbeat, no inactivity detection. The bot's console output was indistinguishable from normal operation.
+
+2. **SimulatedBroker has ZERO randomness**: No `Random`, no RNG, no stochastic effects whatsoever. All fills are instant and full. This makes the entire `ProcessPendingOrderAsync` → timeout → cancel → reconcile pathway **dead code** in replay. The Feb 20 live-vs-replay gap ($400) proved that a single partial fill can cascade catastrophically.
+
+### Live Fill Difficulty Data (6 Trading Days)
+
+| Date | 1st Order (ET) | 1st Fill | Delay | Attempts | Result | Shares |
+|------|----------------|----------|-------|----------|--------|--------|
+| Feb 12 | 09:44:13 | 09:44:19 | 6s | 1 | Clean | 145→145 |
+| Feb 13 | 09:30:32 | 09:35:30 | 4m 58s | 2 | 1 timeout → clean | 135→135 |
+| Feb 17 | 09:31:03 | 09:37:35 | 6m 32s | 5 | 4 timeouts → clean | 134→206 |
+| Feb 18 | 09:30:17 | 13:42:57 | 4h 12m | 3 | 2 timeouts → 4h gap | 137→141 |
+| Feb 19 | 09:35:42 | 09:35:46 | 4s | 1 | Clean | 137→137 |
+| Feb 20 | 09:32:12 | 09:32:26 | 14s | 1 | Partial fill (ghost) | 205→95 |
+
+**Ghost share events**: Feb 19 (21+2 IOC ghost fills), Feb 20 (95 partial fill cascade).
+**Fill difficulty at open**: 4/5 days with OV orders had timeouts in 09:30-09:37 window.
+
+### Implementation
+
+#### A. Escalating Inactivity Alerts (TraderEngine.cs)
+
+**Problem**: `LogStatusAsync` fires every 5s at INFO level with no inactivity detection.
+
+**Solution**: Three-tier escalating system in `LogStatusAsync`:
+- **15 min** CASH (no fills): `LogWarning("[INACTIVITY]")` — appends `| IDLE {N}m` to status line
+- **30 min** CASH: `LogWarning("[EXTENDED INACTIVITY]")` — adds diagnostic reason via `GetInactivityReason()`
+- **60 min** CASH: `LogError("[CRITICAL INACTIVITY]")` — repeats every 5 min until resolved
+
+`GetInactivityReason()` diagnoses: "chop band" / "velocity below threshold" / "buy cooldown" / "halted" / "unknown"
+
+Correctly excludes ProfitTarget and LossLimit halts from triggering alerts.
+
+Settings (configurable in `appsettings.json`):
+- `InactivityWarnMinutes: 15`
+- `InactivityAlertMinutes: 30`
+- `InactivityCriticalMinutes: 60`
+- `InactivityAlertRepeatMinutes: 5`
+
+#### B. Cooldown WARN Spam Throttle
+
+**Problem**: `IsBuyCooldownActive` logged `LogWarning` on EVERY tick during cooldown (25-55 identical lines per cooldown period).
+
+**Solution**: `_buyCooldownLoggedStart` flag — log once at cooldown start, once at expiry. Reduced log noise by ~50x per cooldown event.
+
+#### C. Stochastic Execution Simulation (SimulatedBroker.cs)
+
+**Problem**: `SimulatedBroker` had zero `Random`, zero RNG. All fills instant and full. Replay could not exercise timeout/cancel/reconcile code paths.
+
+**Solution**:
+1. **Seeded RNG**: `new Random(seed)` in constructor. Default seed = `replayDate.DayNumber` (deterministic per day).
+2. **`--seed=<int>` CLI**: Set via `CommandLineOverrides`, passed through `ProgramRefactored` to `SimulatedBroker`.
+3. **Stochastic slippage**: `totalSlippage *= (1.0 + (rng.NextDouble() - 0.5) × SlippageVarianceFactor)`. Default factor: 0.5 (±25%).
+4. **Alpaca Auction mode**: During configurable auction window (default 09:30-09:37 ET):
+   - Roll 1: `TimeoutProbability: 0.6` → return `BotOrderStatus.New` (TraderEngine times out → cancel → cooldown)
+   - Roll 2: `PartialFillProbability: 0.4` → partial fill with ratio ≥ `MinFillRatio: 0.3`
+   - Otherwise: full fill (lucky)
+5. `CancelOrderAsync` upgraded from no-op to properly handle pending/partial orders
+6. Auction stats in replay summary
+
+**Config** (`appsettings.json` → `SimulatedBroker` section):
+```json
+"SlippageVarianceFactor": 0.5,
+"AuctionMode": {
+  "Enabled": false,
+  "WindowMinutes": 7,
+  "TimeoutProbability": 0.6,
+  "PartialFillProbability": 0.4,
+  "MinFillRatio": 0.3
+}
+```
+
+### Files Modified
+
+**MarketBlocks repo** (`feature/mean-reversion-ph` branch):
+- `MarketBlocks.Bots/Domain/TradingSettings.cs` — Added 4 inactivity alert settings
+- `MarketBlocks.Bots/Services/TraderEngine.cs` — Inactivity alerts in `LogStatusAsync`, `GetInactivityReason()` helper, `_lastTradeCompletedUtc` tracking at 3 fill points, cooldown spam throttle in `IsBuyCooldownActive`/`ResetBuyCooldown`
+
+**qqqBot repo** (`tuning/small-dataset-v1` branch):
+- `qqqBot/TradingSettings.cs` — Added 4 inactivity alert settings (sync with MarketBlocks)
+- `qqqBot/SimulatedBroker.cs` — Added `Random _rng` + seed, stochastic slippage variance, Alpaca Auction mode (timeout, partial fill, stats), upgraded `CancelOrderAsync`, `IsInAuctionWindow()` helper, updated `PrintSummary`
+- `qqqBot/CommandLineOverrides.cs` — Added `--seed=<int>` CLI parameter
+- `qqqBot/ProgramRefactored.cs` — Wired seed (CLI → config → date default) to SimulatedBroker, added auction mode config loading, added inactivity settings to `BuildTradingSettings`
+- `qqqBot/appsettings.json` — Added inactivity settings, `SlippageVarianceFactor`, `AuctionMode` section
+- `TODO.md` — Marked seed + fill latency TODOs done, added "Signal Loss" and "DevOps" sections
+- `EXPERIMENTS.md` — This session log

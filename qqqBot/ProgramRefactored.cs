@@ -313,19 +313,35 @@ public static class ProgramRefactored
                     // =============================================
                     
                     // Register SimulatedBroker as IBrokerExecution
+                    // Seed: CLI --seed > config > date-based default
+                    var replayDateForSeed = TryParseFlexibleDate(CurrentOverrides?.ReplayDate, out var seedDate)
+                        ? seedDate : DateOnly.FromDateTime(DateTime.Now);
+                    var brokerSeed = CurrentOverrides?.Seed
+                        ?? configuration.GetValue<int?>("SimulatedBroker:Seed")
+                        ?? replayDateForSeed.DayNumber;
+                    
                     services.AddSingleton<SimulatedBroker>(sp =>
                     {
                         var logger = sp.GetRequiredService<ILogger<SimulatedBroker>>();
-                        var cfg = sp.GetRequiredService<IConfiguration>();
-                        var slipBps = cfg.GetValue("SimulatedBroker:SlippageBasisPoints", 1.0m);
-                        var spreadBps = cfg.GetValue("SimulatedBroker:SpreadBasisPoints", 2.0m);
-                        var ovMult = cfg.GetValue("SimulatedBroker:OvSpreadMultiplier", 3.0m);
-                        var phMult = cfg.GetValue("SimulatedBroker:PhSpreadMultiplier", 1.5m);
-                        var volEnabled = cfg.GetValue("SimulatedBroker:VolatilitySlippageEnabled", true);
-                        var volMult = cfg.GetValue("SimulatedBroker:VolatilitySlippageMultiplier", 0.5m);
-                        var volWindow = cfg.GetValue("SimulatedBroker:VolatilityWindowTicks", 60);
+                        var brokerCfg = sp.GetRequiredService<IConfiguration>();
+                        var slipBps = brokerCfg.GetValue("SimulatedBroker:SlippageBasisPoints", 1.0m);
+                        var spreadBps = brokerCfg.GetValue("SimulatedBroker:SpreadBasisPoints", 2.0m);
+                        var ovMult = brokerCfg.GetValue("SimulatedBroker:OvSpreadMultiplier", 3.0m);
+                        var phMult = brokerCfg.GetValue("SimulatedBroker:PhSpreadMultiplier", 1.5m);
+                        var volEnabled = brokerCfg.GetValue("SimulatedBroker:VolatilitySlippageEnabled", true);
+                        var volMult = brokerCfg.GetValue("SimulatedBroker:VolatilitySlippageMultiplier", 0.5m);
+                        var volWindow = brokerCfg.GetValue("SimulatedBroker:VolatilityWindowTicks", 60);
+                        var slipVariance = brokerCfg.GetValue("SimulatedBroker:SlippageVarianceFactor", 0.5);
+                        // Alpaca Auction mode
+                        var auctionEnabled = brokerCfg.GetValue("SimulatedBroker:AuctionMode:Enabled", false);
+                        var auctionWindow = brokerCfg.GetValue("SimulatedBroker:AuctionMode:WindowMinutes", 7);
+                        var auctionTimeout = brokerCfg.GetValue("SimulatedBroker:AuctionMode:TimeoutProbability", 0.6);
+                        var auctionPartial = brokerCfg.GetValue("SimulatedBroker:AuctionMode:PartialFillProbability", 0.4);
+                        var auctionMinRatio = brokerCfg.GetValue("SimulatedBroker:AuctionMode:MinFillRatio", 0.3);
                         return new SimulatedBroker(logger, settings.StartingAmount,
-                            slipBps, spreadBps, ovMult, phMult, volEnabled, volMult, volWindow);
+                            slipBps, spreadBps, ovMult, phMult, volEnabled, volMult, volWindow,
+                            brokerSeed, slipVariance,
+                            auctionEnabled, auctionWindow, auctionTimeout, auctionPartial, auctionMinRatio);
                     });
                     services.AddSingleton<IBrokerExecution>(sp => sp.GetRequiredService<SimulatedBroker>());
                     
@@ -673,7 +689,12 @@ public static class ProgramRefactored
             MrRequireRsi = configuration.GetValue("TradingBot:MrRequireRsi", true),
             MrRsiPeriod = configuration.GetValue("TradingBot:MrRsiPeriod", 14),
             MrRsiOversold = configuration.GetValue("TradingBot:MrRsiOversold", 30m),
-            MrRsiOverbought = configuration.GetValue("TradingBot:MrRsiOverbought", 70m)
+            MrRsiOverbought = configuration.GetValue("TradingBot:MrRsiOverbought", 70m),
+            
+            // Stream Health Monitoring
+            StreamStaleWarnSeconds = configuration.GetValue("TradingBot:StreamStaleWarnSeconds", 30),
+            StreamStaleCriticalSeconds = configuration.GetValue("TradingBot:StreamStaleCriticalSeconds", 120),
+            StreamWatchdogIntervalSeconds = configuration.GetValue("TradingBot:StreamWatchdogIntervalSeconds", 10)
         };
         
         // Parse DynamicStopLoss (nested object with tiers)
