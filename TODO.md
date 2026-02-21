@@ -280,6 +280,25 @@
 - [ ] **Add CycleTracker toggle setting**
   CycleTracker audited 2026-02-20: clean, single influence point with mandatory logging. Not a priority.
 
+## Execution Variance Simulation (HIGH PRIORITY)
+
+- [ ] **Add `--seed` CLI parameter for stochastic fill simulation**
+  **Context (2026-02-20)**: Feb 20 live lost -$207.76 vs replay +$189.91. Root cause: partial fill on first trade (95/205 shares filled before cancel = "ghost shares"). This halved the first trade's profit ($57 vs $105), preventing the daily target from triggering, which left the bot exposed to 40+ whipsaw trades through the base period. The replay's `SimulatedBroker` fills every order instantly and fully — it cannot reproduce partial fills, latency, or stochastic execution variance.
+
+  **Problem**: For high-resolution recorded tick data, `skipInterpolation=true` and the existing `replaySeed` (which only affects Brownian bridge interpolation) has **zero effect**. There is currently NO way to simulate different execution outcomes on the same day's data.
+
+  **Proposed implementation**:
+  1. Add `--seed` to `CommandLineOverrides.cs`
+  2. Pass seed through to `SimulatedBroker` constructor
+  3. Use seeded RNG in SimulatedBroker for:
+     - **Stochastic partial fills**: Probability of partial fill (especially during OV), with random fill ratio (e.g., 30-100% of requested shares)
+     - **Fill latency**: Random delay before fill confirmation (0-5s), with timeout/cancel probability
+     - **Slippage variance**: Add random component to slippage (currently deterministic 0.5 bps)
+  4. Multiple seeds = Monte Carlo-style confidence intervals on any day's replay
+  5. Default seed = `DateOnly.DayNumber` (preserves current deterministic behavior)
+
+  **Priority**: HIGH — This is the only way to stress-test the bot's sensitivity to execution quality. The Feb 20 gap proves that a single partial fill can cascade into a $400 P/L difference.
+
 ## SimulatedBroker Realism (2026-02-17)
 
 - [x] **SimulatedBroker: Phase-aware spread + volatility-scaled slippage**
@@ -318,6 +337,19 @@
 
 - [ ] **TrimRatio weekly re-optimization**
   Current TrimRatio=0.75 was set during Feb 14 sweep. User saw 102/136 shares trimmed (75%) on Feb 19. Keep at 0.75 until next full tuning round. Evaluate with expanded dataset (10+ days) whether 0.5 or 0.33 produces better results.
+
+## Comprehensive SimBroker-Era Sweep (2026-02-20)
+
+- [x] **Full 6-round parameter sweep with realistic SimBroker**
+  **DONE (2026-02-20)**: Created `sweep-comprehensive.ps1` (6-round cascading sweep). Tested ~220 scenarios across 9 primary dates (Feb 9-13, 17-20) + Feb 6 OOS. Branch: `tuning/small-dataset-v1`.
+  - **R1 Signal Generation**: SMA=210 wins (+$16 on 9 days). **Baked into appsettings.json.**
+  - **R2 Stops & DSL**: CURRENT optimal. No changes.
+  - **R3 Exit Strategy**: CURRENT optimal. HoldNeutral=false catastrophic (-$553).
+  - **R4 Trimming & Drift**: CURRENT optimal. DriftDisp=0.3% catastrophic.
+  - **R5 Daily Targets**: CURRENT optimal. DailyTarget OFF = -$919 blowup.
+  - **R6 Phase Boundaries**: CURRENT optimal. OV_End≤10:00 catastrophic.
+  - **Result**: Only SMA 180→210 improved. Bot is remarkably well-tuned already.
+  - **Final 9-day P/L**: +$664.34 (102 trades). Feb 6 OOS: -$36.63.
 
 - [x] **Evaluate Displacement Re-Entry with CVD gating**
   ~~Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).~~

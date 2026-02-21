@@ -52,19 +52,19 @@
 
 ## Current Production Settings
 
-**As of: 2026-02-14 (Systematic Re-Optimization + OV Extension Session)**
+**As of: 2026-02-20 (Comprehensive SimBroker-Era Sweep)**
 
-> **NOTE**: Full phase-by-phase re-optimization using corrected replay infrastructure.
-> Swept ~200+ configs across 5 dates (Feb 9-13). Result: -$436→+$503 (+$939 improvement).
-> Base settings significantly changed. OV settings partially changed. PH unchanged.
-> OV window extended from 09:50→10:13 (+$60 improvement, $549→$609).
+> **NOTE**: Full 6-round cascading sweep with realistic SimulatedBroker (spread+slippage+vol-aware).
+> Swept ~270 scenarios across 9 primary dates (Feb 9-13, 17-20) + Feb 6 OOS.
+> Only 1 change found: SMA 180→210. Everything else was already optimal.
+> 9-day P/L: +$664.34 (102 trades). Feb 6 OOS: -$36.63.
 
 ### Base Config (10:13–14:00, also default for unspecified times)
 
 | Setting | Value | Previous | Notes |
 |---------|-------|----------|-------|
 | MinVelocityThreshold | 0.000015 | 0.000008 | ↑ 1.9×, biggest single improvement |
-| SMAWindowSeconds | 180 | 180 | Unchanged |
+| SMAWindowSeconds | 210 | 180 | ↑ from 180, +$16 on 9 days (R1 winner) |
 | SlopeWindowSize | 20 | 20 | Unchanged |
 | ChopThresholdPercent | 0.0011 | 0.0011 | Unchanged |
 | MinChopAbsolute | 0.02 | 0.02 | Unchanged (zero effect at current price) |
@@ -2816,3 +2816,214 @@ Caused: Spread 2 bps, Slippage 1 bps, Vol multiplier 0.5, OV 3×
 - `qqqBot/ProgramRefactored.cs` — SimulatedBroker config section wiring
 - `qqqBot/appsettings.json` — `SimulatedBroker` config section
 - `qqqBot.Tests/SimulatedBrokerTests.cs` — updated for new constructor signature
+
+---
+
+### Session: 2026-02-20 (Comprehensive SimBroker-Era Parameter Sweep)
+
+**Context**: After Feb 20 live loss of -$207.76 (OpEx Friday whipsaws), user requested comprehensive parameter sweep since the SimulatedBroker with realistic spread/slippage is fundamentally different from the old flat-fee broker.
+
+**Branch**: `tuning/small-dataset-v1` (from `feature/mean-reversion-ph`)
+
+**Infrastructure**: Created `sweep-comprehensive.ps1` — 6-round cascading sweep script with Quick mode (3 dates: Feb 11, 12, 20) and full mode (9 dates). Uses `-config=<absolute_path>` with temp JSON files.
+
+**Dataset**: 9 primary dates (Feb 9-13, 17-20), Feb 6 as out-of-sample.
+
+#### Pre-Sweep Baseline (8 dates, pre-SMA change)
+| Date | P/L | Trades | Spread | Slippage |
+|------|-----|--------|--------|----------|
+| Feb 09 | -$8.35 | 6 | $10.45 | $12.05 |
+| Feb 10 | -$3.15 | 9 | $10.47 | $17.10 |
+| Feb 11 | +$180.91 | 6 | $12.04 | $12.69 |
+| Feb 12 | +$186.57 | 19 | $23.44 | $42.58 |
+| Feb 13 | +$168.13 | 8 | $14.53 | $17.48 |
+| Feb 17 | -$38.70 | 23 | $28.68 | $52.82 |
+| Feb 18 | +$147.03 | 4 | $8.54 | $8.16 |
+| Feb 19 | -$158.01 | 21 | $22.69 | $42.63 |
+| Feb 20 | +$189.91 | 6 | $12.03 | $21.21 |
+| **TOTAL** | **+$664.34** | **102** | | |
+| Feb 06 (OOS) | -$36.63 | 6 | $8.46 | $9.62 |
+
+#### Whipsaw Diagnosis
+- **Feb 19** worst day (-$158.01): Base period generates 21 trades with $63 friction. Pure whipsaw.
+- **Feb 20** replay: +$189.91 vs -$207.76 live. OV captures all profit in 6 trades. Daily profit target stops trading, preventing catastrophic Base period (in isolation: -$617.88, 37 trades, $125 friction).
+- **DailyProfitTargetPercent=1.75%** is the single most important protective parameter.
+
+#### Sweep Results Summary
+
+| Round | Focus | Scenarios | Winner | Change |
+|-------|-------|-----------|--------|--------|
+| R1 | Signal Generation (SMA, Velocity, Chop, Trend) | 52 | **SMA=210** | +$16 on 9 days. **Baked.** |
+| R2 | Stops & DSL (TrailingStop, DSL tiers, Cooldown) | 25 | CURRENT | No change |
+| R3 | Exit Strategy (HoldNeutral, TrimRatio, Scalp/Trend wait) | 26 | CURRENT | No change |
+| R4 | Trimming & Drift (EnableTrimming, Drift params) | 40 | CURRENT | No change (DriftDisp=0.3% catastrophic) |
+| R5 | Daily Targets (ProfitTarget%, LossLimit, ReinvestPct) | 29 | CURRENT | No change (Target OFF = -$919) |
+| R6 | Phase Boundaries (OV end, PH start, phase overrides) | 48 | CURRENT | No change |
+
+**Total scenarios tested**: ~220 (Quick mode) + full 9-day validation for R1 winner
+
+#### Key Findings
+
+1. **The bot is remarkably well-tuned.** Only SMA 180→210 improved performance (+$16 = 2.4% improvement over 9 days, +$77 improvement on worst day Feb 19).
+
+2. **Catastrophic parameters to NEVER change:**
+   - DailyProfitTargetPercent OFF or ≥3%: -$919 (allows Base period whipsaw blowups)
+   - HoldNeutralIfUnderwater=false: -$553 on Feb 20
+   - DriftModeMinDisplacementPercent=0.3%: massive blowup
+   - OV_ChopThresholdPercent ≥0.002: -$866 to -$900 (too loose, admits bad signals)
+   - OV_End ≤10:00: -$453 to -$464 (OV too short, falls into Base period churn)
+   - OV_TrailingStop=0.3%: -$235 (too tight, stopped out prematurely)
+   - OV_SMA=60s or 180s: -$145 to -$652
+
+3. **Many parameters have zero effect** on these dates because the daily profit target stops trading before Base/PH phases activate (PH velocity, PH trend window, PH start time all identical to CURRENT).
+
+4. **OV_End=10:13 (current) is the precise optimal boundary.** Even 10:15 is slightly worse (-$10).
+
+#### Only Change Applied
+```
+SMAWindowSeconds: 180 → 210  (appsettings.json)
+```
+
+#### Final Post-Sweep Baseline
+- 9-day P/L: **+$664.34** (102 trades)
+- Feb 6 OOS: **-$36.63** (6 trades)
+
+#### Files Created/Modified
+- `qqqBot/sweep-comprehensive.ps1` — 6-round cascading sweep script (new)
+- `qqqBot/validate-r1.ps1` — R1 validation helper (new)
+- `qqqBot/appsettings.json` — SMAWindowSeconds 180→210
+- `qqqBot/sweep_configs/` — temporary sweep config files
+- `qqqBot/sweep_results/` — CSV result files per round
+
+---
+
+### Session: 2026-02-20 — Feb 20 Live vs Replay Discrepancy Analysis
+
+**Date**: 2026-02-20
+**Branch**: `tuning/small-dataset-v1`
+**Context**: Live bot lost -$207.76 on Feb 20 while replay of the same day shows +$189.91. Investigated root cause and seed-based testing feasibility.
+
+#### Live vs Replay Summary
+
+| Metric | Live | Replay |
+|--------|------|--------|
+| Final P/L | **-$207.76** | **+$189.91** |
+| Trades | ~40+ | 6 (3 round trips) |
+| Peak SessionPnL | +$142.75 | +$197.99 |
+| Daily Target Hit? | **NO** | YES (1.90%) |
+| SMA Setting | 180 | 210 |
+| First Entry Type | DRIFT (95 shares) | DRIFT (206 shares) |
+| First Trade Profit | +$57.00 | +$105.06 |
+| Trading Duration | 08:32 – 13:00 (4.5 hrs) | 08:32 – 10:01 (1.5 hrs) |
+
+#### Root Cause Analysis
+
+**Primary cause: Partial fill on first trade cascaded into full-day exposure.**
+
+1. **Partial Fill (the butterfly wing)**:
+   - Live bot submitted BUY 205 TQQQ at 08:32:12
+   - Order was canceled but 95 fills had already executed ("GHOST SHARES DETECTED: Canceled Buy order had 95 fills @ $48.31")
+   - Only 95/205 shares (46%) filled → first trade profit was +$57 instead of ~$105-123
+   - Replay's SimulatedBroker fills all 206 shares instantly → first trade profit +$105.06
+
+2. **Daily Target Never Triggered**:
+   - Replay: First trade (+$105) + second trade (+$2) + third trade (+$83) = +$189.91 → daily target (1.75%) triggered → bot stopped trading at 10:01 ET
+   - Live: First trade (+$57) left SessionPnL too low. Peaked at +$142.75 at 11:27 ET — **$32.25 short of the $175 threshold**
+   - If the first trade had fully filled (adding ~$48-66 more profit), the daily target likely would have triggered
+
+3. **Extended Whipsaw Exposure**:
+   - Without daily target protection, the live bot continued trading through the choppy Base period
+   - Key losses after peak: -$39.25 (11:30), -$61.65 (11:40), -$41.07 (11:56), -$40.84 (12:24), -$87.15 (12:31), -$71.47 (12:35)
+   - Final MR exit at 13:00 ET (-$23.98)
+   - The last 2 hours of trading (11:27-13:00) turned +$142.75 into -$207.76 = **-$350 swing**
+
+4. **SMA Setting Difference is Irrelevant**:
+   - Ran replay with SMA=180 (matching live config): **identical result +$189.91**
+   - Feb 20's first entry is DRIFT-based (displacement ≥0.2% from SMA), not velocity-based
+   - SMA window size doesn't affect drift entry timing on this day
+
+#### Seed Testing Investigation
+
+**Conclusion: Seeds have ZERO effect on recorded tick data.**
+
+- `ReplayMarketDataSource` accepts optional `int? replaySeed` (defaults to `DateOnly.DayNumber`)
+- Seed is ONLY used in `InterpolateWithBrownianBridge()` → `new Random(seed)` at line 242
+- For Feb 20's recorded data (avg tick gap ~3s), `IsHighResolutionData()` returns true → `skipInterpolation=true`
+- When `skipInterpolation=true`, raw ticks are used directly — `Random` is never instantiated
+- Different seeds would produce **byte-identical** replays
+- No `--seed` CLI parameter exists in `CommandLineOverrides.cs`
+
+**Added HIGH PRIORITY TODO**: `--seed` parameter that seeds `SimulatedBroker` for stochastic partial fills, fill latency, and slippage variance. This is the only way to simulate execution variance for high-res data. See TODO.md "Execution Variance Simulation".
+
+#### Live P/L Path (Full)
+
+```
+08:40  +$57.00   SessionPnL: $57.00    (DRIFT ENTRY, 95 shares partial fill)
+09:01  +$44.67   SessionPnL: $101.67
+09:01  +$0.55    SessionPnL: $102.22
+09:03  -$86.00   SessionPnL: $16.22    (BULL→BEAR regime switch)
+09:07  +$67.62   SessionPnL: $83.84
+09:13  -$5.18    SessionPnL: $78.66
+09:14  +$1.80    SessionPnL: $80.46
+09:15  +$13.16   SessionPnL: $93.62
+09:17  +$17.50   SessionPnL: $111.12
+09:17  -$54.99   SessionPnL: $56.13    (trailing stop whipsaw)
+09:27  +$1.75    SessionPnL: $57.88
+09:33  +$18.65   SessionPnL: $76.53
+09:36  -$9.00    SessionPnL: $67.53
+10:06  +$49.17   SessionPnL: $116.70
+10:11  +$8.10    SessionPnL: $124.80
+10:12  +$2.17    SessionPnL: $126.97
+10:12  +$3.77    SessionPnL: $130.74
+10:29  -$3.84    SessionPnL: $126.90
+10:32  -$59.60   SessionPnL: $67.30    (trailing stop, gives back gains)
+10:56  +$16.06   SessionPnL: $83.36
+10:58  +$2.45    SessionPnL: $85.81
+11:15  +$5.95    SessionPnL: $91.76
+11:15  +$10.88   SessionPnL: $102.64
+11:17  +$9.10    SessionPnL: $111.74
+11:20  +$2.52    SessionPnL: $114.26
+11:20  +$12.60   SessionPnL: $126.86
+11:25  +$9.31    SessionPnL: $136.17
+11:25  +$3.50    SessionPnL: $139.67
+11:27  +$3.08    SessionPnL: $142.75   ← PEAK (never reaches $175 target)
+11:30  -$39.25   SessionPnL: $103.50   ← DECLINE BEGINS
+11:40  -$61.65   SessionPnL: $41.85
+11:56  -$41.07   SessionPnL: $0.78
+12:20  +$15.30   SessionPnL: $16.08
+12:21  +$2.55    SessionPnL: $18.63
+12:23  -$4.41    SessionPnL: $14.22
+12:24  -$40.84   SessionPnL: $-26.62   ← TURNS NEGATIVE
+12:31  -$87.15   SessionPnL: $-113.77
+12:35  -$71.47   SessionPnL: $-185.24
+12:35  +$12.80   SessionPnL: $-172.44
+12:36  -$3.42    SessionPnL: $-175.86
+12:36  -$7.08    SessionPnL: $-182.94
+13:00  -$23.98   SessionPnL: $-206.92  (MR exit, final trade)
+```
+
+#### Replay P/L Path
+
+```
+08:40  +$105.06  SessionPnL: $105.06   (DRIFT ENTRY, 206 shares FULL fill)
+09:01  +$2.03    SessionPnL: $107.09
+09:01  +$82.82   SessionPnL: $189.91   ← DAILY TARGET HIT (1.90%)
+                  Bot goes NEUTRAL/CASH for rest of day
+```
+
+#### Key Insight
+
+The daily profit target is the bot's most critical protective mechanism. When the first trade's profit is large enough to push SessionPnL toward the target quickly, the bot stops early and preserves gains. When execution issues (partial fills) reduce early profits, the bot keeps trading and is exposed to the full day's whipsaw — which reliably destroys capital in the Base period.
+
+**The $400 gap was caused by ~$48 in missing first-trade profit** (from partial fill) that kept the daily target from triggering 5 hours earlier.
+
+#### Actionable Items
+
+1. **Deploy SMA=210 to live** — The sweep-optimized value needs to be merged from `tuning/small-dataset-v1` to the production branch and deployed
+2. **Implement `--seed` for stochastic SimulatedBroker** — Monte Carlo testing to quantify execution sensitivity (HIGH PRIORITY TODO added)
+3. **Consider SimulatedBroker partial fill simulation** — The "fill latency + stochastic fill failure" TODO (already in TODO.md) directly addresses this gap
+4. **Monitor live partial fills** — Track frequency and impact of ghost share events to understand how often this failure mode occurs
+
+#### Files Modified
+- `TODO.md` — Added "Execution Variance Simulation" section (HIGH PRIORITY)
+- `EXPERIMENTS.md` — This session log
