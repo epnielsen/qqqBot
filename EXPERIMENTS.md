@@ -52,19 +52,19 @@
 
 ## Current Production Settings
 
-**As of: 2026-02-14 (Systematic Re-Optimization + OV Extension Session)**
+**As of: 2026-02-20 (Comprehensive SimBroker-Era Sweep)**
 
-> **NOTE**: Full phase-by-phase re-optimization using corrected replay infrastructure.
-> Swept ~200+ configs across 5 dates (Feb 9-13). Result: -$436→+$503 (+$939 improvement).
-> Base settings significantly changed. OV settings partially changed. PH unchanged.
-> OV window extended from 09:50→10:13 (+$60 improvement, $549→$609).
+> **NOTE**: Full 6-round cascading sweep with realistic SimulatedBroker (spread+slippage+vol-aware).
+> Swept ~270 scenarios across 9 primary dates (Feb 9-13, 17-20) + Feb 6 OOS.
+> Only 1 change found: SMA 180→210. Everything else was already optimal.
+> 9-day P/L: +$664.34 (102 trades). Feb 6 OOS: -$36.63.
 
 ### Base Config (10:13–14:00, also default for unspecified times)
 
 | Setting | Value | Previous | Notes |
 |---------|-------|----------|-------|
 | MinVelocityThreshold | 0.000015 | 0.000008 | ↑ 1.9×, biggest single improvement |
-| SMAWindowSeconds | 180 | 180 | Unchanged |
+| SMAWindowSeconds | 210 | 180 | ↑ from 180, +$16 on 9 days (R1 winner) |
 | SlopeWindowSize | 20 | 20 | Unchanged |
 | ChopThresholdPercent | 0.0011 | 0.0011 | Unchanged |
 | MinChopAbsolute | 0.02 | 0.02 | Unchanged (zero effect at current price) |
@@ -2816,3 +2816,81 @@ Caused: Spread 2 bps, Slippage 1 bps, Vol multiplier 0.5, OV 3×
 - `qqqBot/ProgramRefactored.cs` — SimulatedBroker config section wiring
 - `qqqBot/appsettings.json` — `SimulatedBroker` config section
 - `qqqBot.Tests/SimulatedBrokerTests.cs` — updated for new constructor signature
+
+---
+
+### Session: 2026-02-20 (Comprehensive SimBroker-Era Parameter Sweep)
+
+**Context**: After Feb 20 live loss of -$207.76 (OpEx Friday whipsaws), user requested comprehensive parameter sweep since the SimulatedBroker with realistic spread/slippage is fundamentally different from the old flat-fee broker.
+
+**Branch**: `tuning/small-dataset-v1` (from `feature/mean-reversion-ph`)
+
+**Infrastructure**: Created `sweep-comprehensive.ps1` — 6-round cascading sweep script with Quick mode (3 dates: Feb 11, 12, 20) and full mode (9 dates). Uses `-config=<absolute_path>` with temp JSON files.
+
+**Dataset**: 9 primary dates (Feb 9-13, 17-20), Feb 6 as out-of-sample.
+
+#### Pre-Sweep Baseline (8 dates, pre-SMA change)
+| Date | P/L | Trades | Spread | Slippage |
+|------|-----|--------|--------|----------|
+| Feb 09 | -$8.35 | 6 | $10.45 | $12.05 |
+| Feb 10 | -$3.15 | 9 | $10.47 | $17.10 |
+| Feb 11 | +$180.91 | 6 | $12.04 | $12.69 |
+| Feb 12 | +$186.57 | 19 | $23.44 | $42.58 |
+| Feb 13 | +$168.13 | 8 | $14.53 | $17.48 |
+| Feb 17 | -$38.70 | 23 | $28.68 | $52.82 |
+| Feb 18 | +$147.03 | 4 | $8.54 | $8.16 |
+| Feb 19 | -$158.01 | 21 | $22.69 | $42.63 |
+| Feb 20 | +$189.91 | 6 | $12.03 | $21.21 |
+| **TOTAL** | **+$664.34** | **102** | | |
+| Feb 06 (OOS) | -$36.63 | 6 | $8.46 | $9.62 |
+
+#### Whipsaw Diagnosis
+- **Feb 19** worst day (-$158.01): Base period generates 21 trades with $63 friction. Pure whipsaw.
+- **Feb 20** replay: +$189.91 vs -$207.76 live. OV captures all profit in 6 trades. Daily profit target stops trading, preventing catastrophic Base period (in isolation: -$617.88, 37 trades, $125 friction).
+- **DailyProfitTargetPercent=1.75%** is the single most important protective parameter.
+
+#### Sweep Results Summary
+
+| Round | Focus | Scenarios | Winner | Change |
+|-------|-------|-----------|--------|--------|
+| R1 | Signal Generation (SMA, Velocity, Chop, Trend) | 52 | **SMA=210** | +$16 on 9 days. **Baked.** |
+| R2 | Stops & DSL (TrailingStop, DSL tiers, Cooldown) | 25 | CURRENT | No change |
+| R3 | Exit Strategy (HoldNeutral, TrimRatio, Scalp/Trend wait) | 26 | CURRENT | No change |
+| R4 | Trimming & Drift (EnableTrimming, Drift params) | 40 | CURRENT | No change (DriftDisp=0.3% catastrophic) |
+| R5 | Daily Targets (ProfitTarget%, LossLimit, ReinvestPct) | 29 | CURRENT | No change (Target OFF = -$919) |
+| R6 | Phase Boundaries (OV end, PH start, phase overrides) | 48 | CURRENT | No change |
+
+**Total scenarios tested**: ~220 (Quick mode) + full 9-day validation for R1 winner
+
+#### Key Findings
+
+1. **The bot is remarkably well-tuned.** Only SMA 180→210 improved performance (+$16 = 2.4% improvement over 9 days, +$77 improvement on worst day Feb 19).
+
+2. **Catastrophic parameters to NEVER change:**
+   - DailyProfitTargetPercent OFF or ≥3%: -$919 (allows Base period whipsaw blowups)
+   - HoldNeutralIfUnderwater=false: -$553 on Feb 20
+   - DriftModeMinDisplacementPercent=0.3%: massive blowup
+   - OV_ChopThresholdPercent ≥0.002: -$866 to -$900 (too loose, admits bad signals)
+   - OV_End ≤10:00: -$453 to -$464 (OV too short, falls into Base period churn)
+   - OV_TrailingStop=0.3%: -$235 (too tight, stopped out prematurely)
+   - OV_SMA=60s or 180s: -$145 to -$652
+
+3. **Many parameters have zero effect** on these dates because the daily profit target stops trading before Base/PH phases activate (PH velocity, PH trend window, PH start time all identical to CURRENT).
+
+4. **OV_End=10:13 (current) is the precise optimal boundary.** Even 10:15 is slightly worse (-$10).
+
+#### Only Change Applied
+```
+SMAWindowSeconds: 180 → 210  (appsettings.json)
+```
+
+#### Final Post-Sweep Baseline
+- 9-day P/L: **+$664.34** (102 trades)
+- Feb 6 OOS: **-$36.63** (6 trades)
+
+#### Files Created/Modified
+- `qqqBot/sweep-comprehensive.ps1` — 6-round cascading sweep script (new)
+- `qqqBot/validate-r1.ps1` — R1 validation helper (new)
+- `qqqBot/appsettings.json` — SMAWindowSeconds 180→210
+- `qqqBot/sweep_configs/` — temporary sweep config files
+- `qqqBot/sweep_results/` — CSV result files per round

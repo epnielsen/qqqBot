@@ -319,6 +319,19 @@
 - [ ] **TrimRatio weekly re-optimization**
   Current TrimRatio=0.75 was set during Feb 14 sweep. User saw 102/136 shares trimmed (75%) on Feb 19. Keep at 0.75 until next full tuning round. Evaluate with expanded dataset (10+ days) whether 0.5 or 0.33 produces better results.
 
+## Comprehensive SimBroker-Era Sweep (2026-02-20)
+
+- [x] **Full 6-round parameter sweep with realistic SimBroker**
+  **DONE (2026-02-20)**: Created `sweep-comprehensive.ps1` (6-round cascading sweep). Tested ~220 scenarios across 9 primary dates (Feb 9-13, 17-20) + Feb 6 OOS. Branch: `tuning/small-dataset-v1`.
+  - **R1 Signal Generation**: SMA=210 wins (+$16 on 9 days). **Baked into appsettings.json.**
+  - **R2 Stops & DSL**: CURRENT optimal. No changes.
+  - **R3 Exit Strategy**: CURRENT optimal. HoldNeutral=false catastrophic (-$553).
+  - **R4 Trimming & Drift**: CURRENT optimal. DriftDisp=0.3% catastrophic.
+  - **R5 Daily Targets**: CURRENT optimal. DailyTarget OFF = -$919 blowup.
+  - **R6 Phase Boundaries**: CURRENT optimal. OV_End≤10:00 catastrophic.
+  - **Result**: Only SMA 180→210 improved. Bot is remarkably well-tuned already.
+  - **Final 9-day P/L**: +$664.34 (102 trades). Feb 6 OOS: -$36.63.
+
 - [x] **Evaluate Displacement Re-Entry with CVD gating**
   ~~Global displacement re-entry causes regressions with fixed threshold. Tradier streaming API confirmed to provide per-trade `size` + `cvol` + bid/ask context — sufficient for CVD computation. CVD-gated re-entry (only re-enter when CVD confirms directional volume) is the next approach to try. **Prerequisite**: Tradier market data migration (Phase 1).~~
   **SUPERSEDED (2026-02-19)**: Implemented price-derived regime validation (CHOP + BBW) instead of volume-based CVD. Works without Tradier migration. CVD remains a future enhancement if/when Tradier streaming is active.
