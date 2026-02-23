@@ -32,6 +32,13 @@ public class CommandLineOverrides
     // Replay RNG seed for SimulatedBroker stochastic fills
     public int? Seed { get; set; }              // --seed=42
     
+    // Parallel replay mode
+    public string? Dates { get; set; }           // --dates=20260210,20260211 or 20260210-20260215
+    public string? Seeds { get; set; }           // --seeds=1-100 (range) or 1,2,3 (list)
+    public int Parallelism { get; set; } = 0;    // --parallelism=8 (0 = auto: ProcessorCount - 1)
+    public string? Output { get; set; }          // --output=results.csv
+    public string? OutputDir { get; set; }       // --output-dir=parallel_results/
+    
     public static CommandLineOverrides? Parse(string[] args)
     {
         var overrides = new CommandLineOverrides();
@@ -222,6 +229,35 @@ public class CommandLineOverrides
                     Console.Error.WriteLine($"[ERROR] --seed must be an integer. Got: {value}");
                     return null;
                 }
+            }
+            else if (arg.StartsWith("--dates=", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.Dates = arg.Substring("--dates=".Length).Trim();
+            }
+            else if (arg.StartsWith("--seeds=", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.Seeds = arg.Substring("--seeds=".Length).Trim();
+            }
+            else if (arg.StartsWith("--parallelism=", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg.Substring("--parallelism=".Length).Trim();
+                if (int.TryParse(value, out var p) && p >= 0)
+                {
+                    overrides.Parallelism = p;
+                }
+                else
+                {
+                    Console.Error.WriteLine($"[ERROR] --parallelism must be a non-negative integer. Got: {value}");
+                    return null;
+                }
+            }
+            else if (arg.StartsWith("--output=", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.Output = arg.Substring("--output=".Length).Trim();
+            }
+            else if (arg.StartsWith("--output-dir=", StringComparison.OrdinalIgnoreCase))
+            {
+                overrides.OutputDir = arg.Substring("--output-dir=".Length).Trim();
             }
             // NOTE: -takeprofit has been replaced by the Hybrid Profit Management System.
             // Use ProfitReinvestmentPercent and Trimming settings in appsettings.json instead.

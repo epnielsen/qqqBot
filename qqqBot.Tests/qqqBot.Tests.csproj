@@ -33,6 +33,7 @@
     <Compile Include="..\qqqBot\TradingState.cs" Link="TradingState.cs" />
     <Compile Include="..\qqqBot\TradingStateMetadata.cs" Link="TradingStateMetadata.cs" />
     <Compile Include="..\qqqBot\SimulatedBroker.cs" Link="SimulatedBroker.cs" />
+    <Compile Include="..\qqqBot\ReplayResult.cs" Link="ReplayResult.cs" />
     <Compile Include="..\qqqBot\MarketDataRecorder.cs" Link="MarketDataRecorder.cs" />
     <Compile Include="..\qqqBot\ReplayMarketDataSource.cs" Link="ReplayMarketDataSource.cs" />
     <Compile Include="..\qqqBot\RecordingAnalystDataSource.cs" Link="RecordingAnalystDataSource.cs" />

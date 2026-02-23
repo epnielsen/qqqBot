@@ -604,6 +604,45 @@ public sealed class SimulatedBroker : IBrokerExecution
     }
 
     /// <summary>
+    /// Returns a structured result snapshot from the current broker state.
+    /// Thread-safe — acquires the internal lock.
+    /// </summary>
+    public ReplayResult GetResult(DateOnly replayDate = default, int? seed = null, string? configLabel = null,
+        TimeSpan wallClockDuration = default, bool success = true, string? errorMessage = null)
+    {
+        lock (_lock)
+        {
+            var equity = _cashBalance;
+            foreach (var pos in _positions.Values)
+            {
+                var px = _latestPrices.GetValueOrDefault(pos.Symbol, pos.AverageEntryPrice);
+                equity += px * pos.Quantity;
+            }
+
+            return new ReplayResult
+            {
+                Success = success,
+                ErrorMessage = errorMessage,
+                ReplayDate = replayDate,
+                RngSeed = seed ?? _seed,
+                ConfigLabel = configLabel,
+                StartingCash = _initialCash,
+                EndingEquity = equity,
+                RealizedPnL = _realizedPnL,
+                NetReturnFraction = _initialCash != 0 ? (equity - _initialCash) / _initialCash : 0,
+                TotalTrades = _tradeCount,
+                SpreadCost = _totalSpreadCost,
+                SlippageCost = _totalSlippageCost,
+                PeakEquity = _watermarkInitialized ? _peakEquity : equity,
+                PeakEquityTimeUtc = _peakEquityTime,
+                TroughEquity = _watermarkInitialized ? _troughEquity : equity,
+                TroughEquityTimeUtc = _troughEquityTime,
+                WallClockDuration = wallClockDuration
+            };
+        }
+    }
+
+    /// <summary>
     /// Prints a summary of the simulated trading session.
     /// </summary>
     public void PrintSummary()

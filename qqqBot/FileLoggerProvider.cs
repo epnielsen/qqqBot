@@ -12,8 +12,12 @@ public class FileLoggerProvider : ILoggerProvider
     /// <summary>
     /// When set, log timestamps use this value instead of DateTime.Now.
     /// Used in replay mode so log entries reflect the replayed tick time.
+    /// 
+    /// This is an INSTANCE property (not static) so that multiple parallel
+    /// replay pipelines can each maintain their own simulated clock without
+    /// racing on shared state.
     /// </summary>
-    public static DateTime? ClockOverride { get; set; }
+    public DateTime? ClockOverride { get; set; }
 
     private readonly string _filePath;
     private readonly ConcurrentDictionary<string, FileLogger> _loggers = new();

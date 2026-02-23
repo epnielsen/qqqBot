@@ -265,6 +265,69 @@ Run the same replay 2-3 times and confirm identical P/L, trade count, and waterm
 | `--speed=N` | Playback speed (0 = max, 1 = real-time) |
 | `--start-time=HH:MM` | Start time filter (Eastern) |
 | `--end-time=HH:MM` | End time filter (Eastern) |
+| `--seed=N` | RNG seed for Brownian bridge interpolation |
+
+## Parallel Replay Mode
+
+Run multiple replay dates and/or Monte Carlo seeds concurrently in a single process. Each replay pipeline is fully isolated (separate broker, logger, channels, state files).
+
+### Basic Usage
+
+```bash
+# Replay 5 dates in parallel (8-way concurrency)
+dotnet run -- --mode=parallel-replay --dates=20260210,20260211,20260212,20260213,20260214 --parallelism=8 --speed=0
+
+# Date range (auto-skips weekends)
+dotnet run -- --mode=parallel-replay --dates=20260210-20260214 --parallelism=8 --speed=0
+
+# Monte Carlo: 20 seeds across 3 dates (60 total runs)
+dotnet run -- --mode=parallel-replay --dates=20260210,20260211,20260212 --seeds=1-20 --parallelism=8 --speed=0
+
+# Output results to CSV
+dotnet run -- --mode=parallel-replay --dates=20260210-20260214 --parallelism=8 --speed=0 --output=results.csv --output-dir=my_run
+```
+
+### Parallel Replay CLI Options
+
+| Option | Description |
+|--------|-------------|
+| `--mode=parallel-replay` | Enable parallel replay mode |
+| `--dates=...` | Comma-separated dates or range (`YYYYMMDD-YYYYMMDD`); weekends auto-skipped |
+| `--seeds=...` | Comma-separated seeds or range (`N-M`); creates cartesian product with dates |
+| `--parallelism=N` | Max concurrent replays (default: CPU core count) |
+| `--speed=N` | Playback speed per pipeline (0 = max) |
+| `--output=PATH` | CSV file path for structured results |
+| `--output-dir=PATH` | Directory for per-run logs |
+| `-config=PATH` | Alternate config file (same as single replay) |
+
+### PowerShell Sweep Script
+
+The `parallel-sweep.ps1` script wraps the parallel replay engine for parameter sweeps and Monte Carlo simulations:
+
+```powershell
+# Parameter sweep: test 5 values of TrailingStopPercent across 3 dates
+.\parallel-sweep.ps1 -Param "TradingBot:TrailingStopPercent" `
+    -Values @(0.001, 0.002, 0.003, 0.004, 0.005) `
+    -Dates "20260210,20260211,20260212" `
+    -Parallelism 8
+
+# Monte Carlo: 50 seeds across a date range
+.\parallel-sweep.ps1 -MonteCarloSeeds "1-50" `
+    -Dates "20260210-20260214" `
+    -Parallelism 8
+
+# Custom base config
+.\parallel-sweep.ps1 -Param "TradingBot:MinVelocityThreshold" `
+    -Values @(0.000001, 0.000005, 0.00001) `
+    -Dates "20260210,20260211" `
+    -BaseConfig "sweep_configs/my_base.json"
+```
+
+Results are saved to `sweep_results/` by default, with per-variant CSV files and a `sweep_summary.csv` aggregation.
+
+### Live Safety
+
+Parallel replay refuses to start if the live bot is running (detected via lockfile). The live bot creates `qqqbot_live.lock` in its log directory during execution and removes it on shutdown.
 
 ## Running the Bot
 
@@ -409,6 +472,11 @@ qqqbot/
 ├── TrailingStopEngine.cs   # Trailing stop-loss logic
 ├── SimulatedBroker.cs      # Fake broker for replay mode
 ├── ReplayMarketDataSource.cs # CSV replay with auto-detect interpolation
+├── ReplayContext.cs         # Per-run context (replaces statics for parallel safety)
+├── ReplayResult.cs          # Structured DTO for replay output
+├── ReplayPipelineFactory.cs # Constructs isolated replay pipelines (no DI host)
+├── ParallelReplayRunner.cs  # Runs N replays concurrently with SemaphoreSlim
+├── parallel-sweep.ps1       # PowerShell wrapper for parameter sweeps & Monte Carlo
 ├── appsettings.json        # Configuration file
 ├── trading_state.json      # Runtime state (generated)
 ├── EXPERIMENTS.md           # Tuning experiment history (read before changing settings)

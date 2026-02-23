@@ -74,16 +74,21 @@ public static class ProgramRefactored
             return;
         }
 
+        // --- Parallel Replay Mode (standalone, runs N replays in-process) ---
+        if (overrides.Mode == "parallel-replay")
+        {
+            await RunParallelReplayAsync(overrides);
+            return;
+        }
+
         var host = CreateHostBuilder(args, overrides).Build();
         await host.RunAsync();
     }
     
-    // Store config file name for startup logging
-    internal static string ConfigFileName { get; private set; } = "appsettings.json";
-    
-    // Store replay mode flag for DI access
-    internal static bool IsReplayMode { get; private set; }
-    internal static CommandLineOverrides? CurrentOverrides { get; private set; }
+    // Per-run context — replaces the former static fields.
+    // For single-replay & live mode this is set once before host build;
+    // for parallel-replay each pipeline gets its own instance.
+    internal static ReplayContext CurrentContext { get; private set; } = new();
     
     /// <summary>
     /// Standalone fetch-history mode: downloads historical data and exits.
@@ -175,13 +180,204 @@ public static class ProgramRefactored
         }
     }
 
+    /// <summary>
+    /// Parallel replay mode: builds N ReplayRunSpec objects from CLI args and runs them concurrently.
+    /// </summary>
+    private static async Task RunParallelReplayAsync(CommandLineOverrides overrides)
+    {
+        using var loggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
+        var logger = loggerFactory.CreateLogger("ParallelReplay");
+
+        // ── Load config ──
+        var configFileName = overrides.ConfigFile ?? "appsettings.json";
+        var config = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile(configFileName, optional: false)
+            .Build();
+
+        var settings = BuildTradingSettings(config);
+        // Apply CLI overrides to base settings (same as single-replay)
+        if (overrides.BullTicker != null) settings.BullSymbol = overrides.BullTicker;
+        if (overrides.BearTicker != null) settings.BearSymbol = overrides.BearTicker;
+        if (overrides.BenchmarkTicker != null) settings.BenchmarkSymbol = overrides.BenchmarkTicker;
+
+        // ── Parse dates ──
+        var dates = ParseDatesArg(overrides.Dates ?? overrides.ReplayDate, logger);
+        if (dates.Count == 0)
+        {
+            Console.Error.WriteLine("[ERROR] --dates or --date is required for parallel-replay mode.");
+            return;
+        }
+
+        // ── Parse seeds ──
+        var seeds = ParseSeedsArg(overrides.Seeds, overrides.Seed, dates, logger);
+
+        // ── Directories ──
+        var outputDir = overrides.OutputDir ?? "parallel_results";
+        var logDir = Path.Combine(outputDir, "logs");
+        var stateDir = Path.Combine(outputDir, "state");
+        Directory.CreateDirectory(logDir);
+        Directory.CreateDirectory(stateDir);
+
+        var marketDataDir = config["TradingBot:MarketDataDirectory"];
+        if (string.IsNullOrWhiteSpace(marketDataDir))
+            marketDataDir = Path.Combine(@"C:\dev\TradeEcosystem", "data", "market");
+
+        // ── Check lockfile ──
+        var lockfilePath = Path.Combine(AppContext.BaseDirectory, "live_trading.lock");
+        if (File.Exists(lockfilePath))
+        {
+            var lockContent = File.ReadAllText(lockfilePath).Trim();
+            Console.Error.WriteLine($"[ERROR] Live trading lockfile exists: {lockfilePath}");
+            Console.Error.WriteLine($"        Content: {lockContent}");
+            Console.Error.WriteLine("        Remove the lockfile if the live bot is not running.");
+            return;
+        }
+
+        // ── Build run specs (cartesian product: dates × seeds) ──
+        var specs = new List<ReplayRunSpec>();
+        foreach (var date in dates)
+        {
+            foreach (var seed in seeds)
+            {
+                // Deep-clone settings for each run via JSON round-trip
+                var json = System.Text.Json.JsonSerializer.Serialize(settings);
+                var clonedSettings = System.Text.Json.JsonSerializer.Deserialize<MarketBlocks.Bots.Domain.TradingSettings>(json)!;
+
+                specs.Add(new ReplayRunSpec
+                {
+                    Date = date,
+                    Settings = clonedSettings,
+                    Seed = seed,
+                    Speed = overrides.ReplaySpeed,
+                    StartTime = overrides.StartTime,
+                    EndTime = overrides.EndTime,
+                    LogDirectory = logDir,
+                    StateFileDirectory = stateDir,
+                    MarketDataDirectory = marketDataDir,
+                    ConfigLabel = overrides.ConfigFile != null ? Path.GetFileNameWithoutExtension(overrides.ConfigFile) : null,
+                    BrokerConfig = config
+                });
+            }
+        }
+
+        logger.LogInformation("[PARALLEL] {Dates} date(s) × {Seeds} seed(s) = {Total} total runs",
+            dates.Count, seeds.Count, specs.Count);
+
+        // ── Run ──
+        var parallelism = overrides.Parallelism > 0
+            ? overrides.Parallelism
+            : Math.Max(1, Environment.ProcessorCount - 1);
+
+        var csvPath = overrides.Output 
+            ?? Path.Combine(outputDir, $"results_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
+
+        var runner = new ParallelReplayRunner(logger);
+        await runner.RunAllAsync(specs, parallelism, csvPath);
+    }
+
+    /// <summary>
+    /// Parse --dates argument: comma-separated dates or a range (YYYYMMDD-YYYYMMDD).
+    /// Falls back to single --date if --dates not specified.
+    /// </summary>
+    internal static List<DateOnly> ParseDatesArg(string? datesArg, ILogger logger)
+    {
+        var result = new List<DateOnly>();
+        if (string.IsNullOrWhiteSpace(datesArg)) return result;
+
+        // Check for range: YYYYMMDD-YYYYMMDD (exactly one dash between two 8-digit numbers)
+        var parts = datesArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            // Check if it's a range (contains dash but is not a YYYY-MM-DD date)
+            if (part.Length > 8 && part.Contains('-'))
+            {
+                // Try range: YYYYMMDD-YYYYMMDD
+                var dashIdx = part.IndexOf('-', 1); // skip potential negative, but dates don't start with -
+                if (dashIdx > 0)
+                {
+                    var startStr = part[..dashIdx];
+                    var endStr = part[(dashIdx + 1)..];
+                    if (TryParseFlexibleDate(startStr, out var start) && TryParseFlexibleDate(endStr, out var end))
+                    {
+                        for (var d = start; d <= end; d = d.AddDays(1))
+                        {
+                            // Skip weekends
+                            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday)
+                                result.Add(d);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Single date
+            if (TryParseFlexibleDate(part, out var date))
+            {
+                result.Add(date);
+            }
+            else
+            {
+                logger.LogWarning("[PARALLEL] Could not parse date: {Date}", part);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Parse --seeds argument: range (e.g., "1-100") or comma-separated list.
+    /// If not specified, uses one seed per date (date.DayNumber) or the --seed value.
+    /// </summary>
+    internal static List<int> ParseSeedsArg(string? seedsArg, int? baseSeed, List<DateOnly> dates, ILogger logger)
+    {
+        if (string.IsNullOrWhiteSpace(seedsArg))
+        {
+            // No --seeds specified: use single seed per date
+            if (baseSeed.HasValue)
+                return [baseSeed.Value];
+            
+            // Default: date-based seeds (one per date)
+            return dates.Select(d => d.DayNumber).Distinct().ToList();
+        }
+
+        var result = new List<int>();
+
+        // Check for range: N-M
+        if (seedsArg.Contains('-') && !seedsArg.Contains(','))
+        {
+            var parts = seedsArg.Split('-');
+            if (parts.Length == 2 && int.TryParse(parts[0], out var from) && int.TryParse(parts[1], out var to))
+            {
+                for (int s = from; s <= to; s++)
+                    result.Add(s);
+                return result;
+            }
+        }
+
+        // Comma-separated list
+        foreach (var part in seedsArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (int.TryParse(part, out var seed))
+                result.Add(seed);
+            else
+                logger.LogWarning("[PARALLEL] Could not parse seed: {Seed}", part);
+        }
+
+        return result;
+    }
+
     public static IHostBuilder CreateHostBuilder(string[] args, CommandLineOverrides overrides)
     {
         // Determine which config file to use
         var configFileName = overrides?.ConfigFile ?? "appsettings.json";
-        ConfigFileName = configFileName; // Store for logging later
-        IsReplayMode = overrides?.Mode == "replay";
-        CurrentOverrides = overrides;
+        var isReplay = overrides?.Mode == "replay";
+        CurrentContext = new ReplayContext
+        {
+            ConfigFileName = configFileName,
+            IsReplayMode = isReplay,
+            Overrides = overrides
+        };
         
         return Host.CreateDefaultBuilder() // Do not pass args here to prevent default CLI parser from crashing on custom flags
             .ConfigureAppConfiguration((context, config) =>
@@ -204,19 +400,20 @@ public static class ProgramRefactored
                 
                 // Build log file name: replay gets unique per-run names; live gets daily
                 string logFileName;
-                if (IsReplayMode && CurrentOverrides != null)
+                var ctx = CurrentContext;
+                if (ctx.IsReplayMode && ctx.Overrides != null)
                 {
-                    var replayDateStr = CurrentOverrides.ReplayDate ?? "unknown";
+                    var replayDateStr = ctx.Overrides.ReplayDate ?? "unknown";
                     // Normalize date string (remove dashes for filename)
                     replayDateStr = replayDateStr.Replace("-", "");
                     var nowStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                     
                     // Include segment range if specified
                     var segmentSuffix = "";
-                    if (CurrentOverrides.StartTime.HasValue || CurrentOverrides.EndTime.HasValue)
+                    if (ctx.Overrides.StartTime.HasValue || ctx.Overrides.EndTime.HasValue)
                     {
-                        var start = CurrentOverrides.StartTime?.ToString("HHmm") ?? "open";
-                        var end = CurrentOverrides.EndTime?.ToString("HHmm") ?? "close";
+                        var start = ctx.Overrides.StartTime?.ToString("HHmm") ?? "open";
+                        var end = ctx.Overrides.EndTime?.ToString("HHmm") ?? "close";
                         segmentSuffix = $"_{start}-{end}";
                     }
                     
@@ -228,14 +425,20 @@ public static class ProgramRefactored
                 }
                 
                 var logFilePath = Path.Combine(logDirectory, logFileName);
-                logging.AddProvider(new FileLoggerProvider(logFilePath));
+                var fileLoggerProvider = new FileLoggerProvider(logFilePath);
+                ctx.FileLogger = fileLoggerProvider;
+                logging.AddProvider(fileLoggerProvider);
                 
                 logging.SetMinimumLevel(LogLevel.Information);
             })
             .ConfigureServices((context, services) =>
             {
                 var configuration = context.Configuration;
-                var isReplay = IsReplayMode;
+                var ctx2 = CurrentContext;
+                var isReplay = ctx2.IsReplayMode;
+                
+                // Register ReplayContext in DI so orchestrators and other services can access it
+                services.AddSingleton(ctx2);
                 
                 // Resolve market data directory from config (default: C:\dev\TradeEcosystem\data\market)
                 var marketDataDir = configuration["TradingBot:MarketDataDirectory"];
@@ -314,9 +517,9 @@ public static class ProgramRefactored
                     
                     // Register SimulatedBroker as IBrokerExecution
                     // Seed: CLI --seed > config > date-based default
-                    var replayDateForSeed = TryParseFlexibleDate(CurrentOverrides?.ReplayDate, out var seedDate)
+                    var replayDateForSeed = TryParseFlexibleDate(ctx2.Overrides?.ReplayDate, out var seedDate)
                         ? seedDate : DateOnly.FromDateTime(DateTime.Now);
-                    var brokerSeed = CurrentOverrides?.Seed
+                    var brokerSeed = ctx2.Overrides?.Seed
                         ?? configuration.GetValue<int?>("SimulatedBroker:Seed")
                         ?? replayDateForSeed.DayNumber;
                     
@@ -366,12 +569,12 @@ public static class ProgramRefactored
                     services.AddSingleton(new TradingStateManager(replayStateFile));
                     
                     // ReplayMarketDataSource as IAnalystMarketDataSource
-                    var replayDate = TryParseFlexibleDate(CurrentOverrides?.ReplayDate, out var rd)
+                    var replayDate = TryParseFlexibleDate(ctx2.Overrides?.ReplayDate, out var rd)
                         ? rd : DateOnly.FromDateTime(DateTime.Now.AddDays(-1));
-                    var replaySpeed = CurrentOverrides?.ReplaySpeed ?? 10.0;
+                    var replaySpeed = ctx2.Overrides?.ReplaySpeed ?? 10.0;
                     var dataDir = marketDataDir;
-                    var segmentStart = CurrentOverrides?.StartTime;
-                    var segmentEnd = CurrentOverrides?.EndTime;
+                    var segmentStart = ctx2.Overrides?.StartTime;
+                    var segmentEnd = ctx2.Overrides?.EndTime;
                     
                     services.AddSingleton<MarketBlocks.Bots.Services.IAnalystMarketDataSource>(sp =>
                     {
@@ -387,6 +590,7 @@ public static class ProgramRefactored
                         return new ReplayMarketDataSource(logger, dataDir, replayDate, replaySpeed,
                             onPriceUpdate: (s, p, t) => simBroker.UpdatePrice(s, p, t),
                             onTimeAdvance: null,  // Clock now advances on analyst's consumer side for determinism
+                            replaySeed: ctx2.Overrides?.Seed,  // Wire CLI --seed to Brownian bridge interpolation
                             startTime: segmentStart,
                             endTime: segmentEnd,
                             skipInterpolation: skipInterpolation);
@@ -548,6 +752,7 @@ public static class ProgramRefactored
                     var trader = sp.GetRequiredService<TraderEngine>();
                     var timeRuleApplier = sp.GetService<TimeRuleApplier>();
                     
+                    var replayCtx = sp.GetRequiredService<ReplayContext>();
                     return new AnalystEngine(
                         logger,
                         s,
@@ -559,8 +764,8 @@ public static class ProgramRefactored
                         () => trader.LastAnalystSignal,              // Get persisted signal
                         signal => trader.SaveLastAnalystSignal(signal),  // Save signal on change
                         timeRuleApplier,                             // Time-based phase switching
-                        onTickProcessed: IsReplayMode
-                            ? utc => FileLoggerProvider.ClockOverride = utc.ToLocalTime()
+                        onTickProcessed: replayCtx.IsReplayMode && replayCtx.FileLogger != null
+                            ? utc => replayCtx.FileLogger.ClockOverride = utc.ToLocalTime()
                             : null);                                 // Clock advances at consumer side in replay
                 });
                 
@@ -840,7 +1045,7 @@ public static class ProgramRefactored
     /// high-resolution recorded ticks (sub-second) or low-resolution historical bars (60 s+).
     /// Returns true when interpolation should be skipped (i.e. data is already dense enough).
     /// </summary>
-    private static bool IsHighResolutionData(string dataDir, string dateStr, ILogger logger)
+    internal static bool IsHighResolutionData(string dataDir, string dateStr, ILogger logger)
     {
         const int samplesToRead = 100;
         const double highResThresholdSeconds = 10.0; // avg gap < 10s ⇒ high-res
@@ -917,29 +1122,43 @@ public class TradingOrchestrator : BackgroundService
     private readonly TraderEngine _trader;
     private readonly MarketBlocks.Bots.Domain.TradingSettings _settings;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ReplayContext _context;
     
     public TradingOrchestrator(
         ILogger<TradingOrchestrator> logger,
         AnalystEngine analyst,
         TraderEngine trader,
         MarketBlocks.Bots.Domain.TradingSettings settings,
-        IHostApplicationLifetime lifetime)
+        IHostApplicationLifetime lifetime,
+        ReplayContext context)
     {
         _logger = logger;
         _analyst = analyst;
         _trader = trader;
         _settings = settings;
         _lifetime = lifetime;
+        _context = context;
     }
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Create lockfile to prevent parallel-replay from running during live trading
+        var lockfilePath = Path.Combine(AppContext.BaseDirectory, "live_trading.lock");
+        try
+        {
+            File.WriteAllText(lockfilePath, $"PID={Environment.ProcessId}\nStarted={DateTime.UtcNow:O}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to create lockfile at {Path}", lockfilePath);
+        }
+
         _logger.LogInformation("=== QQQ Trading Bot Starting ===");
         _logger.LogInformation("Architecture: Producer/Consumer with Channel<MarketRegime>");
         _logger.LogInformation("");
         
         // Log configuration file and key parameters
-        _logger.LogInformation("Config File: {ConfigFile}", ProgramRefactored.ConfigFileName);
+        _logger.LogInformation("Config File: {ConfigFile}", _context.ConfigFileName);
         _logger.LogInformation("");
         _logger.LogInformation("Analytics:");
         _logger.LogInformation("  MinVelocityThreshold: {Value}", _settings.MinVelocityThreshold);
@@ -1024,6 +1243,11 @@ public class TradingOrchestrator : BackgroundService
             _logger.LogInformation("[ORCHESTRATOR] Stopping engines...");
             await _analyst.StopAsync(CancellationToken.None);
             await _trader.StopAsync(CancellationToken.None);
+            
+            // Remove lockfile
+            try { if (File.Exists(lockfilePath)) File.Delete(lockfilePath); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to remove lockfile"); }
+            
             _logger.LogInformation("[ORCHESTRATOR] Shutdown complete.");
         }
     }
@@ -1041,6 +1265,7 @@ public class ReplayOrchestrator : BackgroundService
     private readonly SimulatedBroker _simulatedBroker;
     private readonly MarketBlocks.Bots.Domain.TradingSettings _settings;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ReplayContext _context;
 
     public ReplayOrchestrator(
         ILogger<ReplayOrchestrator> logger,
@@ -1048,7 +1273,8 @@ public class ReplayOrchestrator : BackgroundService
         TraderEngine trader,
         SimulatedBroker simulatedBroker,
         MarketBlocks.Bots.Domain.TradingSettings settings,
-        IHostApplicationLifetime lifetime)
+        IHostApplicationLifetime lifetime,
+        ReplayContext context)
     {
         _logger = logger;
         _analyst = analyst;
@@ -1056,15 +1282,16 @@ public class ReplayOrchestrator : BackgroundService
         _simulatedBroker = simulatedBroker;
         _settings = settings;
         _lifetime = lifetime;
+        _context = context;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("=== QQQ Trading Bot — REPLAY MODE ===");
-        _logger.LogInformation("Config File: {ConfigFile}", ProgramRefactored.ConfigFileName);
+        _logger.LogInformation("Config File: {ConfigFile}", _context.ConfigFileName);
         
         // Replay metadata header
-        var replayOverrides = ProgramRefactored.CurrentOverrides;
+        var replayOverrides = _context.Overrides;
         _logger.LogInformation("Replay Date:     {Date}", replayOverrides?.ReplayDate ?? "unknown");
         _logger.LogInformation("Wall-Clock Start: {Now}", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
         _logger.LogInformation("Speed:           {Speed}x", replayOverrides?.ReplaySpeed ?? 10.0);

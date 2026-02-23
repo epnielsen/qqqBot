@@ -89,6 +89,57 @@ foreach ($value in @(0.5, 0.75, 1.0, 1.25, 1.5)) {
 
 The existing sweep scripts (`sweep.ps1`, `crosscut-sweep.ps1`, etc.) already follow this pattern via `Set-BaseProperty`, `Write-SweepConfig`, and `Run-Replay` helper functions.
 
+## Parallel Replay & Monte Carlo
+
+The bot supports **in-process parallel replay** via `--mode=parallel-replay`. Each pipeline is fully isolated (separate broker, logger, channels, state files). Use this for sweeps and Monte Carlo instead of sequential single-replay loops when possible.
+
+### CLI Quick Reference
+
+```bash
+# Multi-date parallel replay
+dotnet run -- --mode=parallel-replay --dates=20260210-20260214 --parallelism=8 --speed=0
+
+# Monte Carlo: cartesian product of dates × seeds
+dotnet run -- --mode=parallel-replay --dates=20260210,20260211 --seeds=1-20 --parallelism=8 --speed=0 --output=results.csv
+
+# With alternate config (for sweeps)
+dotnet run -- --mode=parallel-replay --dates=20260210-20260214 --parallelism=8 --speed=0 -config=sweep_configs/variant.json --output=results.csv
+```
+
+### How to Run a Parameter Sweep (AI Agent Step-by-Step)
+
+1. **Read** `appsettings.json` into a PowerShell object (`ConvertFrom-Json`)
+2. For each parameter value:
+   a. Deep-clone the config: `$cfg = $baseConfig | ConvertTo-Json -Depth 10 | ConvertFrom-Json`
+   b. Modify the target property
+   c. Write to `sweep_configs/<variant>.json`
+   d. Run: `dotnet run -- --mode=parallel-replay --dates=<dates> --parallelism=8 --speed=0 -config=sweep_configs/<variant>.json --output=sweep_results/<variant>/results.csv --output-dir=sweep_results/<variant>`
+3. Parse result CSVs (`Import-Csv`) to compare mean P/L, win rate, etc.
+4. Log results to EXPERIMENTS.md
+
+Or use the wrapper: `.\parallel-sweep.ps1 -Param "TradingBot:<SettingName>" -Values @(...) -Dates "..." -Parallelism 8`
+
+### How to Run Monte Carlo (AI Agent Step-by-Step)
+
+1. Choose a seed range (e.g., `1-50` for 50 runs per date)
+2. Run: `dotnet run -- --mode=parallel-replay --dates=<dates> --seeds=1-50 --parallelism=8 --speed=0 --output=montecarlo_results.csv`
+3. Parse the CSV: compute mean, std dev, min, max, median P/L and win rate across all runs
+4. Seeds affect Brownian bridge interpolation (randomized tick paths within historical bars)
+5. Use Monte Carlo to assess strategy robustness — narrow std dev = robust, wide = fragile
+6. Log results and statistical summary to EXPERIMENTS.md
+
+Or use the wrapper: `.\parallel-sweep.ps1 -MonteCarloSeeds "1-50" -Dates "..." -Parallelism 8`
+
+### Parallel Replay Rules
+
+- **Never run parallel-replay while the live bot is running** — the engine checks for `qqqbot_live.lock` and refuses to start if found
+- **--dates accepts**: comma-separated (`20260210,20260211`) or ranges (`20260210-20260214`); weekends are auto-skipped
+- **--seeds accepts**: comma-separated (`1,5,10`) or ranges (`1-50`); creates cartesian product with dates
+- **--parallelism=0** (default) uses CPU core count; recommended: 8 for most machines
+- **CSV output** (`--output=path`): structured results with columns: `ReplayDate,RngSeed,ConfigLabel,RealizedPnL,NetReturnPercent,TotalTrades,SpreadCost,SlippageCost,PeakEquity,PeakEquityTime,TroughEquity,TroughEquityTime,WallClockMs,Success,Error`
+- **Key files**: `ReplayPipelineFactory.cs` (builds isolated object graph), `ParallelReplayRunner.cs` (SemaphoreSlim throttling), `ReplayContext.cs` (per-run state), `ReplayResult.cs` (DTO)
+- **Each pipeline creates temp state files** in isolated directories with GUID suffixes — cleaned up automatically after each run
+
 ## Testing
 
 ```bash
