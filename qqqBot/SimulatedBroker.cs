@@ -603,6 +603,21 @@ public sealed class SimulatedBroker : IBrokerExecution
         return Task.FromResult(true); // All symbols valid in simulation
     }
 
+    public Task<IReadOnlyList<BotOrder>> GetRecentFilledOrdersAsync(string symbol, DateTime since, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            var filled = _orders.Values
+                .Where(o => o.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+                .Where(o => o.Status == BotOrderStatus.Filled)
+                .Where(o => o.FilledAtUtc.HasValue && o.FilledAtUtc.Value >= since)
+                .OrderByDescending(o => o.FilledAtUtc)
+                .ToList();
+            
+            return Task.FromResult<IReadOnlyList<BotOrder>>(filled);
+        }
+    }
+
     /// <summary>
     /// Returns a structured result snapshot from the current broker state.
     /// Thread-safe — acquires the internal lock.

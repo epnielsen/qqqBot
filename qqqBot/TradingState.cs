@@ -24,6 +24,7 @@ public class TradingState
     public decimal? AverageEntryPrice { get; set; } // Track cost basis for P/L calcs (e.g. TakeProfit)
     public decimal StartingAmount { get; set; }
     public decimal DayStartBalance { get; set; }
+    public decimal? BrokerDayStartEquity { get; set; } // Broker's actual equity at day start for reconciliation
     public string? DayStartDate { get; set; }
     public TradingStateMetadata? Metadata { get; set; }
     
