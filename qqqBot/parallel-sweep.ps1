@@ -156,9 +156,5 @@ elseif ($Param -ne "" -and $Values.Length -gt 0) {
     Write-Host "Summary saved to: $summaryPath" -ForegroundColor Green
 }
 else {
-    Write-Host "Usage:" -ForegroundColor Yellow
-    Write-Host "  Parameter sweep:  .\parallel-sweep.ps1 -Param 'TradingBot:TrailingStopPercent' -Values @(0.001,0.002,0.003) -Dates '20260210,20260211'"
-    Write-Host "  Monte Carlo:      .\parallel-sweep.ps1 -MonteCarloSeeds '1-50' -Dates '20260210-20260214'"
-    Write-Host ""
-    Write-Host "Run '.\parallel-sweep.ps1 -?' for full help." -ForegroundColor DarkGray
+    Write-Host "Error: specify -Param/-Values for parameter sweep, or -MonteCarloSeeds for Monte Carlo." -ForegroundColor Red
 }

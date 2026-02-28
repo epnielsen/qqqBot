@@ -63,6 +63,17 @@ public class HistoricalDataFetcher
         {
             try
             {
+                // --- Overwrite protection: skip API call entirely if file already exists ---
+                var sanitized = symbol.Replace("/", "-").Replace("\\", "-");
+                var targetPath = Path.Combine(_dataDirectory, $"{dateStr}_market_data_{sanitized}.csv");
+                if (File.Exists(targetPath) && new FileInfo(targetPath).Length > 0)
+                {
+                    _logger.LogInformation("[FETCH] Skipping {Symbol} on {Date} — file already exists: {File}",
+                        symbol, dateStr, targetPath);
+                    files.Add(targetPath);
+                    continue;
+                }
+
                 var bars = await FetchBarsForSymbolAsync(symbol, from, to, ct);
                 if (bars == null || bars.Count == 0)
                 {

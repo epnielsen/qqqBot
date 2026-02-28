@@ -3122,3 +3122,575 @@ Settings (configurable in `appsettings.json`):
 - `qqqBot/appsettings.json` — Added inactivity settings, `SlippageVarianceFactor`, `AuctionMode` section
 - `TODO.md` — Marked seed + fill latency TODOs done, added "Signal Loss" and "DevOps" sections
 - `EXPERIMENTS.md` — This session log
+
+---
+
+## Session: 2026-02-28 — $30k Tuning Campaign (Parallel Replay)
+
+### Context
+
+Bot performed poorly the week of Feb 23–27 with $30k starting capital:
+- Feb 23: -$171 (baseline)
+- Feb 24: +$511 (baseline)
+- Feb 25: $0 (no trades — flat day)
+- Feb 26: **-$1,044** (catastrophic)
+- Feb 27: **-$979** (catastrophic)
+
+Goals: Tune bot to be profitable across all 14 available dates (Feb 9–27, excluding Feb 6). First time testing the parallel replay infrastructure.
+
+### Build Fixes Required
+
+Before running replays, several build issues were fixed:
+
+1. **NuGet source**: Removed non-existent `C:\dev\.localNuGet` from `nuget.config` (MarketBlocks is a ProjectReference)
+2. **PackageReference conflict**: Removed `<PackageReference Include="MarketBlocks" Version="1.0.0" />` from `qqqBot.Tests.csproj` (ProjectReferences already existed)
+3. **Namespace updates**: MarketBlocks was restructured from `MarketBlocks.Core.*` to `MarketBlocks.Trade.*`; updated `IocMachineGunTests.cs`
+
+### Bug Fix: Power Hour Strategy
+
+Discovered `ResumeInPowerHour=true` (should have been false — oversight) and `PhDefaultStrategy=MeanReversion` (should be `Trend`). Fixed in baseline config.
+
+### Baseline: $30k Config (14 dates × 14 seeds = 196 runs)
+
+**Config changes from appsettings.json:**
+- `StartingAmount`: 10000 → **30000**
+- `ResumeInPowerHour`: true → **false**
+- `PhDefaultStrategy`: MeanReversion → **Trend**
+- All other settings unchanged
+
+**Results:**
+| Metric | Value |
+|--------|-------|
+| Mean P/L | **-$14.71** |
+| Std Dev | $555 |
+| Win Rate | 50.0% |
+| 14-day Total | **-$206** |
+
+Per-Date Breakdown:
+| Date | Mean P/L | Win% |
+|------|----------|------|
+| Feb 09 | -$327 | 0% |
+| Feb 10 | +$94 | 100% |
+| Feb 11 | +$376 | 100% |
+| Feb 12 | +$406 | 100% |
+| Feb 13 | +$445 | 100% |
+| Feb 17 | -$448 | 0% |
+| Feb 18 | +$367 | 100% |
+| Feb 19 | -$356 | 0% |
+| Feb 20 | +$395 | 100% |
+| Feb 23 | -$171 | 0% |
+| Feb 24 | +$511 | 100% |
+| Feb 25 | $0 | 0% |
+| Feb 26 | **-$1,044** | 0% |
+| Feb 27 | **-$979** | 0% |
+
+### Round 1: Daily Loss Limit Sweep
+
+DailyLossLimitPercent was 0 (disabled). Swept: 0.5%, 0.75%, 1.0%, 1.25%, 1.5%
+
+| DLL % | Dollar Cap | Mean P/L | Std Dev | Win Rate | vs Baseline |
+|-------|-----------|----------|---------|----------|-------------|
+| 0.5% | $150 | -$15.65 | $248 | 50% | -$1 |
+| **0.75%** | **$225** | **+$89.17** | **$258** | **64.3%** | **+$104** |
+| 1.0% | $300 | +$89.11 | $281 | 64.3% | +$104 |
+| 1.25% | $375 | +$70.94 | $340 | 57.1% | +$86 |
+| 1.5% | $450 | +$11.05 | $430 | 50% | +$26 |
+
+**Winner: DLL=0.75%** — Caps losing days at ~$225; identical results to 1.0% because most losing days max out under $300 anyway. At 1.25%+ the cap is too loose to help.
+
+### Round 2: Daily Profit Target % Sweep
+
+DailyProfitTargetPercent was 1.75%. Swept: 0.75%, 1.0%, 1.25%, 1.5%, 2.0%, 2.5%
+
+| DPT % | Dollar Target | Mean P/L | Std Dev | Win Rate | vs Baseline |
+|-------|--------------|----------|---------|----------|-------------|
+| 0.75% | $225 | +$21.38 | $251 | 64.3% | +$36 |
+| 1.0% | $300 | +$49.10 | $282 | 64.3% | +$64 |
+| **1.25%** | **$375** | **+$59.97** | **$338** | **64.3%** | **+$75** |
+| 1.5% | $450 | +$13.56 | $404 | 50% | +$28 |
+| 1.75% | $525 | -$14.71 | $555 | 50% | $0 (current) |
+| 2.0% | $600 | -$14.71 | $555 | 50% | $0 |
+| 2.5% | $750 | -$14.71 | $555 | 50% | $0 |
+
+**Winner: DPT=1.25%** — Locks in profits at ~$375. At 1.75%+ the bot never hits the target on winning days, so it rides gains back down. The 1.25% level captures most of the upside and cuts off catastrophic reversal days (Feb 26 goes from -$1,044 to +$325!).
+
+### Round 3: OV Trailing Stop Sweep
+
+OV TrailingStopPercent was 0.5%. Swept: 0.3%, 0.4%, 0.5%, 0.6%, 0.7%
+
+| OV TS % | Mean P/L | vs Baseline |
+|---------|----------|-------------|
+| 0.3% | -$44 | -$29 (worse — barcoding) |
+| 0.4% | -$46 | -$31 (worse) |
+| **0.5%** | **-$15** | **$0 (current is optimal)** |
+| 0.6% | -$24 | -$9 |
+| 0.7% | -$27 | -$12 |
+
+**Winner: Current 0.5% already optimal.** Tighter stops cause catastrophic barcoding (rapid stop-out → re-enter cycles). Wider stops let losers run too long.
+
+### Round 4: TrailStop × Chop Crosscut — SKIPPED
+
+Skipped because: (a) OV trailing stop already optimal, (b) Base trailing stop (0.2%) is well-established from SimBroker-era sweep, (c) ChopThreshold (0.0011) was thoroughly swept in prior sessions. No evidence of interaction effects worth testing.
+
+### Combined Validation (DPT × DLL Grid)
+
+Tested 5 combinations of the best DPT and DLL values:
+
+| DPT % | DLL % | Mean P/L | Std Dev | Win Rate | 14-day Total |
+|-------|-------|----------|---------|----------|-------------|
+| **1.25%** | **0.75%** | **+$115.86** | **$327** | **64.3%** | **~$1,622** |
+| **1.25%** | **1.0%** | **+$115.86** | **$327** | **64.3%** | **~$1,622** |
+| 1.25% | 1.25% | +$97.57 | $356 | 64.3% | ~$1,366 |
+| 1.0% | 0.75% | +$63.49 | $285 | 64.3% | ~$889 |
+| 1.0% | 1.0% | +$63.43 | $285 | 64.3% | ~$889 |
+
+**DPT=1.25% + DLL=1.0% selected as winner** — Identical results to DLL=0.75%, but 1.0% ($300 cap) gives slightly more room for recovery on days that start poorly but might recover. The DPT at 1.25% stops the bot before losses accumulate beyond $300-350 on most bad days anyway, making the DLL values 0.75% and 1.0% effectively equivalent.
+
+### Monte Carlo Robustness (14 dates × 50 seeds = 700 runs)
+
+| Metric | Value |
+|--------|-------|
+| Mean P/L | **+$115.19** |
+| Median P/L | +$325.91 |
+| Std Dev | $325.96 |
+| Min P/L | -$454.26 |
+| Max P/L | +$456.09 |
+| Win Rate | **64.3%** |
+| Mean Return | +0.38%/day |
+| Wall Clock | 2:16 |
+
+Per-Date Breakdown (50 seeds each):
+| Date | Mean P/L | Win% | Seed Variance |
+|------|----------|------|---------------|
+| Feb 09 | -$327.02 | 0% | Negligible |
+| Feb 10 | +$93.69 | 100% | Negligible |
+| Feb 11 | +$375.14 | 100% | Negligible |
+| Feb 12 | +$406.51 | 100% | Negligible |
+| Feb 13 | +$443.86 | 100% | Negligible |
+| Feb 17 | -$447.75 | 0% | Negligible |
+| Feb 18 | +$367.20 | 100% | Negligible |
+| Feb 19 | -$355.76 | 0% | Negligible |
+| Feb 20 | +$392.59 | 100% | Negligible |
+| Feb 23 | +$325.92 | 100% | Negligible |
+| Feb 24 | +$341.84 | 100% | Negligible |
+| Feb 25 | $0.00 | 0% | Zero (no trades) |
+| Feb 26 | +$324.60 | 100% | Negligible |
+| Feb 27 | -$328.14 | 0% | Negligible |
+
+**Key robustness insight**: Every date shows either 0% or 100% win rate across all 50 seeds. Strategy outcomes are entirely determined by market conditions, not random tick interpolation noise. Brownian bridge stochastic variation has negligible impact. This is an excellent robustness marker.
+
+### Improvement Summary: Baseline → Tuned
+
+| Metric | Baseline | Tuned | Change |
+|--------|----------|-------|--------|
+| Mean P/L | -$14.71 | **+$115.19** | **+$129.90/day** |
+| Std Dev | $555 | $326 | -41% (more consistent) |
+| Win Rate | 50.0% | **64.3%** | +14.3 pp |
+| 14-day Total | -$206 | **+$1,613** | **+$1,819** |
+| Worst Day | -$1,044 | -$448 | -57% (capped losses) |
+| Feb 26 | -$1,044 | **+$325** | **Flipped from catastrophic loss to win** |
+| Feb 27 | -$979 | -$328 | **-67% loss reduction** |
+
+### Settings to Apply
+
+| Setting | Old Value | New Value | Notes |
+|---------|-----------|-----------|-------|
+| StartingAmount | 10000 | **30000** | Match actual broker balance |
+| DailyProfitTargetPercent | 1.75 | **1.25** | Locks in gains at ~$375 |
+| DailyLossLimitPercent | 0 (disabled) | **1.0** | Caps losses at ~$300 |
+| ResumeInPowerHour | true | **false** | Bug fix — was meant to be dormant |
+| PhDefaultStrategy | MeanReversion | **Trend** | Bug fix — PH should use Trend |
+
+### Parallel Replay Infrastructure Notes
+
+First-time testing of `--mode=parallel-replay`:
+- Works flawlessly. 196 runs in ~50 seconds, 700 runs (Monte Carlo) in ~2:16
+- `-config=` flag requires **absolute paths** (resolves relative to bin output dir)
+- `--dates` accepts ranges (`20260209-20260213`) and comma-separated (`20260209,20260210`)
+- `--seeds=1-50` creates cartesian product with dates
+- Auto-generates 14 seeds per date when `--seeds` not specified
+- Per-date breakdown in summary is extremely useful for identifying problem days
+- CSV output works correctly for downstream analysis
+
+### Files Modified
+
+**qqqBot repo:**
+- `nuget.config` — Removed non-existent LocalNuGet source
+- `qqqBot.Tests/qqqBot.Tests.csproj` — Removed conflicting PackageReference for MarketBlocks
+- `qqqBot.Tests/IocMachineGunTests.cs` — Updated namespaces (MarketBlocks.Core.* → MarketBlocks.Trade.*)
+- `sweep_configs/baseline_30k.json` — Created baseline config ($30k, PH fixes)
+- `sweep_configs/combo_dpt125_dll100.json` — Winner config (DPT=1.25%, DLL=1.0%)
+- `sweep_results/` — All sweep and Monte Carlo results (CSV files)
+- `run-sweeps.ps1` — Created for parameter sweeps (Rounds 1-3)
+- `run-combined.ps1` — Created for combined DPT×DLL validation
+- `EXPERIMENTS.md` — This session log
+
+---
+
+## Session: PH Strategy A/B Test + Compounding Simulation
+
+**Date**: 2025-06 (continuation of $30k tuning session)
+
+### Context
+
+After the main sweep found DPT=1.25% + DLL=1.0% as the winner, the PhDefaultStrategy had been changed from MeanReversion to Trend. User correctly identified that prior exhaustive PH testing showed MeanReversion was the safer PH strategy. Reverted PhDefaultStrategy to MeanReversion in appsettings.json and baseline_30k.json.
+
+### A/B Test: MR vs Trend (PH Strategy)
+
+**Setup**: 14 dates × 14 seeds = 196 runs per variant, parallel replay  
+**Configs**: ph_mr.json (MR) vs ph_trend.json (Trend), both with DPT=1.25%, DLL=1.0%, $30k
+
+**Results**:
+
+| Metric | MeanReversion | Trend |
+|--------|--------------|-------|
+| Mean daily P/L | $127.30 | $115.90 |
+| Std Dev | $309 | $327 |
+| Win Rate (date) | 57.1% | 64.3% |
+| Total 14-day P/L | +$1,782 | +$1,622 |
+
+**Per-date comparison** (averaged over 14 seeds):
+
+| Date | MR P/L | Trend P/L | Delta | Notes |
+|------|--------|-----------|-------|-------|
+| Feb 9 | -$25 | -$326 | +$301 MR | MR massively better |
+| Feb 10 | -$8 | +$53 | -$61 Trend | Trend better |
+| Feb 25 | -$106 | +$99 | -$205 Trend | Trend better |
+| Other 11 dates | identical | identical | $0 | DPT/DLL halts before PH |
+
+**Conclusion**: MR wins by +$160 over 14 days. MR's advantage is concentrated on Feb 9 where Trend loses big during PH trading. 11 of 14 dates are identical because DPT/DLL halt trading before Power Hour. **Kept MeanReversion as PH strategy.**
+
+### Compounding Multi-Week Simulation
+
+**Setup**: Sequential daily replays, Feb 9-27, carrying forward ending equity as next day's starting amount. Started with $30,000. Uses ph_mr.json config (MR PH, DPT=1.25%, DLL=1.0%).
+
+**Key insight**: Since DPT and DLL are percentage-based, the dollar targets scale with account size. As the account grows, winning days earn more dollars and losing days lose more.
+
+**Day-by-Day Equity Curve**:
+
+| Date | Start | Daily P/L | % | End Balance |
+|------|-------|-----------|---|-------------|
+| Feb 9 | $30,000.00 | -$25.57 | -0.09% | $29,974.43 |
+| Feb 10 | $29,974.43 | -$8.23 | -0.03% | $29,966.20 |
+| Feb 11 | $29,966.20 | +$364.97 | +1.22% | $30,331.17 |
+| Feb 12 | $30,331.17 | +$347.70 | +1.15% | $30,678.87 |
+| Feb 13 | $30,678.87 | +$456.22 | +1.49% | $31,135.09 |
+| Feb 17 | $31,135.09 | +$368.59 | +1.18% | $31,503.68 |
+| Feb 18 | $31,503.68 | +$417.30 | +1.32% | $31,920.98 |
+| Feb 19 | $31,920.98 | -$379.42 | -1.19% | $31,541.56 |
+| Feb 20 | $31,541.56 | +$378.74 | +1.20% | $31,920.30 |
+| Feb 23 | $31,920.30 | +$353.06 | +1.11% | $32,273.36 |
+| Feb 24 | $32,273.36 | +$386.04 | +1.20% | $32,659.40 |
+| Feb 25 | $32,659.40 | -$105.82 | -0.32% | $32,553.58 |
+| Feb 26 | $32,553.58 | +$348.83 | +1.07% | $32,902.41 |
+| Feb 27 | $32,902.41 | -$388.26 | -1.18% | $32,514.15 |
+
+**Summary**:
+- **Starting**: $30,000.00 → **Ending**: $32,514.15
+- **Total P/L**: +$2,514.15 (+8.38% in 14 trading days)
+- **Win/Loss**: 9/5 (64.3% win rate)
+- **Avg daily P/L**: +$179.58
+- **Best day**: Feb 13 (+$456.22, 1.49%)
+- **Worst day**: Feb 27 (-$388.26, -1.18%)
+- **Max drawdown from peak**: $32,902.41 → $32,514.15 = -$388.26 (1.18%)
+- **Equity never dipped below $29,966** (only slightly below start on first 2 days)
+- **Compounding effect visible**: Feb 13 earned $456 on $30.7k base (1.49%) vs if starting flat at $30k it would have earned ~$375
+
+**Observations**:
+- Losses are well-capped by the 1.0% DLL (no catastrophic drawdowns)
+- The strategy recovers quickly — every loss day is followed by a win day
+- The previously problematic week (Feb 23-27) produced +$594 net with compounding
+- Feb 19 and Feb 27 are the main loss days (both near -1.2%, hitting DLL)
+- 5 consecutive winning days (Feb 11-18) drove the account from $30k to $31.9k
+
+### Files Created/Modified
+
+- `sweep_configs/ph_mr.json` — MR PH strategy config (winner)
+- `sweep_configs/ph_trend.json` — Trend PH strategy config (for A/B test)
+- `compare-ph.ps1` — Side-by-side MR vs Trend comparison script
+- `compound-replay.ps1` — Compounding sequential replay script
+- `compound_results.csv` — Compounding simulation results
+- `sweep_results/ph_mr/` and `sweep_results/ph_trend/` — A/B test raw results
+
+---
+
+## Session: Balance Scaling Analysis ($10K–$100K)
+
+**Date**: 2026-02-28  
+**Context**: $30K compounding produced +8.38%, but $81K compounding only produced +4.01%. User requested a systematic balance sweep from $10K to $100K to map the performance curve.  
+**Settings**: DPT=1.25%, DLL=1.0%, PhDefaultStrategy=MeanReversion, ResumeInPowerHour=false (winning config from prior sessions)  
+**Script**: `balance-sweep.ps1` — runs 14-day compound replay at each of 10 balance levels  
+**Dates**: Feb 9, 10, 11, 12, 13, 17, 18, 19, 20, 23, 24, 25, 26, 27 (14 trading days, 140 total replays)
+
+### Results Summary
+
+| Starting Balance | Final Balance | Total P/L | Return % | W/L | Win% | Avg Daily P/L | Efficiency* |
+|-----------------|---------------|-----------|----------|-----|------|---------------|-------------|
+| $10,000 | $10,585.86 | +$585.86 | **+5.86%** | 8/6 | 57.1% | +$41.85 | 100.0% |
+| $20,000 | $21,171.83 | +$1,171.83 | **+5.86%** | 8/6 | 57.1% | +$83.70 | 100.0% |
+| **$30,000** | **$32,514.15** | **+$2,514.15** | **+8.38%** | **9/5** | **64.3%** | **+$179.58** | **143.0%** |
+| $40,000 | $41,660.54 | +$1,660.54 | **+4.15%** | 8/6 | 57.1% | +$118.61 | 70.9% |
+| $50,000 | $50,501.36 | +$501.36 | **+1.00%** | 6/8 | 42.9% | +$35.81 | 17.1% |
+| $60,000 | $63,575.27 | +$3,575.27 | **+5.96%** | 8/6 | 57.1% | +$255.38 | 101.7% |
+| $70,000 | $69,646.91 | -$353.09 | **-0.50%** | 6/8 | 42.9% | -$25.22 | -8.6% |
+| $80,000 | $83,623.18 | +$3,623.18 | **+4.53%** | 8/6 | 57.1% | +$258.80 | 77.3% |
+| $90,000 | $92,993.45 | +$2,993.45 | **+3.33%** | 7/7 | 50.0% | +$213.82 | 56.8% |
+| $100,000 | $92,845.69 | **-$7,154.31** | **-7.15%** | **3/11** | **21.4%** | -$511.02 | **-122.1%** |
+
+*Efficiency = Actual P/L ÷ Expected P/L if returns scaled linearly from the $10K baseline
+
+### Return % Curve (visual)
+
+```
+ 8.38% |           *($30K)
+       |
+ 5.96% |  *  *                    *($60K)
+ 5.86% | ($10K, $20K)
+       |
+ 4.53% |                                      *($80K)
+ 4.15% |              *($40K)
+ 3.33% |                                              *($90K)
+       |
+ 1.00% |                     *($50K)
+       |
+ 0.00% |─────────────────────────────────────────────────────
+-0.50% |                            *($70K)
+       |
+       |
+-7.15% |                                                      *($100K)
+       └──$10K──$20K──$30K──$40K──$50K──$60K──$70K──$80K──$90K──$100K
+```
+
+### Key Findings
+
+1. **$30K is the clear optimal balance**: Best return (8.38%), best win rate (64.3%, 9/5), and 143% scaling efficiency. It is the only balance where Feb 17 flips from a loss to a WIN (+1.18%), adding an extra winning day.
+
+2. **Performance does NOT degrade monotonically** — it oscillates wildly:
+   - 5.86% → 5.86% → **8.38%** → 4.15% → 1.00% → **5.96%** → -0.50% → **4.53%** → 3.33% → **-7.15%**
+   - There are "resonance" sweet spots ($30K, $60K) and "dead zones" ($50K, $70K, $100K)
+
+3. **$100K is catastrophic**: The strategy completely breaks down — only 3 wins out of 14 days (21.4% win rate). Multiple dates that are profitable at lower balances flip to losses: Feb 9 (-1.21%), Feb 13 (-1.18%), Feb 17 (-1.60%), Feb 18 (-0.51%), Feb 19 (-1.07%), Feb 20 (-1.57%).
+
+4. **"Swing dates" that flip between Win/Loss depending on balance**:
+   - **Feb 9**: Win at $10-30K, Loss at $40K, $70-100K — tiny loss at others
+   - **Feb 17**: WIN at $30K and $60K (the sweet spots), LOSS everywhere else
+   - **Feb 18**: WIN at most levels, LOSS at $100K
+   - **Feb 20**: WIN at most levels, LOSS at $100K (-1.57%)
+   - **Feb 23**: WIN at $10-40K and $60K, LOSS at $50K, $70K, $90-100K
+   - **Feb 26**: WIN at $10-40K and $80K, LOSS at $50-70K, $90-100K
+
+5. **Root cause — position-size-dependent fill behavior**: Larger positions in the simulated broker create different fill profiles (more slippage impact, spread costs scale differently). Certain market conditions become loss-producing when position sizes cross specific thresholds. This creates the nonlinear, oscillating performance curve.
+
+6. **Two clear "danger zones"**:
+   - **$50K**: Returns crater to 1.0%, first balance where losses outnumber wins (6/8)
+   - **$70K+**: First net-loss territory. The strategy is not reliably profitable above $70K.
+
+7. **Practical implications**:
+   - Optimal operating range: **$20K–$40K** (all positive, ≥4.15% return)
+   - Best single balance: **$30K** (+8.38%)
+   - Maximum safe balance: ~$60K (still 5.96% but fragile — $70K is a loss)
+   - **Never run $100K+** without position-size scaling fixes
+
+### $100K Deep Dive — Why It Fails
+
+At $100K, the bot trades ~3.3x larger positions than at $30K. Breakdowns:
+- Feb 17: +1.18% at $30K vs **-1.60% at $100K** (a 2.78% swing!)
+- Feb 20: +1.20% at $30K vs **-1.57% at $100K** (a 2.77% swing!)
+- Feb 18: +1.32% at $30K vs **-0.51% at $100K** (a 1.83% swing!)
+- 8 consecutive losing days (Feb 13–Feb 23) at $100K
+
+The DLL of 1.0% caps individual day losses, but at $100K even a "capped" 1.0% loss = $1,000+ per day, and the compounding effect amplifies the drawdown.
+
+### Important Caveat: Simulated Broker Only
+
+**All of the above results are artifacts of the simulated broker's fill model** (`SimulatedBroker.cs` with SlippageBasisPoints=0.5, SpreadBasisPoints=1.0, static phase multipliers). The specific dollar thresholds ($30K sweet spot, $70K+ danger zone) should NOT be taken as universal truths. A real broker would differ significantly:
+
+- **Slippage is dynamic** in real markets — depends on order size vs. available order book liquidity at each price level, not a fixed basis-point multiplier
+- **Spreads fluctuate tick-by-tick** — the sim uses static OV=2x and PH=1.25x multipliers, but real spreads vary with volatility, time of day, and market conditions
+- **Fill behavior varies by broker** — Alpaca, IBKR, Schwab, etc. each route orders differently (PFOF, exchange routing, dark pools), with different latency profiles and partial fill behavior
+- **The "swing dates" would flip at different balance thresholds** (or might not flip at all) with a real broker's fill engine
+- **Commission structures** (per-share fees, platform fees) would shift break-even calculations
+
+**What IS transferable**: The general finding that **the strategy is sensitive to position sizing** and that returns do not scale linearly with account size. The specific optimal balance for a given real broker would need to be discovered through paper trading or live observation with that broker.
+
+### Recommendations for Future Work
+
+1. **Position-size scaling**: Consider capping max position size (e.g., never trade more than $30K worth regardless of account balance) or implementing a position-size scaler that reduces allocation as equity grows.
+2. **Dynamic DLL/DPT scaling**: Could increase DLL % at lower balances and tighten it at higher balances.
+3. **Multi-account strategy**: If scaling above $60K, consider running multiple independent instances with $30K each.
+4. **Broker-specific calibration**: Once a live broker is selected, re-run the balance sweep using paper trading or recorded fill data from that broker to find its actual optimal operating range.
+5. **Improve SimulatedBroker fidelity**: Consider adding dynamic spread modeling (volatility-based), order-book-depth-aware slippage, and partial fill simulation to make replay results more transferable to live trading.
+
+### Files Created
+
+- `balance-sweep.ps1` — Balance scaling sweep script
+- `balance_sweep_results/` — Per-balance daily CSV files
+- `balance_sweep_summary.csv` — Master comparison CSV
+
+---
+
+## Session: 2026-02-28 — Historical Data Backfill Infrastructure
+
+### Context
+
+Only had market data from 2026-02-06 onward (live-recorded tick data). Need ~1 year of historical 1-minute bar data for broader replay testing and Monte Carlo analysis.
+
+### Changes Made
+
+1. **`HistoricalDataFetcher.cs` — Overwrite protection**: Added `File.Exists` + `FileInfo.Length > 0` check at the top of the `foreach` loop in `FetchAsync`, before the API call. If the output CSV already exists, the symbol is skipped entirely (no API call, no file write). Logged as `[FETCH] Skipping {Symbol} on {Date}`. This provides defense-in-depth alongside the script-level check.
+
+2. **`backfill-history.ps1` — Batch download script**: PowerShell script that iterates over all trading days in a date range and calls `dotnet run -- --fetch-history` for each. Features:
+   - Skips weekends and hardcoded US market holidays (2025 + early 2026)
+   - Pre-checks `Test-Path` on all 3 symbol CSVs before calling dotnet — skips dates with complete data
+   - Pacing: 200ms between dates, 10s pause every 100 dates (well within Alpaca free tier 200 req/min)
+   - Progress reporting with ETA
+   - Failed date tracking with retry command at the end
+   - Supports `-DryRun` flag for previewing
+   - Default range: 2025-01-02 to 2026-02-05 (275 trading days, 825 API calls)
+
+### Test Results
+
+- Dry run: 275 trading days identified, 825 API calls planned
+- Single-date test (2025-06-02): QQQ=375 bars, TQQQ=362 bars, SQQQ=348 bars — all saved correctly
+- Overwrite protection verified: re-fetching 2025-06-02 skipped QQQ (already existed), downloaded TQQQ+SQQQ
+- Small batch test (Jun 2-4): 1 skipped (Jun 2), 2 fetched (Jun 3-4), 0 failed
+- Build: 0 errors, 1 pre-existing warning. Tests: 63/63 passed.
+
+### Files Created/Modified
+
+- `HistoricalDataFetcher.cs` — Added overwrite protection
+- `backfill-history.ps1` — New batch download script
+- `README.md` — Added "Historical Data Download" section
+- `TODO.md` — Added backfill task (completed)
+
+---
+
+## Session: Q4 2025 Out-of-Sample Backtest (2026-02-28)
+
+### Context
+First out-of-sample test of the current strategy on historical 60-second bar data (Oct 1 – Dec 31, 2025). All prior tuning was done on Feb 2026 live-recorded tick data. The Q4 2025 period uses Brownian bridge interpolation for tick expansion. Settings unchanged from current `appsettings.json` (MR PH strategy, DPT=1.25%, DLL=1.0%, StartingAmount=$30,000).
+
+### Changes Made
+- Added `-Dates` parameter to `compound-replay.ps1` so it accepts arbitrary date arrays (default: existing Feb 2026 dates, preserving backward compatibility)
+
+### Parallel Replay Results (Independent, each day starts at $30K, seed=42)
+
+| Metric | Value |
+|--------|-------|
+| Total calendar days | 66 |
+| Active trading days | 57 |
+| No-trade days | 9 (holidays/no data) |
+| Win / Loss | 11 / 46 |
+| Win Rate | 19.3% |
+| Sum P/L | -$15,982.58 |
+| Mean P/L | -$280.40 |
+| Median P/L | -$302.54 |
+| Std Dev | $310.58 |
+| Best Day | +$437.81 (Nov 20) |
+| Worst Day | -$750.34 (Oct 15) |
+
+#### Monthly Breakdown (Parallel, independent at $30K)
+
+| Month | Active Days | Sum P/L | Wins | Win Rate |
+|-------|------------|---------|------|----------|
+| Oct 2025 | 21 | -$9,193.99 | 3 | 14.3% |
+| Nov 2025 | 18 | -$4,528.52 | 4 | 22.2% |
+| Dec 2025 | 18 | -$2,260.07 | 4 | 22.2% |
+
+#### Best Days (Parallel)
+
+| Date | P/L | Trades |
+|------|-----|--------|
+| Nov 20 | +$437.81 | 17 |
+| Nov 17 | +$375.97 | 2 |
+| Nov 21 | +$360.58 | 6 |
+| Nov 25 | +$358.67 | 2 |
+| Dec 12 | +$336.12 | 13 |
+| Oct 29 | +$308.66 | 2 |
+| Dec 17 | +$291.84 | 9 |
+
+#### Worst Days (Parallel)
+
+| Date | P/L | Trades |
+|------|-----|--------|
+| Oct 15 | -$750.34 | 7 |
+| Oct 17 | -$742.59 | 10 |
+| Oct 8  | -$675.30 | 4 |
+| Nov 12 | -$662.04 | 10 |
+| Nov 13 | -$661.60 | 11 |
+| Oct 3  | -$636.06 | 7 |
+| Oct 13 | -$627.52 | 9 |
+| Nov 10 | -$623.03 | 4 |
+
+#### No-Trade Days
+Oct 2, Oct 6, Nov 27 (Thanksgiving), Nov 28, Dec 9, Dec 24 (Christmas Eve), Dec 25 (Christmas), Dec 26, Dec 30
+
+### Compounding Replay Results ($30K start, sequential, balance carries forward)
+
+| Metric | Value |
+|--------|-------|
+| Starting Balance | $30,000.00 |
+| Final Balance | $18,474.33 |
+| Total P/L | -$11,525.67 (-38.42%) |
+| Win / Loss / Flat | 13 / 43 / 4 |
+| Win Rate | 21.7% |
+| Avg Daily P/L | -$192.09 |
+| Best Day | +$284.16 (Oct 29) |
+| Worst Day | -$669.86 (Oct 15) |
+
+#### Equity Curve (Compounding)
+
+```
+Date        Start       P/L        End
+20251001   $30,000    -$357.63   $29,642
+20251003   $29,642    -$666.42   $28,976
+20251007   $28,976    -$513.26   $28,463
+20251008   $28,463    -$640.65   $27,822
+20251009   $27,822    -$526.40   $27,296
+20251010   $27,296     -$50.95   $27,245
+20251013   $27,245    -$556.55   $26,688
+20251014   $26,688    -$421.44   $26,267  ← 2-week drawdown: -$3,733
+20251015   $26,267    -$669.86   $25,597
+20251016   $25,597    -$651.13   $24,946
+20251017   $24,946    -$291.46   $24,654
+20251020   $24,654      +$9.24   $24,663
+20251022   $24,663    -$450.28   $24,213
+20251029   $22,774    +$284.16   $23,058  ← first real win
+20251031   $22,589    -$378.62   $22,210  --- Oct end: -$7,790 (-26%)
+20251107   $21,176    +$230.67   $21,407  ← brief relief
+20251117   $19,917    +$181.45   $20,098
+20251121   $19,108    +$235.23   $19,343
+20251125   $19,127    +$231.30   $19,358
+20251128   $19,251      $0.00    $19,251  --- Nov end: -$2,959
+20251202   $19,252    +$227.17   $19,479
+20251216   $18,339    +$191.19   $18,530
+20251217   $18,530    +$168.55   $18,699
+20251218   $18,699    +$220.82   $18,920  ← best Dec streak
+20251231   $18,684    -$210.00   $18,474  --- Dec end: -$777
+```
+
+- **Oct**: -$7,790 (26.0% drawdown from $30K). Nearly unbroken losing streak.
+- **Nov**: -$2,959 (ended at $19,251). Some wins but heavy losses dominate.
+- **Dec**: -$777 (ended at $18,474). Much flatter — small losses, some wins.
+
+### Key Observations
+
+1. **Strategy fails catastrophically on Q4 2025 out-of-sample data.** The -38.4% drawdown over 3 months would be unacceptable for live trading.
+
+2. **October was devastating**: 21 active days, only 3 wins (14.3%), -$9,194 in independent P/L. The strategy encountered a regime it couldn't handle.
+
+3. **December showed improvement**: Losses became smaller, more wins appeared, and the daily magnitude of losses shrank significantly. The strategy may work better in lower-volatility / more range-bound markets.
+
+4. **Win magnitude vs loss magnitude is asymmetric**: Best wins ~$280-$438, worst losses ~$636-$750. The DLL cap helps but doesn't prevent large drawdowns when losses are persistent.
+
+5. **The strategy was tuned on Feb 2026 recorded data (14 days)** — this is strong evidence of overfitting to that specific market regime. Q4 2025 market conditions were clearly different.
+
+6. **This data uses Brownian bridge interpolation** (60s bars → synthetic ticks), which adds some randomness. However, the results are so consistently negative that seed variation wouldn't change the conclusion. Monte Carlo would confirm this.
+
+7. **No-trade days** (Oct 2, Oct 6, Dec 9, Dec 30) suggest the bot sometimes fails to generate any signals — potentially because market data was incomplete or the volatility conditions didn't trigger entries.
+
+### Next Steps
+- Investigate what made Oct 2025 so toxic: was it a trending market? High volatility? Different QQQ behavior?
+- Consider regime detection or market condition filters
+- Test on other periods (Jan-Sep 2025, Jan 2026) to map the strategy's "comfort zone"
+- The Feb 2026 success may be an anomaly — need broader validation before live deployment

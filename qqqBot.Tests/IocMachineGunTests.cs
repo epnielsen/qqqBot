@@ -1,7 +1,7 @@
 using Moq;
-using MarketBlocks.Core.Domain;
-using MarketBlocks.Core.Interfaces;
-using MarketBlocks.Components;
+using MarketBlocks.Trade.Domain;
+using MarketBlocks.Trade.Interfaces;
+using MarketBlocks.Trade.Components;
 
 namespace qqqBot.Tests;
 

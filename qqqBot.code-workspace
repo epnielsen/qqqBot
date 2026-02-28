@@ -15,7 +15,11 @@
 	],
 	"settings": {
 		"chat.tools.terminal.autoApprove": {
-			"git stash": true
+			"git stash": true,
+			"dotnet build": true,
+			"Test-Path": true,
+			"dotnet test": true,
+			"ForEach-Object": true
 		}
 	}
 }

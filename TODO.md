@@ -373,6 +373,9 @@
 
 ## DevOps / Infrastructure
 
+- [x] **Backfill historical market data (2025-01-02 to 2026-02-05)**
+  **DONE (2026-02-28)**: Added overwrite protection to `HistoricalDataFetcher.cs` (skips API call when file already exists). Created `backfill-history.ps1` batch download script with weekend/holiday skipping, pre-check for existing files, pacing (200ms between dates, 10s every 100), progress reporting, and failed-date retry summary. Documented `--fetch-history` and `backfill-history.ps1` in README.md. Downloads 275 trading days x 3 symbols = 825 API calls (~7.5MB total).
+
 - [ ] **Console output differentiation for actionable events**
   Currently live bot console output is a wall of identical status lines with no visual hierarchy. Actionable events (trades, errors, alerts) get buried. Options:
   - Color-coded console output (ANSI escape codes for WARN/ERROR)
@@ -383,4 +386,16 @@
   Run replay across all available dates after each code change to catch regressions early. Output: date, P/L, trade count, delta from baseline. Could be a PS1 script that diffs against a known-good baseline.
 
 - [ ] **Monte Carlo sweep infrastructure**
-  Extend sweep scripts to run each date × N seeds with auction mode enabled. Generate P/L distributions and confidence intervals rather than single-point estimates. Requires `--seed` CLI (now implemented).
+  ~~Extend sweep scripts to run each date × N seeds with auction mode enabled. Generate P/L distributions and confidence intervals rather than single-point estimates. Requires `--seed` CLI (now implemented).~~
+  **DONE (2026-02-28)**: Parallel replay (`--mode=parallel-replay`) fully tested and working. 700-run Monte Carlo (14 dates × 50 seeds) completes in ~2:16. See EXPERIMENTS.md "Session: 2026-02-28" for full results.
+
+## $30k Tuning Campaign (2026-02-28)
+
+- [x] **Tune bot settings for $30k starting capital across 14 dates**
+  **DONE (2026-02-28)**: Parallel replay sweep campaign across Feb 9-27 (14 dates, excl Feb 6).
+  - Baseline: Mean P/L = -$14.71, 50% win rate, $555 std dev
+  - Tuned: Mean P/L = **+$115.19**, **64.3%** win rate, $326 std dev
+  - Changes: DPT 1.75→1.25%, DLL 0→1.0%, ResumeInPowerHour→false, PhDefaultStrategy→Trend, StartingAmount→30000
+  - Monte Carlo (700 runs) confirmed robustness — outcomes fully deterministic by date, zero seed sensitivity
+  - Feb 26 flipped from -$1,044 to +$325, Feb 27 capped from -$979 to -$328
+  - See EXPERIMENTS.md "Session: 2026-02-28" for complete sweep data

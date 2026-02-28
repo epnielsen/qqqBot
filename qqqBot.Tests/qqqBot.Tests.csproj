@@ -10,7 +10,6 @@
   <ItemGroup>
     <PackageReference Include="Alpaca.Markets" Version="7.*" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <PackageReference Include="MarketBlocks" Version="1.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="Moq" Version="4.20.72" />

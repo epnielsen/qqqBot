@@ -329,6 +329,52 @@ Results are saved to `sweep_results/` by default, with per-variant CSV files and
 
 Parallel replay refuses to start if the live bot is running (detected via lockfile). The live bot creates `qqqbot_live.lock` in its log directory during execution and removes it on shutdown.
 
+## Historical Data Download
+
+The bot can download historical 1-minute bar data from Alpaca for replay testing.
+
+### Single Date
+
+```bash
+dotnet run -- --fetch-history --date=2025-06-02 --symbols=QQQ,TQQQ,SQQQ
+```
+
+- `--date=YYYYMMDD` or `--date=YYYY-MM-DD` — the trading day to fetch
+- `--symbols=` — comma-separated symbols (default: `QQQ,TQQQ,SQQQ`)
+- `-config=PATH` — optional alternate config file
+- Files are saved to the `MarketDataDirectory` configured in `appsettings.json` (default: `C:\dev\TradeEcosystem\data\market`)
+- **Overwrite protection**: existing files are automatically skipped (no API call made)
+- Data source: Alpaca IEX feed (free tier), with FMP fallback if configured
+
+### Batch Backfill
+
+Use `backfill-history.ps1` to download data for a range of dates:
+
+```powershell
+# Full backfill (all of 2025 + early 2026)
+.\backfill-history.ps1
+
+# Custom range
+.\backfill-history.ps1 -StartDate 2025-06-01 -EndDate 2025-06-30
+
+# Dry run (shows what would be fetched without downloading)
+.\backfill-history.ps1 -DryRun
+```
+
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `-StartDate` | `2025-01-02` | First date to fetch (inclusive) |
+| `-EndDate` | `2026-02-05` | Last date to fetch (inclusive) |
+| `-DataDir` | `C:\dev\TradeEcosystem\data\market` | Output directory |
+| `-Symbols` | `QQQ,TQQQ,SQQQ` | Comma-separated symbols |
+| `-PacingMs` | `200` | Milliseconds between dates |
+| `-BatchSize` | `100` | Dates between longer pauses |
+| `-BatchPauseSeconds` | `10` | Seconds to pause per batch |
+| `-DryRun` | off | Preview without downloading |
+
+The script skips weekends, US market holidays, and dates with existing data files. Failed dates are reported at the end with a retry command.
+
 ## Running the Bot
 
 ```bash
