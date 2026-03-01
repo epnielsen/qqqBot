@@ -1,8 +1,8 @@
 # combined-test.ps1 — Test combined Base phase winner
-Set-Location "c:\dev\TradeEcosystem\qqqBot\qqqBot"
-$sweepDir = "c:\dev\TradeEcosystem\qqqBot\qqqBot\sweep_configs"
+Set-Location "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
+$sweepDir = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\sweep_configs"
 
-$c = Get-Content "c:\dev\TradeEcosystem\qqqBot\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
+$c = Get-Content "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
 $c.TradingBot.MinVelocityThreshold = 0.000015
 $c.TradingBot.TrendWindowSeconds = 5400
 $c.TradingBot.TrailingStopPercent = 0.002

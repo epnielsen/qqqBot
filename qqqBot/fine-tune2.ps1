@@ -1,6 +1,6 @@
 # fine-tune2.ps1 — Push TrendWindow higher since 5400 was best
-Set-Location "c:\dev\TradeEcosystem\qqqBot\qqqBot"
-$base = "c:\dev\TradeEcosystem\qqqBot\qqqBot\sweep_configs"
+Set-Location "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
+$base = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\sweep_configs"
 
 $variants = @(
     @{Name="Vel15_T4800"; Vel=0.000015; Trend=4800},
@@ -14,7 +14,7 @@ $variants = @(
 )
 
 foreach ($v in $variants) {
-    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
+    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
     $c.TradingBot.MinVelocityThreshold = $v.Vel
     $c.TradingBot.TrendWindowSeconds = $v.Trend
     $c | ConvertTo-Json -Depth 10 | Set-Content "$base\fine2_$($v.Name).json"

@@ -2,7 +2,7 @@
 # Tests BearEntryConfirmationTicks, DailyProfitTarget, and BullOnlyMode
 # in isolation and combination against the Feb 9, 2026 replay.
 
-Set-Location "c:\dev\TradeEcosystem\qqqBot\qqqBot"
+Set-Location "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
 $sf = "appsettings.json"
 $orig = Get-Content $sf -Raw
 

@@ -36,12 +36,12 @@
 
 ## Architecture Quick Reference
 
-- **Repos**: `qqqBot` (bot app), `MarketBlocks` (shared library — separate repo in same workspace)
+- **Repos**: `qqqBot-legacy` (bot app), `MarketBlocks` (shared library — separate repo in same workspace)
 - **Pipeline**: `ReplayMarketDataSource` / `StreamingAnalystDataSource` → `Channel<PriceTick>` → `AnalystEngine` → `Channel<MarketRegime>` → `TraderEngine`
 - **Replay mode**: Both channels bounded(1) for deterministic serialized pipeline. Clock advances on consumer side.
 - **Live mode**: Unbounded channels for real-time parallelism
 - **Phases**: Open Volatility (09:30–09:50), Base (09:50–14:00), Power Hour (14:00–16:00)
-- **TradingSettings.cs exists in BOTH repos** — must stay in sync. Also update `ProgramRefactored.cs` (`BuildTradingSettings` + `ParseOverrides`) and `TimeRuleApplier.cs` for any new setting.
+- **TradingSettings.cs** extends `BaseTradingSettings` from MarketBlocks. Also update `ProgramRefactored.cs` (`BuildTradingSettings` + `ParseOverrides`) and `TimeRuleApplier.cs` for any new setting.
 
 ## Replay System
 
@@ -143,17 +143,17 @@ Or use the wrapper: `.\parallel-sweep.ps1 -MonteCarloSeeds "1-50" -Dates "..." -
 ## Testing
 
 ```bash
-# qqqBot tests (63 tests)
-cd qqqBot && dotnet test
+# qqqBot tests (175 tests)
+cd qqqBot-legacy && dotnet test
 
-# MarketBlocks tests (~530 tests, 1 pre-existing flaky: DynamicExit_HighSlope_UsesTrendTimeout)
+# MarketBlocks tests (527 tests, 1 pre-existing skip: FinraShortVolumeAdapter integration)
 cd MarketBlocks && dotnet test
 ```
 
 ## Common Gotchas
 
-1. **Build cache**: After modifying MarketBlocks code, run `dotnet clean` before building qqqBot
-2. **TradingSettings sync**: New settings must be added to BOTH `qqqBot/TradingSettings.cs` AND `MarketBlocks.Bots/Domain/TradingSettings.cs`
+1. **Build cache**: After modifying MarketBlocks code, run `dotnet clean` before building qqqBot-legacy
+2. **TradingSettings**: Strategy-specific settings in `qqqBot/TradingSettings.cs` extend `BaseTradingSettings` from MarketBlocks.Bots
 3. **Config loading**: New settings must also be loaded in `ProgramRefactored.cs` (`BuildTradingSettings` + `ParseOverrides`)
 4. **TimeRuleApplier**: New per-phase settings must be added to snapshot/restore/apply logic
 5. **Never change more than 1-2 settings at a time** without replay validation

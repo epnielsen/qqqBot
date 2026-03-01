@@ -1,10 +1,10 @@
 # ov-sweep.ps1 — Open Volatility phase optimization
-Set-Location "c:\dev\TradeEcosystem\qqqBot\qqqBot"
-$sweepDir = "c:\dev\TradeEcosystem\qqqBot\qqqBot\sweep_configs"
+Set-Location "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
+$sweepDir = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\sweep_configs"
 
 function Make-BaseConfig {
     # Start from combined winner for base phase  
-    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
+    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
     # Apply base phase winners (these won't affect OV since OV has overrides)
     $c.TradingBot.MinVelocityThreshold = 0.000015
     $c.TradingBot.TrendWindowSeconds = 5400

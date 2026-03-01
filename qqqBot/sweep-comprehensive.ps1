@@ -23,7 +23,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ─── Configuration ───
-$ProjectDir  = "c:\dev\TradeEcosystem\qqqBot\qqqBot"
+$ProjectDir  = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
 $BaseConfig  = Join-Path $ProjectDir "appsettings.json"
 $SweepDir    = Join-Path $ProjectDir "sweep_configs"
 $ResultsDir  = Join-Path $ProjectDir "sweep_results"

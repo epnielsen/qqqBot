@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$projectDir = "c:\dev\TradeEcosystem\qqqBot\qqqBot"
+$projectDir = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
 $configDir = "$projectDir\sweep_configs"
 
 # Create config with daily target OFF

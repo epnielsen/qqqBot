@@ -1,6 +1,6 @@
 # fine-tune.ps1 — Fine-tune around Vel15+Trend3600 Base phase winner
-Set-Location "c:\dev\TradeEcosystem\qqqBot\qqqBot"
-$base = "c:\dev\TradeEcosystem\qqqBot\qqqBot\sweep_configs"
+Set-Location "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
+$base = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\sweep_configs"
 if (-not (Test-Path $base)) { New-Item -ItemType Directory $base -Force | Out-Null }
 
 $variants = @(
@@ -18,7 +18,7 @@ $variants = @(
 
 # Create configs
 foreach ($v in $variants) {
-    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
+    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
     $c.TradingBot.MinVelocityThreshold = $v.Vel
     $c.TradingBot.TrendWindowSeconds = $v.Trend
     $c | ConvertTo-Json -Depth 10 | Set-Content "$base\fine_$($v.Name).json"

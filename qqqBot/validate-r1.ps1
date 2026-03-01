@@ -2,7 +2,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ProjectDir = "c:\dev\TradeEcosystem\qqqBot\qqqBot"
+$ProjectDir = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
 $SweepDir    = Join-Path $ProjectDir "sweep_configs"
 $Dates = @("20260209","20260210","20260211","20260212","20260213","20260217","20260218","20260219","20260220")
 

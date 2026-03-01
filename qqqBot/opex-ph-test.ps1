@@ -7,7 +7,7 @@
 # Feb 6 uses Brownian bridge interpolation (60s bar data). Feb 13 uses raw tick data.
 
 $ErrorActionPreference = "Stop"
-$projectDir = "c:\dev\TradeEcosystem\qqqBot\qqqBot"
+$projectDir = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
 $configDir = "$projectDir\sweep_configs"
 $logDir = "C:\dev\TradeEcosystem\logs\qqqbot"
 

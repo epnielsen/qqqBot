@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$projectDir = "c:\dev\TradeEcosystem\qqqBot\qqqBot"
+$projectDir = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
 $dates = @("20260209","20260210","20260211","20260212","20260213")
 
 Write-Host "=== OV → Base Transition Analysis ==="

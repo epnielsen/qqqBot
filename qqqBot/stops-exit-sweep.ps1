@@ -1,9 +1,9 @@
 # stops-exit-sweep.ps1 — Sweep stops and exit params using winning signal config as base
-Set-Location "c:\dev\TradeEcosystem\qqqBot\qqqBot"
-$sweepDir = "c:\dev\TradeEcosystem\qqqBot\qqqBot\sweep_configs"
+Set-Location "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot"
+$sweepDir = "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\sweep_configs"
 
 function Make-WinnerConfig {
-    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
+    $c = Get-Content "c:\dev\TradeEcosystem\qqqBot-legacy\qqqBot\appsettings.json" -Raw | ConvertFrom-Json
     $c.TradingBot.MinVelocityThreshold = 0.000015
     $c.TradingBot.TrendWindowSeconds = 5400
     return $c
