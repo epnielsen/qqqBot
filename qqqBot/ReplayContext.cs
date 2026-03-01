@@ -1,3 +1,5 @@
+using MarketBlocks.Infrastructure.Logging;
+
 namespace qqqBot;
 
 /// <summary>

@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using MarketBlocks.Bots.Domain;
+using MarketBlocks.Infrastructure.Simulation;
+using MarketBlocks.Infrastructure.Replay;
+using MarketBlocks.Infrastructure.Logging;
 using MarketBlocks.Bots.Interfaces;
 using MarketBlocks.Bots.Services;
 using MarketBlocks.Trade.Components;
@@ -35,7 +38,7 @@ internal sealed class QqqReplayPipelineBuilder : IReplayPipelineBuilder<MarketRe
         {
             // Cast to qqqBot-specific spec for broker config access
             var brokerConfig = (spec as QqqReplayRunSpec)?.BrokerConfig;
-            var settings = (MarketBlocks.Bots.Domain.TradingSettings)spec.Settings;
+            var settings = (TradingSettings)spec.Settings;
 
             // ── 1. Logging ──
             Directory.CreateDirectory(spec.LogDirectory);

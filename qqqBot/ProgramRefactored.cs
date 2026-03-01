@@ -14,6 +14,11 @@ using MarketBlocks.Trade.Domain;
 using MarketBlocks.Trade.Interfaces;
 using MarketBlocks.Trade.Services;
 using MarketBlocks.Bots.Domain;
+using MarketBlocks.Infrastructure.Simulation;
+using MarketBlocks.Infrastructure.Replay;
+using MarketBlocks.Infrastructure.Recording;
+using MarketBlocks.Infrastructure.Logging;
+using MarketBlocks.Infrastructure.Data;
 using MarketBlocks.Bots.Interfaces;
 using MarketBlocks.Bots.Services;
 using MarketBlocks.Infrastructure.Alpaca;
@@ -28,16 +33,16 @@ namespace qqqBot;
 /// Refactored entry point using Generic Host and Producer/Consumer architecture.
 /// 
 /// Architecture:
-/// ┌─────────────────────────────────────────────────────────────────────────┐
-/// │                         AnalystEngine (Producer)                         │
-/// │   Market Data → SMA Calculation → Band Logic → Signal Generation         │
-/// └────────────────────────────────┬────────────────────────────────────────┘
-///                                  │ Channel<MarketRegime>
-///                                  ▼
-/// ┌─────────────────────────────────────────────────────────────────────────┐
-/// │                         TraderEngine (Consumer)                          │
-/// │   Regime Signal → Position Logic → IOC/Market Orders → State Persist     │
-/// └─────────────────────────────────────────────────────────────────────────┘
+/// â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+/// â”‚                         AnalystEngine (Producer)                         â”‚
+/// â”‚   Market Data â†’ SMA Calculation â†’ Band Logic â†’ Signal Generation         â”‚
+/// â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+///                                  â”‚ Channel<MarketRegime>
+///                                  â–¼
+/// â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+/// â”‚                         TraderEngine (Consumer)                          â”‚
+/// â”‚   Regime Signal â†’ Position Logic â†’ IOC/Market Orders â†’ State Persist     â”‚
+/// â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 /// </summary>
 public static class ProgramRefactored
 {
@@ -85,7 +90,7 @@ public static class ProgramRefactored
         await host.RunAsync();
     }
     
-    // Per-run context — replaces the former static fields.
+    // Per-run context â€” replaces the former static fields.
     // For single-replay & live mode this is set once before host build;
     // for parallel-replay each pipeline gets its own instance.
     internal static ReplayContext CurrentContext { get; private set; } = new();
@@ -170,13 +175,13 @@ public static class ProgramRefactored
         
         if (files.Count > 0)
         {
-            Console.WriteLine($"\n✓ Downloaded {files.Count} file(s):");
+            Console.WriteLine($"\nâœ“ Downloaded {files.Count} file(s):");
             foreach (var f in files)
                 Console.WriteLine($"  {f}");
         }
         else
         {
-            Console.Error.WriteLine("\n✗ No data downloaded. Check API credentials and date.");
+            Console.Error.WriteLine("\nâœ— No data downloaded. Check API credentials and date.");
         }
     }
 
@@ -188,7 +193,7 @@ public static class ProgramRefactored
         using var loggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
         var logger = loggerFactory.CreateLogger("ParallelReplay");
 
-        // ── Load config ──
+        // â”€â”€ Load config â”€â”€
         var configFileName = overrides.ConfigFile ?? "appsettings.json";
         var config = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -201,7 +206,7 @@ public static class ProgramRefactored
         if (overrides.BearTicker != null) settings.BearSymbol = overrides.BearTicker;
         if (overrides.BenchmarkTicker != null) settings.BenchmarkSymbol = overrides.BenchmarkTicker;
 
-        // ── Parse dates ──
+        // â”€â”€ Parse dates â”€â”€
         var dates = ParseDatesArg(overrides.Dates ?? overrides.ReplayDate, logger);
         if (dates.Count == 0)
         {
@@ -209,10 +214,10 @@ public static class ProgramRefactored
             return;
         }
 
-        // ── Parse seeds ──
+        // â”€â”€ Parse seeds â”€â”€
         var seeds = ParseSeedsArg(overrides.Seeds, overrides.Seed, dates, logger);
 
-        // ── Directories ──
+        // â”€â”€ Directories â”€â”€
         var outputDir = overrides.OutputDir ?? "parallel_results";
         var logDir = Path.Combine(outputDir, "logs");
         var stateDir = Path.Combine(outputDir, "state");
@@ -223,7 +228,7 @@ public static class ProgramRefactored
         if (string.IsNullOrWhiteSpace(marketDataDir))
             marketDataDir = Path.Combine(@"C:\dev\TradeEcosystem", "data", "market");
 
-        // ── Check lockfile ──
+        // â”€â”€ Check lockfile â”€â”€
         var lockfilePath = Path.Combine(AppContext.BaseDirectory, "live_trading.lock");
         if (File.Exists(lockfilePath))
         {
@@ -234,7 +239,7 @@ public static class ProgramRefactored
             return;
         }
 
-        // ── Build run specs (cartesian product: dates × seeds) ──
+        // â”€â”€ Build run specs (cartesian product: dates Ã— seeds) â”€â”€
         var specs = new List<MarketBlocks.Bots.Domain.ReplayRunSpec>();
         foreach (var date in dates)
         {
@@ -242,7 +247,7 @@ public static class ProgramRefactored
             {
                 // Deep-clone settings for each run via JSON round-trip
                 var json = System.Text.Json.JsonSerializer.Serialize(settings);
-                var clonedSettings = System.Text.Json.JsonSerializer.Deserialize<MarketBlocks.Bots.Domain.TradingSettings>(json)!;
+                var clonedSettings = System.Text.Json.JsonSerializer.Deserialize<TradingSettings>(json)!;
 
                 specs.Add(new QqqReplayRunSpec
                 {
@@ -261,10 +266,10 @@ public static class ProgramRefactored
             }
         }
 
-        logger.LogInformation("[PARALLEL] {Dates} date(s) × {Seeds} seed(s) = {Total} total runs",
+        logger.LogInformation("[PARALLEL] {Dates} date(s) Ã— {Seeds} seed(s) = {Total} total runs",
             dates.Count, seeds.Count, specs.Count);
 
-        // ── Run via framework's generic ParallelReplayRunner ──
+        // â”€â”€ Run via framework's generic ParallelReplayRunner â”€â”€
         var parallelism = overrides.Parallelism > 0
             ? overrides.Parallelism
             : Math.Max(1, Environment.ProcessorCount - 1);
@@ -509,7 +514,7 @@ public static class ProgramRefactored
                 
                 if (isReplay)
                 {
-                    // Replay runs outside real market hours — skip the wall-clock gate
+                    // Replay runs outside real market hours â€” skip the wall-clock gate
                     settings.BypassMarketHoursCheck = true;
 
                     // =============================================
@@ -553,7 +558,7 @@ public static class ProgramRefactored
                     services.AddSingleton<IocMachineGunExecutor>(sp =>
                     {
                         var broker = sp.GetRequiredService<IBrokerExecution>();
-                        var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                        var s = sp.GetRequiredService<TradingSettings>();
                         var logger = sp.GetRequiredService<ILogger<IocMachineGunExecutor>>();
                         return new IocMachineGunExecutor(
                             broker,
@@ -619,7 +624,7 @@ public static class ProgramRefactored
                     services.AddSingleton<IocMachineGunExecutor>(sp =>
                     {
                         var broker = sp.GetRequiredService<IBrokerExecution>();
-                        var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                        var s = sp.GetRequiredService<TradingSettings>();
                         var logger = sp.GetRequiredService<ILogger<IocMachineGunExecutor>>();
                         return new IocMachineGunExecutor(
                             broker,
@@ -636,7 +641,7 @@ public static class ProgramRefactored
                     // Register streaming clients (only created when low-latency mode is enabled)
                     services.AddSingleton(sp =>
                     {
-                        var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                        var s = sp.GetRequiredService<TradingSettings>();
                         if (s.LowLatencyMode)
                         {
                             return Alpaca.Markets.Environments.Paper.GetAlpacaDataStreamingClient(secretKey!);
@@ -647,7 +652,7 @@ public static class ProgramRefactored
                     
                     services.AddSingleton(sp =>
                     {
-                        var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                        var s = sp.GetRequiredService<TradingSettings>();
                         if (s.LowLatencyMode)
                         {
                             return Alpaca.Markets.Environments.Paper.GetAlpacaCryptoStreamingClient(secretKey!);
@@ -666,7 +671,7 @@ public static class ProgramRefactored
                     
                     services.AddSingleton<MarketBlocks.Trade.Interfaces.IAnalystMarketDataSource>(sp =>
                     {
-                        var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                        var s = sp.GetRequiredService<TradingSettings>();
                         var broker = sp.GetRequiredService<IBrokerExecution>();
                         var recorder = sp.GetRequiredService<MarketDataRecorder>();
                         
@@ -730,7 +735,7 @@ public static class ProgramRefactored
                 services.AddSingleton<TraderEngine>(sp =>
                 {
                     var logger = sp.GetRequiredService<ILogger<TraderEngine>>();
-                    var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                    var s = sp.GetRequiredService<TradingSettings>();
                     var broker = sp.GetRequiredService<IBrokerExecution>();
                     var iocExecutor = sp.GetRequiredService<IIocExecutor>();
                     var stateManager = sp.GetRequiredService<TradingStateManager>();
@@ -741,12 +746,12 @@ public static class ProgramRefactored
                 // Register AnalystEngine with callbacks from TraderEngine
                 // - Position callbacks: for Sliding Bands feature
                 // - Signal callbacks: for restart recovery (Amnesia Prevention)
-                // - Historical source: for Hydration (Hot Start) — null in Replay mode
-                // - Fallback adapter: FMP for when Alpaca SIP restriction kicks in — null in Replay mode
+                // - Historical source: for Hydration (Hot Start) â€” null in Replay mode
+                // - Fallback adapter: FMP for when Alpaca SIP restriction kicks in â€” null in Replay mode
                 services.AddSingleton<AnalystEngine>(sp =>
                 {
                     var logger = sp.GetRequiredService<ILogger<AnalystEngine>>();
-                    var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
+                    var s = sp.GetRequiredService<TradingSettings>();
                     var marketSource = sp.GetRequiredService<MarketBlocks.Trade.Interfaces.IAnalystMarketDataSource>();
                     var historicalSource = sp.GetService<IMarketDataSource>();  // null in replay
                     var fallbackAdapter = sp.GetService<IMarketDataAdapter>(); // null in replay
@@ -791,7 +796,7 @@ public static class ProgramRefactored
                         isReplay ? PipelineMode.Replay : PipelineMode.Live,
                         sp.GetRequiredService<ILogger<PipelineHost<MarketRegime>>>()));
 
-                // Register the orchestration service that wires Analyst → Trader
+                // Register the orchestration service that wires Analyst â†’ Trader
                 // ReplayOrchestrator uses PipelineHost for lifecycle management.
                 // TradingOrchestrator uses PipelineHost but also handles repair mode and lockfile.
                 if (isReplay)
@@ -801,9 +806,9 @@ public static class ProgramRefactored
             });
     }
     
-    private static MarketBlocks.Bots.Domain.TradingSettings BuildTradingSettings(IConfiguration configuration)
+    private static TradingSettings BuildTradingSettings(IConfiguration configuration)
     {
-        var settings = new MarketBlocks.Bots.Domain.TradingSettings
+        var settings = new TradingSettings
         {
             BotId = configuration["TradingBot:BotId"] ?? "main",
             PollingIntervalSeconds = configuration.GetValue("TradingBot:PollingIntervalSeconds", 1),
@@ -816,7 +821,7 @@ public static class ProgramRefactored
             MinChopAbsolute = configuration.GetValue("TradingBot:MinChopAbsolute", 0.02m),
             SlidingBand = configuration.GetValue("TradingBot:SlidingBand", false),
             SlidingBandFactor = configuration.GetValue("TradingBot:SlidingBandFactor", 0.5m),
-            ExitStrategy = new MarketBlocks.Bots.Domain.DynamicExitConfig
+            ExitStrategy = new DynamicExitConfig
             {
                 ScalpWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:ScalpWaitSeconds", 0),
                 TrendWaitSeconds = configuration.GetValue("TradingBot:ExitStrategy:TrendWaitSeconds", 120),
@@ -893,14 +898,14 @@ public static class ProgramRefactored
             ResumeInPowerHour = configuration.GetValue("TradingBot:ResumeInPowerHour", false),
             
             // Analyst Phase Reset
-            AnalystPhaseResetMode = Enum.Parse<MarketBlocks.Bots.Domain.AnalystPhaseResetMode>(
+            AnalystPhaseResetMode = Enum.Parse<AnalystPhaseResetMode>(
                 configuration.GetValue("TradingBot:AnalystPhaseResetMode", "None")!, ignoreCase: true),
             AnalystPhaseResetSeconds = configuration.GetValue("TradingBot:AnalystPhaseResetSeconds", 120),
             
             // Mean Reversion Strategy
-            BaseDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(
+            BaseDefaultStrategy = Enum.Parse<StrategyMode>(
                 configuration.GetValue("TradingBot:BaseDefaultStrategy", "Trend")!, ignoreCase: true),
-            PhDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(
+            PhDefaultStrategy = Enum.Parse<StrategyMode>(
                 configuration.GetValue("TradingBot:PhDefaultStrategy", "Trend")!, ignoreCase: true),
             ChopOverrideEnabled = configuration.GetValue("TradingBot:ChopOverrideEnabled", false),
             ChopUpperThreshold = configuration.GetValue("TradingBot:ChopUpperThreshold", 61.8m),
@@ -930,15 +935,15 @@ public static class ProgramRefactored
         var dynamicStopSection = configuration.GetSection("TradingBot:DynamicStopLoss");
         if (dynamicStopSection.Exists())
         {
-            settings.DynamicStopLoss = new MarketBlocks.Bots.Domain.DynamicStopConfig
+            settings.DynamicStopLoss = new DynamicStopConfig
             {
                 Enabled = dynamicStopSection.GetValue("Enabled", false),
-                Tiers = new List<MarketBlocks.Bots.Domain.StopTier>()
+                Tiers = new List<StopTier>()
             };
             var tiersSection = dynamicStopSection.GetSection("Tiers");
             foreach (var tierSection in tiersSection.GetChildren())
             {
-                settings.DynamicStopLoss.Tiers.Add(new MarketBlocks.Bots.Domain.StopTier
+                settings.DynamicStopLoss.Tiers.Add(new StopTier
                 {
                     TriggerProfitPercent = tierSection.GetValue<decimal>("TriggerProfitPercent"),
                     StopPercent = tierSection.GetValue<decimal>("StopPercent")
@@ -955,7 +960,7 @@ public static class ProgramRefactored
         {
             foreach (var ruleSection in timeRulesSection.GetChildren())
             {
-                var rule = new MarketBlocks.Bots.Domain.TimeBasedRule
+                var rule = new TimeBasedRule
                 {
                     Name = ruleSection["Name"] ?? "Unnamed",
                     StartTime = TimeSpan.Parse(ruleSection["StartTime"] ?? "00:00"),
@@ -969,9 +974,9 @@ public static class ProgramRefactored
         return settings;
     }
     
-    private static MarketBlocks.Bots.Domain.TradingSettingsOverrides ParseOverrides(IConfigurationSection section)
+    private static TradingSettingsOverrides ParseOverrides(IConfigurationSection section)
     {
-        var o = new MarketBlocks.Bots.Domain.TradingSettingsOverrides();
+        var o = new TradingSettingsOverrides();
         if (!section.Exists()) return o;
         
         // Signal generation
@@ -1020,10 +1025,10 @@ public static class ProgramRefactored
         var tiersSection = section.GetSection("DynamicStopLossTiers");
         if (tiersSection.Exists())
         {
-            o.DynamicStopLossTiers = new List<MarketBlocks.Bots.Domain.StopTier>();
+            o.DynamicStopLossTiers = new List<StopTier>();
             foreach (var tierSection in tiersSection.GetChildren())
             {
-                o.DynamicStopLossTiers.Add(new MarketBlocks.Bots.Domain.StopTier
+                o.DynamicStopLossTiers.Add(new StopTier
                 {
                     TriggerProfitPercent = tierSection.GetValue<decimal>("TriggerProfitPercent"),
                     StopPercent = tierSection.GetValue<decimal>("StopPercent")
@@ -1041,8 +1046,8 @@ public static class ProgramRefactored
         // Direction switch cooldown
         if (section["DirectionSwitchCooldownSeconds"] != null) o.DirectionSwitchCooldownSeconds = section.GetValue<int>("DirectionSwitchCooldownSeconds");
         // Mean reversion strategy
-        if (section["BaseDefaultStrategy"] != null) o.BaseDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(section["BaseDefaultStrategy"]!, ignoreCase: true);
-        if (section["PhDefaultStrategy"] != null) o.PhDefaultStrategy = Enum.Parse<MarketBlocks.Bots.Domain.StrategyMode>(section["PhDefaultStrategy"]!, ignoreCase: true);
+        if (section["BaseDefaultStrategy"] != null) o.BaseDefaultStrategy = Enum.Parse<StrategyMode>(section["BaseDefaultStrategy"]!, ignoreCase: true);
+        if (section["PhDefaultStrategy"] != null) o.PhDefaultStrategy = Enum.Parse<StrategyMode>(section["PhDefaultStrategy"]!, ignoreCase: true);
         if (section["ChopOverrideEnabled"] != null) o.ChopOverrideEnabled = section.GetValue<bool>("ChopOverrideEnabled");
         if (section["ChopUpperThreshold"] != null) o.ChopUpperThreshold = section.GetValue<decimal>("ChopUpperThreshold");
         if (section["ChopLowerThreshold"] != null) o.ChopLowerThreshold = section.GetValue<decimal>("ChopLowerThreshold");
@@ -1072,7 +1077,7 @@ public static class ProgramRefactored
     internal static bool IsHighResolutionData(string dataDir, string dateStr, ILogger logger)
     {
         const int samplesToRead = 100;
-        const double highResThresholdSeconds = 10.0; // avg gap < 10s ⇒ high-res
+        const double highResThresholdSeconds = 10.0; // avg gap < 10s â‡’ high-res
 
         try
         {
@@ -1084,7 +1089,7 @@ public static class ProgramRefactored
                 return false; // fall back to interpolation
             }
 
-            var filePath = csvFiles[0]; // any symbol will do — they all share the same recording cadence
+            var filePath = csvFiles[0]; // any symbol will do â€” they all share the same recording cadence
             using var reader = new StreamReader(filePath);
 
             // Skip header
@@ -1144,7 +1149,7 @@ public class TradingOrchestrator : BackgroundService
     private readonly ILogger<TradingOrchestrator> _logger;
     private readonly AnalystEngine _analyst;
     private readonly TraderEngine _trader;
-    private readonly MarketBlocks.Bots.Domain.TradingSettings _settings;
+    private readonly TradingSettings _settings;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ReplayContext _context;
     
@@ -1152,7 +1157,7 @@ public class TradingOrchestrator : BackgroundService
         ILogger<TradingOrchestrator> logger,
         AnalystEngine analyst,
         TraderEngine trader,
-        MarketBlocks.Bots.Domain.TradingSettings settings,
+        TradingSettings settings,
         IHostApplicationLifetime lifetime,
         ReplayContext context)
     {
@@ -1287,7 +1292,7 @@ public class ReplayOrchestrator : BackgroundService
     private readonly ILogger<ReplayOrchestrator> _logger;
     private readonly PipelineHost<MarketRegime> _pipeline;
     private readonly SimulatedBroker _simulatedBroker;
-    private readonly MarketBlocks.Bots.Domain.TradingSettings _settings;
+    private readonly TradingSettings _settings;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ReplayContext _context;
 
@@ -1295,7 +1300,7 @@ public class ReplayOrchestrator : BackgroundService
         ILogger<ReplayOrchestrator> logger,
         PipelineHost<MarketRegime> pipeline,
         SimulatedBroker simulatedBroker,
-        MarketBlocks.Bots.Domain.TradingSettings settings,
+        TradingSettings settings,
         IHostApplicationLifetime lifetime,
         ReplayContext context)
     {
@@ -1309,7 +1314,7 @@ public class ReplayOrchestrator : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("=== QQQ Trading Bot — REPLAY MODE ===");
+        _logger.LogInformation("=== QQQ Trading Bot â€” REPLAY MODE ===");
         _logger.LogInformation("Config File: {ConfigFile}", _context.ConfigFileName);
         
         // Replay metadata header
@@ -1349,7 +1354,7 @@ public class ReplayOrchestrator : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            // Normal — replay data exhausted or Ctrl+C
+            // Normal â€” replay data exhausted or Ctrl+C
         }
         catch (Exception ex)
         {

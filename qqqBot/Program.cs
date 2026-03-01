@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+using MarketBlocks.Bots.Domain;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -15,8 +16,7 @@ using MarketBlocks.Trade.Components;
 
 // Alias local types to avoid ambiguity with MarketBlocks.Trade.Domain versions
 using TradingState = qqqBot.TradingState;
-using TradingStateMetadata = qqqBot.TradingStateMetadata;
-using OrphanedPosition = qqqBot.OrphanedPosition;
+using OrphanedPosition = MarketBlocks.Bots.Domain.OrphanedPosition;
 
 // ============================================================================
 // QQQ Trading Bot - .NET 10 Alpaca Paper Trading Bot
@@ -66,7 +66,7 @@ using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (sender, e) =>
 {
     e.Cancel = true; // Prevent immediate termination
-    Log("\n⚠️  Shutdown requested (Ctrl+C). Exiting gracefully...");
+    Log("\n??  Shutdown requested (Ctrl+C). Exiting gracefully...");
     cts.Cancel();
 };
 
@@ -452,7 +452,7 @@ async Task RunReportAsync(string[] args)
     // Check for imbalance
     if (buyCount != sellCount)
     {
-        Log($"⚠️  Buy/Sell imbalance: {Math.Abs(buyCount - sellCount)} unmatched {(buyCount > sellCount ? "buy(s)" : "sell(s)")}");
+        Log($"??  Buy/Sell imbalance: {Math.Abs(buyCount - sellCount)} unmatched {(buyCount > sellCount ? "buy(s)" : "sell(s)")}");
     }
     Log("");
     
@@ -726,7 +726,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         
         if (!symbolsMatch)
         {
-            Log("⚠️  Config mismatch: Discarding old state");
+            Log("??  Config mismatch: Discarding old state");
             Log($"   Previous: Bull={tradingState.Metadata.SymbolBull}, Bear={tradingState.Metadata.SymbolBear}, Bench={tradingState.Metadata.SymbolIndex}");
             Log($"   Current:  Bull={settings.BullSymbol}, Bear={settings.BearSymbol ?? "(none)"}, Bench={settings.BenchmarkSymbol}");
             
@@ -859,7 +859,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             
             if (matchingPosition == null)
             {
-                LogError($"⚠️  STATE MISMATCH: Local state shows {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
+                LogError($"??  STATE MISMATCH: Local state shows {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
                 LogError($"   but Alpaca has NO position for this symbol.");
                 LogError($"   This may happen if a previous shutdown failed to liquidate.");
                 LogError($"   Clearing local position state and continuing with available cash.");
@@ -871,7 +871,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             }
             else if (matchingPosition.Quantity < tradingState.CurrentShares)
             {
-                LogError($"⚠️  STATE MISMATCH: Local state shows {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
+                LogError($"??  STATE MISMATCH: Local state shows {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
                 LogError($"   but Alpaca only has {matchingPosition.Quantity} shares.");
                 LogError($"   Adjusting local state to match Alpaca.");
                 
@@ -1645,12 +1645,12 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         await marketSource.ConnectAsync(cancellationToken);
         
         await marketSource.SubscribeAsync(settings.BenchmarkSymbol, tradeChannel.Writer, isBenchmark: true, cancellationToken);
-        Log($"  ✓ Subscribed to {settings.BenchmarkSymbol}");
+        Log($"  ? Subscribed to {settings.BenchmarkSymbol}");
         
         if (settings.WatchBtc || settings.UseBtcEarlyTrading)
         {
             await marketSource.SubscribeAsync(settings.CryptoBenchmarkSymbol, tradeChannel.Writer, isBenchmark: false, cancellationToken);
-            Log($"  ✓ Subscribed to {settings.CryptoBenchmarkSymbol}");
+            Log($"  ? Subscribed to {settings.CryptoBenchmarkSymbol}");
         }
         
         Log("Market data source ready.\n");
@@ -1705,7 +1705,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
             }
             else
             {
-                LogError("⚠️  POSITION NOT LIQUIDATED - Market may be closed.");
+                LogError("??  POSITION NOT LIQUIDATED - Market may be closed.");
                 LogError($"   You still hold {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
                 LogError("   State file preserved. Position will be liquidated on next run when market opens.");
             }
@@ -1713,7 +1713,7 @@ async Task RunTradingBotAsync(CommandLineOverrides cmdOverrides, CancellationTok
         catch (Exception ex)
         {
             LogError($"Failed to liquidate position during shutdown: {ex.Message}");
-            LogError($"⚠️  You may still hold {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
+            LogError($"??  You may still hold {tradingState.CurrentShares} shares of {tradingState.CurrentPosition}");
         }
     }
     else
@@ -1814,7 +1814,7 @@ async Task SeedIncrementalSmaAsync(TradingSettings settings, IAlpacaDataClient d
             {
                 sma.Add(bar.Close);
             }
-            Log($"  ✓ Benchmark SMA seeded with {bars.Count} historical bars");
+            Log($"  ? Benchmark SMA seeded with {bars.Count} historical bars");
         }
         else
         {
@@ -1825,7 +1825,7 @@ async Task SeedIncrementalSmaAsync(TradingSettings settings, IAlpacaDataClient d
             {
                 sma.Add(trade.Price);
             }
-            Log($"  ✓ Benchmark SMA seeded with current price: ${trade.Price:N2} (x{settings.SMALength})");
+            Log($"  ? Benchmark SMA seeded with current price: ${trade.Price:N2} (x{settings.SMALength})");
         }
     }
     catch (Exception ex)
@@ -1853,7 +1853,7 @@ async Task SeedIncrementalSmaAsync(TradingSettings settings, IAlpacaDataClient d
                 {
                     btcSma.Add(bar.Close);
                 }
-                Log($"  ✓ BTC SMA seeded with {btcBars.Count} historical bars");
+                Log($"  ? BTC SMA seeded with {btcBars.Count} historical bars");
             }
             else
             {
@@ -1864,7 +1864,7 @@ async Task SeedIncrementalSmaAsync(TradingSettings settings, IAlpacaDataClient d
                 {
                     btcSma.Add(btcPrice);
                 }
-                Log($"  ✓ BTC SMA seeded with current price: ${btcPrice:N2} (x{settings.SMALength})");
+                Log($"  ? BTC SMA seeded with current price: ${btcPrice:N2} (x{settings.SMALength})");
             }
         }
         catch (Exception ex)
@@ -2029,7 +2029,7 @@ async Task EnsureNeutralAsync(
 
     if (showStatus)
     {
-        Log($"[{reason}] Sitting in Cash ⚪");
+        Log($"[{reason}] Sitting in Cash ?");
     }
 }
 

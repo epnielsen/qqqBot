@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Trade\MarketBlocks.Trade.csproj" />
     <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Bots\MarketBlocks.Bots.csproj" />
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Infrastructure\MarketBlocks.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,15 +29,21 @@
 
   <!-- Include source files from main project for testing -->
   <ItemGroup>
-    <Compile Include="..\qqqBot\TrailingStopEngine.cs" Link="TrailingStopEngine.cs" />
+    <Compile Include="..\qqqBot\TradingSettings.cs" Link="TradingSettings.cs" />
     <Compile Include="..\qqqBot\TradingState.cs" Link="TradingState.cs" />
-    <Compile Include="..\qqqBot\TradingStateMetadata.cs" Link="TradingStateMetadata.cs" />
-    <Compile Include="..\qqqBot\SimulatedBroker.cs" Link="SimulatedBroker.cs" />
-    <Compile Include="..\qqqBot\ReplayResult.cs" Link="ReplayResult.cs" />
-    <Compile Include="..\qqqBot\MarketDataRecorder.cs" Link="MarketDataRecorder.cs" />
-    <Compile Include="..\qqqBot\ReplayMarketDataSource.cs" Link="ReplayMarketDataSource.cs" />
-    <Compile Include="..\qqqBot\RecordingAnalystDataSource.cs" Link="RecordingAnalystDataSource.cs" />
+    <Compile Include="..\qqqBot\MarketRegime.cs" Link="MarketRegime.cs" />
+    <Compile Include="..\qqqBot\StrategyMode.cs" Link="StrategyMode.cs" />
+    <Compile Include="..\qqqBot\HaltReason.cs" Link="HaltReason.cs" />
+    <Compile Include="..\qqqBot\AnalystPhaseResetMode.cs" Link="AnalystPhaseResetMode.cs" />
+    <Compile Include="..\qqqBot\TimeBasedRule.cs" Link="TimeBasedRule.cs" />
+    <Compile Include="..\qqqBot\AnalystEngine.cs" Link="AnalystEngine.cs" />
+    <Compile Include="..\qqqBot\TraderEngine.cs" Link="TraderEngine.cs" />
+    <Compile Include="..\qqqBot\TimeRuleApplier.cs" Link="TimeRuleApplier.cs" />
+    <Compile Include="..\qqqBot\VolatilityTracker.cs" Link="VolatilityTracker.cs" />
+    <Compile Include="..\qqqBot\CycleTracker.cs" Link="CycleTracker.cs" />
     <Compile Include="..\qqqBot\CommandLineOverrides.cs" Link="CommandLineOverrides.cs" />
+    <Compile Include="..\qqqBot\TrailingStopEngineExtensions.cs" Link="TrailingStopEngineExtensions.cs" />
+    <Compile Include="..\qqqBot\TradingStateManager.cs" Link="TradingStateManager.cs" />
   </ItemGroup>
 
 </Project>

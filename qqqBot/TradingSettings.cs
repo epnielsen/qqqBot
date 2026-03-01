@@ -1,83 +1,83 @@
+using MarketBlocks.Bots.Domain;
 
-// ============================================================================
-// CONFIGURATION CLASSES
-// ============================================================================
-class TradingSettings
+namespace qqqBot;
+
+/// <summary>
+/// qqqBot-specific configuration settings. Extends <see cref="BaseTradingSettings"/> with
+/// signal generation parameters (SMA, slope, velocity, mean-reversion, drift mode),
+/// dynamic exit/stop strategies, trimming, phase reset, and time-based rules.
+/// </summary>
+public class TradingSettings : BaseTradingSettings
 {
-    public string BotId { get; set; } = "main"; // Unique identifier for this bot instance
-    public int PollingIntervalSeconds { get; set; } = 1;
-    public string BullSymbol { get; set; } = "TQQQ";
-    public string? BearSymbol { get; set; } = "SQQQ";
-    public string BenchmarkSymbol { get; set; } = "QQQ";
-    public string CryptoBenchmarkSymbol { get; set; } = "BTC/USD";
+    // ─── SMA / SIGNAL GENERATION ─────────────────────────────────────
     public int SMAWindowSeconds { get; set; } = 60; // Total time window for rolling average
     public decimal ChopThresholdPercent { get; set; } = 0.0015m;
     public decimal MinChopAbsolute { get; set; } = 0.02m; // Absolute floor for hysteresis (tick-aware)
     public bool SlidingBand { get; set; } = false; // When true, band slides based on position high/low
-    public decimal SlidingBandFactor { get; set; } = 0.5m; // Exit threshold: BULL exits at (high - width*factor), BEAR exits at (low + width*factor)
+    public decimal SlidingBandFactor { get; set; } = 0.5m; // Exit threshold factor
     
     // DYNAMIC EXIT STRATEGY (Hybrid Scalp/Trend Mode)
-    // Switches between fast exit (scalp) and slow exit (trend) based on slope strength
     public DynamicExitConfig ExitStrategy { get; set; } = new();
     
-    public decimal StartingAmount { get; set; } = 10000m;
-    public bool BullOnlyMode { get; set; } = false;
-    public int BearEntryConfirmationTicks { get; set; } = 0; // 0 = instant BEAR (legacy), >0 = ticks of sustained negative velocity required
-    public decimal DailyProfitTarget { get; set; } = 0m; // 0 = disabled, >0 = stop trading after hitting this session P/L
-    public decimal DailyProfitTargetPercent { get; set; } = 0m; // 0 = disabled, e.g. 2.0 = 2% of StartingAmount
-    public bool DailyProfitTargetRealtime { get; set; } = false; // true = check realized+unrealized on every tick
-    public decimal DailyLossLimit { get; set; } = 0m; // 0 = disabled, >0 = stop trading when session loss exceeds this dollar amount
-    public decimal DailyLossLimitPercent { get; set; } = 0m; // 0 = disabled, e.g. 2.0 = 2% of StartingAmount
-    public bool ResumeInPowerHour { get; set; } = false; // true = resume trading in PH after daily target fires
-    public string AnalystPhaseResetMode { get; set; } = "None"; // None, Cold, or Partial — controls indicator reset at phase boundaries
-    public int AnalystPhaseResetSeconds { get; set; } = 120; // Seconds of history to keep in Partial mode
-    
-    // Mean Reversion Strategy
-    public string BaseDefaultStrategy { get; set; } = "Trend";   // Trend or MeanReversion
-    public string PhDefaultStrategy { get; set; } = "Trend";     // Trend or MeanReversion
-    public bool ChopOverrideEnabled { get; set; } = false;       // CHOP can dynamically flip strategy
-    public decimal ChopUpperThreshold { get; set; } = 61.8m;     // CHOP above = choppy → MR
-    public decimal ChopLowerThreshold { get; set; } = 38.2m;     // CHOP below = trending → Trend (entry into Trend Rescue)
-    public decimal ChopTrendExitThreshold { get; set; } = 45m;  // Schmitt trigger: exit Trend Rescue when CHOP > this
-    public int BollingerWindow { get; set; } = 20;               // BB SMA period
-    public decimal BollingerMultiplier { get; set; } = 2.0m;     // BB std dev multiplier
-    public int ChopPeriod { get; set; } = 14;                    // CHOP lookback periods
-    public int ChopCandleSeconds { get; set; } = 60;             // Candle interval for CHOP/ATR
-    public decimal MrEntryLowPctB { get; set; } = 0.2m;         // %B below this → MR_LONG
-    public decimal MrEntryHighPctB { get; set; } = 0.8m;        // %B above this → MR_SHORT
-    public decimal MrExitPctB { get; set; } = 0.5m;             // %B crosses this → MR_FLAT
-    public decimal MeanRevStopPercent { get; set; } = 0.003m;    // Hard stop for MR trades (0.3%) — fallback when ATR unavailable
-    public decimal MrAtrStopMultiplier { get; set; } = 2.0m;     // ATR-based stop: multiplier × ATR on benchmark; 0 = use fixed %
-    public bool MrRequireRsi { get; set; } = true;               // Require RSI confirmation for MR entries
-    public int MrRsiPeriod { get; set; } = 14;                   // RSI lookback periods
-    public decimal MrRsiOversold { get; set; } = 30m;            // RSI below this confirms MR_LONG
-    public decimal MrRsiOverbought { get; set; } = 70m;          // RSI above this confirms MR_SHORT
-    
-    public bool UseBtcEarlyTrading { get; set; } = false; // Use BTC/USD as early trading weathervane
-    public bool WatchBtc { get; set; } = false; // Use BTC as tie-breaker during NEUTRAL
-    public bool MonitorSlippage { get; set; } = false; // Track and log slippage per trade
-    public decimal TrendRescueTrailingStopPercent { get; set; } = 0m; // 0 = use normal TrailingStopPercent. >0 = wider stop for trendRescue entries.
-    public decimal TrailingStopPercent { get; set; } = 0.0m; // 0 = disabled, e.g. 0.002 = 0.2%
+    public string CryptoBenchmarkSymbol { get; set; } = "BTC/USD";
+    public bool UseBtcEarlyTrading { get; set; } = false;
+    public bool WatchBtc { get; set; } = false;
+    public DynamicStopConfig DynamicStopLoss { get; set; } = new(); // Ratchet stop
     public int StopLossCooldownSeconds { get; set; } = 10; // Washout latch duration
+    public int DirectionSwitchCooldownSeconds { get; set; } = 0; // Min seconds before switching BULL↔BEAR
     
-    // ADAPTIVE TREND WINDOW (Opening Blindness Fix)
+    // BRAKE SYSTEM (Velocity/Slope Detection)
+    public decimal MinVelocityThreshold { get; set; } = 0.0001m;
+    public decimal EntryVelocityMultiplier { get; set; } = 2.0m;
+    public decimal TrendRescueTrailingStopPercent { get; set; } = 0m;
+    public int SlopeWindowSize { get; set; } = 5;
+    public int EntryConfirmationTicks { get; set; } = 2;
+    public int BearEntryConfirmationTicks { get; set; } = 0;
+    
+    // PH RESUME MODE
+    public bool ResumeInPowerHour { get; set; } = false;
+    
+    // ANALYST PHASE RESET
+    public AnalystPhaseResetMode AnalystPhaseResetMode { get; set; } = AnalystPhaseResetMode.None;
+    public int AnalystPhaseResetSeconds { get; set; } = 120;
+    
+    // MEAN REVERSION STRATEGY
+    public StrategyMode BaseDefaultStrategy { get; set; } = StrategyMode.Trend;
+    public StrategyMode PhDefaultStrategy { get; set; } = StrategyMode.Trend;
+    public bool ChopOverrideEnabled { get; set; } = false;
+    public decimal ChopUpperThreshold { get; set; } = 61.8m;
+    public decimal ChopLowerThreshold { get; set; } = 38.2m;
+    public decimal ChopTrendExitThreshold { get; set; } = 45m;
+    public int BollingerWindow { get; set; } = 20;
+    public decimal BollingerMultiplier { get; set; } = 2.0m;
+    public int ChopPeriod { get; set; } = 14;
+    public int ChopCandleSeconds { get; set; } = 60;
+    public decimal MrEntryLowPctB { get; set; } = 0.2m;
+    public decimal MrEntryHighPctB { get; set; } = 0.8m;
+    public decimal MrExitPctB { get; set; } = 0.5m;
+    public decimal MeanRevStopPercent { get; set; } = 0.003m;
+    public decimal MrAtrStopMultiplier { get; set; } = 2.0m;
+    public bool MrRequireRsi { get; set; } = true;
+    public int MrRsiPeriod { get; set; } = 14;
+    public decimal MrRsiOversold { get; set; } = 30m;
+    public decimal MrRsiOverbought { get; set; } = 70m;
+    
+    // HYBRID ENGINE SETTINGS (Velocity + Trend)
+    public int TrendWindowSeconds { get; set; } = 1800;
+    
+    // ADAPTIVE TREND WINDOW
     public bool EnableAdaptiveTrendWindow { get; set; } = true;
     public int ShortTrendSlopeWindow { get; set; } = 90;
     public decimal ShortTrendSlopeThreshold { get; set; } = 0.00002m;
     
-    // END-OF-DAY ENTRY CUTOFF
-    public decimal LastEntryMinutesBeforeClose { get; set; }
-    
-    // DRIFT MODE: velocity-independent entry for sustained directional moves
+    // DRIFT MODE
     public bool DriftModeEnabled { get; set; }
     public int DriftModeConsecutiveTicks { get; set; } = 60;
     public decimal DriftModeMinDisplacementPercent { get; set; } = 0.002m;
-    public decimal DriftModeAtrMultiplier { get; set; } = 0m; // 0 = use fixed percent only. >0 = use max(fixed, K × ATR / price) for adaptive threshold
-    public decimal DriftTrailingStopPercent { get; set; } = 0m; // 0 = use normal TrailingStopPercent. >0 = wider stop for drift entries
+    public decimal DriftModeAtrMultiplier { get; set; } = 0m;
+    public decimal DriftTrailingStopPercent { get; set; } = 0m;
     
-    // DISPLACEMENT RE-ENTRY: re-enter after stop-out when price has drifted significantly
-    // Regime-validated (AND logic): requires trending market (low CHOP) AND volatility expansion (BBW > SMA(BBW))
-    // Slope filter: blocks re-entry if price velocity is flat (filters drift from drive)
+    // DISPLACEMENT RE-ENTRY
     public bool DisplacementReentryEnabled { get; set; }
     public decimal DisplacementReentryPercent { get; set; } = 0.005m;
     public decimal DisplacementAtrMultiplier { get; set; } = 2.0m;
@@ -85,41 +85,39 @@ class TradingSettings
     public int DisplacementBbwLookback { get; set; } = 20;
     public int DisplacementSlopeWindow { get; set; } = 10;
     public decimal DisplacementMinSlope { get; set; } = 0m;
+
+    // TRIMMING SETTINGS
+    public bool EnableTrimming { get; set; } = true;
+    public decimal TrimTriggerPercent { get; set; } = 0.015m;
+    public decimal TrimRatio { get; set; } = 0.33m;
+    public decimal TrimSlopeThreshold { get; set; } = 0.000005m;
+    public int TrimCooldownSeconds { get; set; } = 120;
     
-    public bool UseMarketableLimits { get; set; } = false; // Use limit orders instead of market orders
-    public decimal MaxSlippagePercent { get; set; } = 0.002m; // 0.2% max slippage for limit orders
-    public decimal MaxChaseDeviationPercent { get; set; } = 0.003m; // 0.3% max price move before aborting entry chase
+    // TIME-BASED RULES (Auto Phase Switching)
+    public List<TimeBasedRule> TimeRules { get; set; } = new();
     
-    // TAKE PROFIT SETTINGS
-    public decimal TakeProfitAmount { get; set; } = 0m; // Fixed dollar amount profit target (0 = disabled)
-    
-    // LOW-LATENCY MODE SETTINGS
-    public bool LowLatencyMode { get; set; } = false;     // Enable channel-based reactive pipeline
-    public bool UseIocOrders { get; set; } = false;       // Use IOC limit orders ("sniper mode")
-    public decimal IocLimitOffsetCents { get; set; } = 1m; // Offset above ask (buy) or below bid (sell)
-    public int IocMaxRetries { get; set; } = 5;           // Max retries before fallback to market order
-    public decimal IocRetryStepCents { get; set; } = 1m;  // Price step per retry (cents)
-    public decimal IocMaxDeviationPercent { get; set; } = 0.005m; // Max price chase before stopping (0.5%)
-    public int IocRemainingSharesTolerance { get; set; } = 2; // Max remaining shares to treat as "good enough" liquidation
-    public int KeepAlivePingSeconds { get; set; } = 5;    // HTTP connection keep-alive ping interval
-    public int WarmUpIterations { get; set; } = 10000;    // JIT warm-up iterations before market open
-    
-    // STREAM HEALTH MONITORING — detects data feed disconnections (not strategic non-trading)
-    public int StreamStaleWarnSeconds { get; set; } = 30;       // WARN after N seconds with no incoming tick
-    public int StreamStaleCriticalSeconds { get; set; } = 120;  // CRITICAL after N seconds — likely disconnected
-    public int StreamWatchdogIntervalSeconds { get; set; } = 10; // How often the watchdog checks for stale stream
+    // DEPRECATED: Use ProfitReinvestmentPercent instead.
+    [Obsolete("Use ProfitReinvestmentPercent instead. Set to 0 to disable legacy behavior.")]
+    public decimal TakeProfitAmount { get; set; } = 0m;
     
     // Derived: Calculate queue size dynamically from window and interval
-    public int SMALength => Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
+    public int SMALength => System.Math.Max(1, SMAWindowSeconds / PollingIntervalSeconds);
     
-    // Generate a client order ID with bot prefix for order tracking
-    public string GenerateClientOrderId() => $"qqqBot-{BotId}-{Guid.NewGuid():N}";
+    /// <summary>
+    /// Creates a validated copy of the settings for use by the trading engine.
+    /// </summary>
+    public TradingSettings ValidatedCopy()
+    {
+        Validate();
+        return this;
+    }
 }
+
 /// <summary>
 /// Configuration for dynamic exit strategy that switches between Scalp and Trend modes
 /// based on the strength of the current trend (absolute slope value).
 /// </summary>
-class DynamicExitConfig
+public class DynamicExitConfig
 {
     /// <summary>
     /// How long to wait in Neutral if the trend is weak (Chop/Scalp mode).
@@ -141,4 +139,42 @@ class DynamicExitConfig
     /// Recommended: 0.00015 (adjust based on your instrument volatility).
     /// </summary>
     public double TrendConfidenceThreshold { get; set; } = 0.00015;
+    
+    /// <summary>
+    /// When true, the Neutral Timeout will NOT liquidate positions that are underwater (unrealized P/L &lt; 0).
+    /// Instead, it holds until the Trailing Stop / Ratchet Stop triggers or the signal flips.
+    /// This prevents realizing losses on sideways markets that may recover.
+    /// Safety: The Hard Stop and Ratchet Stop remain active as downside protection.
+    /// </summary>
+    public bool HoldNeutralIfUnderwater { get; set; } = true;
+}
+
+/// <summary>
+/// Configuration for dynamic trailing stop that tightens as unrealized profit grows.
+/// Prevents "round trip" scenarios where large gains evaporate because the fixed stop was too loose.
+/// 
+/// Example tiers:
+///   - Profit > 0.3% → tighten stop to 0.15%
+///   - Profit > 0.5% → tighten stop to 0.10% (lock the win)
+/// </summary>
+public class DynamicStopConfig
+{
+    /// <summary>Enable dynamic profit-based stop tightening.</summary>
+    public bool Enabled { get; set; }
+    
+    /// <summary>Ordered list of profit tiers. Highest matching tier wins.</summary>
+    public List<StopTier> Tiers { get; set; } = new();
+}
+
+/// <summary>
+/// A single ratchet tier: when unrealized profit exceeds TriggerProfitPercent,
+/// the trailing stop tightens to StopPercent.
+/// </summary>
+public class StopTier
+{
+    /// <summary>Minimum profit % to activate this tier (e.g., 0.003 = 0.3%).</summary>
+    public decimal TriggerProfitPercent { get; set; }
+    
+    /// <summary>Trailing stop distance when this tier is active (e.g., 0.0015 = 0.15%).</summary>
+    public decimal StopPercent { get; set; }
 }

@@ -1,7 +1,5 @@
 using System.Threading.Channels;
-using MarketBlocks.Bots.Domain;
 using MarketBlocks.Bots.Interfaces;
-using MarketBlocks.Bots.Services;
 
 namespace qqqBot;
 

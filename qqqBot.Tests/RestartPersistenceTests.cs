@@ -1,3 +1,5 @@
+using MarketBlocks.Trade.Components;
+
 namespace qqqBot.Tests;
 
 /// <summary>
