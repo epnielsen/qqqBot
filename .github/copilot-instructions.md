@@ -137,7 +137,7 @@ Or use the wrapper: `.\parallel-sweep.ps1 -MonteCarloSeeds "1-50" -Dates "..." -
 - **--seeds accepts**: comma-separated (`1,5,10`) or ranges (`1-50`); creates cartesian product with dates
 - **--parallelism=0** (default) uses CPU core count; recommended: 8 for most machines
 - **CSV output** (`--output=path`): structured results with columns: `ReplayDate,RngSeed,ConfigLabel,RealizedPnL,NetReturnPercent,TotalTrades,SpreadCost,SlippageCost,PeakEquity,PeakEquityTime,TroughEquity,TroughEquityTime,WallClockMs,Success,Error`
-- **Key files**: `ReplayPipelineFactory.cs` (builds isolated object graph), `ParallelReplayRunner.cs` (SemaphoreSlim throttling), `ReplayContext.cs` (per-run state), `ReplayResult.cs` (DTO)
+- **Key files**: `QqqReplayPipelineBuilder.cs` (builds isolated object graph, implements `IReplayPipelineBuilder<MarketRegime>` from MarketBlocks.Bots), `ParallelReplayRunner<T>.cs` (in MarketBlocks.Bots — SemaphoreSlim throttling), `ReplayContext.cs` (per-run state), `ReplayResult.cs` (DTO, in MarketBlocks.Bots)
 - **Each pipeline creates temp state files** in isolated directories with GUID suffixes — cleaned up automatically after each run
 
 ## Testing

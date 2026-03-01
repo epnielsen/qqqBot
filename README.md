@@ -509,25 +509,42 @@ THEN:
 ## Project Structure
 
 ```
-qqqbot/
-├── Program.cs              # Entry point and setup
-├── ProgramRefactored.cs    # Main bot orchestration with DI
-├── CommandLineOverrides.cs # CLI argument parsing
-├── TradingSettings.cs      # Configuration model
-├── TradingState.cs         # Persisted state model
-├── TrailingStopEngine.cs   # Trailing stop-loss logic
-├── SimulatedBroker.cs      # Fake broker for replay mode
-├── ReplayMarketDataSource.cs # CSV replay with auto-detect interpolation
-├── ReplayContext.cs         # Per-run context (replaces statics for parallel safety)
-├── ReplayResult.cs          # Structured DTO for replay output
-├── ReplayPipelineFactory.cs # Constructs isolated replay pipelines (no DI host)
-├── ParallelReplayRunner.cs  # Runs N replays concurrently with SemaphoreSlim
-├── parallel-sweep.ps1       # PowerShell wrapper for parameter sweeps & Monte Carlo
-├── appsettings.json        # Configuration file
-├── trading_state.json      # Runtime state (generated)
-├── EXPERIMENTS.md           # Tuning experiment history (read before changing settings)
-├── TODO.md                  # Outstanding tasks and bugs
-└── README.md               # This file
+qqqBot/
+├── Program.cs                    # Entry point and setup
+├── ProgramRefactored.cs          # Main bot orchestration with DI
+├── CommandLineOverrides.cs       # CLI argument parsing
+├── TradingSettings.cs            # Configuration model (extends BaseTradingSettings)
+├── TradingState.cs               # Persisted state model (extends BaseTradingState)
+├── TradingStateManager.cs        # State persistence helper
+├── AnalystEngine.cs              # Signal generation (QQQ → MarketRegime)
+├── TraderEngine.cs               # Trade dispatch (MarketRegime → orders)
+├── QqqSignalGenerator.cs         # ISignalGenerator<MarketRegime> wrapper
+├── QqqTradeDispatcher.cs         # ITradeDispatcher<MarketRegime> wrapper
+├── QqqReplayPipelineBuilder.cs   # IReplayPipelineBuilder<MarketRegime> (isolated pipelines)
+├── QqqReplayRunSpec.cs           # qqqBot-specific replay run spec
+├── ReplayContext.cs              # Per-run context for replay state
+├── MarketRegime.cs               # ISignalMessage implementation
+├── StreamingAnalystDataSource.cs # Live Alpaca → Channel<PriceTick>
+├── PollingAnalystDataSource.cs   # Polling fallback data source
+├── TrailingStopEngineExtensions.cs # Extensions for TrailingStopEngine (in MarketBlocks.Trade)
+├── TimeBasedRule.cs              # Phase-aware trading rules
+├── TimeRuleApplier.cs            # Applies time-based rule overrides
+├── CycleTracker.cs               # Tracks trend cycles
+├── VolatilityTracker.cs          # Tracks intraday volatility
+├── HaltReason.cs                 # Enum for halt reasons
+├── StrategyMode.cs               # Enum for strategy modes
+├── TradeRecord.cs                # Trade record DTO
+├── parallel-sweep.ps1            # PowerShell wrapper for parameter sweeps & Monte Carlo
+├── appsettings.json              # Configuration file
+├── trading_state.json            # Runtime state (generated)
+├── EXPERIMENTS.md                # Tuning experiment history (read before changing settings)
+├── TODO.md                       # Outstanding tasks and bugs
+└── README.md                     # This file
+
+# Framework (MarketBlocks — separate repo)
+# MarketBlocks.Trade        → Interfaces, domain types, math, TrailingStopEngine
+# MarketBlocks.Bots         → PipelineHost<T>, ParallelReplayRunner<T>, ReplayResult
+# MarketBlocks.Infrastructure → SimulatedBroker, ReplayMarketDataSource, broker adapters
 ```
 
 ## Dependencies
