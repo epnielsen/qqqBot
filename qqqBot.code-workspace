@@ -19,7 +19,8 @@
 			"dotnet build": true,
 			"Test-Path": true,
 			"dotnet test": true,
-			"ForEach-Object": true
+			"ForEach-Object": true,
+			"Move-Item": true
 		}
 	}
 }

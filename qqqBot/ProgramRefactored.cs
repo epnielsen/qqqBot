@@ -235,7 +235,7 @@ public static class ProgramRefactored
         }
 
         // ── Build run specs (cartesian product: dates × seeds) ──
-        var specs = new List<ReplayRunSpec>();
+        var specs = new List<MarketBlocks.Bots.Domain.ReplayRunSpec>();
         foreach (var date in dates)
         {
             foreach (var seed in seeds)
@@ -244,7 +244,7 @@ public static class ProgramRefactored
                 var json = System.Text.Json.JsonSerializer.Serialize(settings);
                 var clonedSettings = System.Text.Json.JsonSerializer.Deserialize<MarketBlocks.Bots.Domain.TradingSettings>(json)!;
 
-                specs.Add(new ReplayRunSpec
+                specs.Add(new QqqReplayRunSpec
                 {
                     Date = date,
                     Settings = clonedSettings,
@@ -264,7 +264,7 @@ public static class ProgramRefactored
         logger.LogInformation("[PARALLEL] {Dates} date(s) × {Seeds} seed(s) = {Total} total runs",
             dates.Count, seeds.Count, specs.Count);
 
-        // ── Run ──
+        // ── Run via framework's generic ParallelReplayRunner ──
         var parallelism = overrides.Parallelism > 0
             ? overrides.Parallelism
             : Math.Max(1, Environment.ProcessorCount - 1);
@@ -272,7 +272,8 @@ public static class ProgramRefactored
         var csvPath = overrides.Output 
             ?? Path.Combine(outputDir, $"results_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
 
-        var runner = new ParallelReplayRunner(logger);
+        var builder = new QqqReplayPipelineBuilder();
+        var runner = new MarketBlocks.Bots.Services.ParallelReplayRunner<MarketRegime>(logger, builder);
         await runner.RunAllAsync(specs, parallelism, csvPath);
     }
 
@@ -769,7 +770,30 @@ public static class ProgramRefactored
                             : null);                                 // Clock advances at consumer side in replay
                 });
                 
+                // Register framework interface wrappers (QqqSignalGenerator, QqqTradeDispatcher)
+                // These adapt AnalystEngine/TraderEngine to the generic ISignalGenerator/ITradeDispatcher
+                // interfaces used by PipelineHost<MarketRegime>.
+                services.AddSingleton<QqqSignalGenerator>(sp =>
+                    new QqqSignalGenerator(sp.GetRequiredService<AnalystEngine>()));
+                services.AddSingleton<ISignalGenerator<MarketRegime>>(sp =>
+                    sp.GetRequiredService<QqqSignalGenerator>());
+
+                services.AddSingleton<QqqTradeDispatcher>(sp =>
+                    new QqqTradeDispatcher(sp.GetRequiredService<TraderEngine>()));
+                services.AddSingleton<ITradeDispatcher<MarketRegime>>(sp =>
+                    sp.GetRequiredService<QqqTradeDispatcher>());
+
+                // Register PipelineHost<MarketRegime> for DI-hosted pipeline orchestration
+                services.AddSingleton(sp =>
+                    new PipelineHost<MarketRegime>(
+                        sp.GetRequiredService<ISignalGenerator<MarketRegime>>(),
+                        sp.GetRequiredService<ITradeDispatcher<MarketRegime>>(),
+                        isReplay ? PipelineMode.Replay : PipelineMode.Live,
+                        sp.GetRequiredService<ILogger<PipelineHost<MarketRegime>>>()));
+
                 // Register the orchestration service that wires Analyst → Trader
+                // ReplayOrchestrator uses PipelineHost for lifecycle management.
+                // TradingOrchestrator uses PipelineHost but also handles repair mode and lockfile.
                 if (isReplay)
                     services.AddHostedService<ReplayOrchestrator>();
                 else
@@ -1254,14 +1278,14 @@ public class TradingOrchestrator : BackgroundService
 }
 
 /// <summary>
-/// Replay orchestrator that runs the Analyst and Trader engines against recorded CSV data.
-/// Automatically shuts down the host when replay completes and prints a summary.
+/// Replay orchestrator that runs the pipeline against recorded CSV data via
+/// <see cref="PipelineHost{TSignal}"/>. Automatically shuts down the host
+/// when replay completes and prints a summary.
 /// </summary>
 public class ReplayOrchestrator : BackgroundService
 {
     private readonly ILogger<ReplayOrchestrator> _logger;
-    private readonly AnalystEngine _analyst;
-    private readonly TraderEngine _trader;
+    private readonly PipelineHost<MarketRegime> _pipeline;
     private readonly SimulatedBroker _simulatedBroker;
     private readonly MarketBlocks.Bots.Domain.TradingSettings _settings;
     private readonly IHostApplicationLifetime _lifetime;
@@ -1269,16 +1293,14 @@ public class ReplayOrchestrator : BackgroundService
 
     public ReplayOrchestrator(
         ILogger<ReplayOrchestrator> logger,
-        AnalystEngine analyst,
-        TraderEngine trader,
+        PipelineHost<MarketRegime> pipeline,
         SimulatedBroker simulatedBroker,
         MarketBlocks.Bots.Domain.TradingSettings settings,
         IHostApplicationLifetime lifetime,
         ReplayContext context)
     {
         _logger = logger;
-        _analyst = analyst;
-        _trader = trader;
+        _pipeline = pipeline;
         _simulatedBroker = simulatedBroker;
         _settings = settings;
         _lifetime = lifetime;
@@ -1310,32 +1332,19 @@ public class ReplayOrchestrator : BackgroundService
 
         try
         {
-            // Start trader (consumer) first
-            _logger.LogInformation("[REPLAY] Starting Trader Engine...");
-            await _trader.StartAsync(_analyst.RegimeChannel, stoppingToken);
-
-            // Start analyst (producer) — will replay CSV and complete
-            _logger.LogInformation("[REPLAY] Starting Analyst Engine (CSV replay)...");
-            await _analyst.StartAsync(stoppingToken);
+            _logger.LogInformation("[REPLAY] Starting pipeline (PipelineHost<MarketRegime>)...");
+            await _pipeline.StartAsync(stoppingToken);
 
             _logger.LogInformation("[REPLAY] Waiting for replay to complete...");
             
-            // Wait for both engines to finish naturally, but with a safety timeout
-            // to prevent zombie processes if an engine hangs.
-            var analystDone = _analyst.ExecuteTask ?? Task.CompletedTask;
-            var traderDone  = _trader.ExecuteTask  ?? Task.CompletedTask;
-            var bothDone = Task.WhenAll(analystDone, traderDone);
-            
-            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
-            var winner = await Task.WhenAny(bothDone, timeoutTask);
-            
-            if (winner == timeoutTask)
+            // Wait for pipeline completion with safety timeout
+            try
             {
-                var analystStatus = analystDone.IsCompleted ? "done" : "HANGING";
-                var traderStatus = traderDone.IsCompleted ? "done" : "HANGING";
-                _logger.LogWarning("[REPLAY] ⚠ Timeout waiting for engines to finish! " +
-                    "Analyst: {AnalystStatus}, Trader: {TraderStatus}. Forcing shutdown.",
-                    analystStatus, traderStatus);
+                await _pipeline.Completion.WaitAsync(TimeSpan.FromSeconds(30), stoppingToken);
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("[REPLAY] Timeout waiting for pipeline to finish. Forcing shutdown.");
             }
         }
         catch (OperationCanceledException)
@@ -1348,9 +1357,8 @@ public class ReplayOrchestrator : BackgroundService
         }
         finally
         {
-            _logger.LogInformation("[REPLAY] Stopping engines...");
-            await _analyst.StopAsync(CancellationToken.None);
-            await _trader.StopAsync(CancellationToken.None);
+            _logger.LogInformation("[REPLAY] Stopping pipeline...");
+            await _pipeline.StopAsync(CancellationToken.None);
 
             // Print the simulated trading summary
             _simulatedBroker.PrintSummary();
