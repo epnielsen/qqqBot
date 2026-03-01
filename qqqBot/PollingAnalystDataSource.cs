@@ -1,6 +1,5 @@
 using System.Threading.Channels;
 using MarketBlocks.Trade.Interfaces;
-using MarketBlocks.Bots.Services;
 using Microsoft.Extensions.Logging;
 
 namespace qqqBot;

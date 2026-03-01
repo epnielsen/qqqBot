@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 using Alpaca.Markets;
-using MarketBlocks.Bots.Services;
+using MarketBlocks.Trade.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace qqqBot;

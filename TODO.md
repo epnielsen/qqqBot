@@ -399,3 +399,28 @@
   - Monte Carlo (700 runs) confirmed robustness — outcomes fully deterministic by date, zero seed sensitivity
   - Feb 26 flipped from -$1,044 to +$325, Feb 27 capped from -$979 to -$328
   - See EXPERIMENTS.md "Session: 2026-02-28" for complete sweep data
+
+---
+
+## Framework Extraction (2026-02-28)
+
+> **Decision**: qqqBot strategy development terminated. MarketBlocks being extracted as a
+> strategy-agnostic framework. This bot will become qqqBot-legacy. See
+> [MarketBlocks/MIGRATION-TODO.md](../MarketBlocks/MIGRATION-TODO.md) for the master plan.
+
+- [x] **Phase 0: Create tracking documents** (2026-02-28)
+  Created ARCHITECTURE.md and MIGRATION-TODO.md in MarketBlocks. Updated EXPERIMENTS.md.
+
+- [ ] **Phase 1: Break phantom dependencies, extract IAnalystMarketDataSource**
+
+- [ ] **Phase 2: Create ISignalMessage, ISignalGenerator, ITradeDispatcher, base classes**
+
+- [ ] **Phase 3: Create PipelineHost composition engine**
+
+- [ ] **Phase 4: qqqBot implements new interfaces (penny-identical replay gate)**
+
+- [ ] **Phase 5: Clean MarketBlocks.Bots, move reusable infra**
+
+- [ ] **Phase 6: Skeleton sample bot**
+
+- [ ] **Phase 7: Rename qqqBot → qqqBot-legacy, finalize**

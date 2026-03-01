@@ -3694,3 +3694,55 @@ Date        Start       P/L        End
 - Consider regime detection or market condition filters
 - Test on other periods (Jan-Sep 2025, Jan 2026) to map the strategy's "comfort zone"
 - The Feb 2026 success may be an anomaly — need broader validation before live deployment
+
+---
+
+## Session: 2026-02-28 (Evening) — Framework Extraction Decision
+
+### Context
+
+A Research AI evaluated qqqBot's Q4 2025 out-of-sample performance (-38.4% drawdown over
+Oct-Dec 2025, 19.3% win rate across 57 days) alongside a thorough code review. The verdict:
+
+**Strategy**: Fatally overfit to the 14-day Feb 2026 market regime. Rigid static thresholds
+(CHOP < 38.2, DisplacementMinSlope 0.0002, hardcoded time phases) break down entirely in
+different market conditions. Mean-reversion logic trades directly into strong momentum.
+Continuing to iterate would lead to "epicycle engineering."
+
+**Infrastructure**: Exceptional. The deterministic replay pipeline, SimulatedBroker with
+HintPrice, parallel replay / Monte Carlo sweep infrastructure, broker-agnostic adapters,
+and state persistence represent institutional-grade engineering worth preserving.
+
+### Decision: Pivot to Framework Extraction (Pathway 2)
+
+- **Terminate** qqqBot strategy development
+- **Extract** MarketBlocks as a strategy-agnostic trading bot framework
+- **Preserve** the current strategy as qqqBot-legacy using new framework interfaces
+- **Create** a skeleton sample bot demonstrating the framework pattern
+
+### Architecture: Composition Over Inheritance
+
+New core abstractions:
+- `ISignalMessage` — minimal channel contract (TimestampUtc, Signal, BenchmarkPrice, Reason)
+- `ISignalGenerator<TSignal>` — replaces IAnalyst
+- `ITradeDispatcher<TSignal>` — replaces ITrader
+- `PipelineHost<TSignal>` — orchestrates generator → channel → dispatcher
+
+### Implementation
+
+- Created `framework-extraction` branch in both repos (qqqBot + MarketBlocks)
+- Created MarketBlocks/ARCHITECTURE.md (living architecture doc)
+- Created MarketBlocks/MIGRATION-TODO.md (phased checklist with history)
+- 7-phase plan: Phase 0 (docs) → Phase 1 (phantom deps) → Phase 2 (abstractions) →
+  Phase 3 (PipelineHost) → Phase 4 (qqqBot implements, penny-identical gate) →
+  Phase 5 (clean MarketBlocks) → Phase 6 (skeleton bot) → Phase 7 (rename)
+
+### Key Findings from Architecture Research
+
+- Infrastructure → Bots .csproj reference is phantom (zero source usage) — safe to remove
+- `PriceTick`, `AnalystSubscription`, `IAnalystMarketDataSource` trapped at bottom of
+  AnalystEngine.cs — need extraction to MarketBlocks.Trade
+- `MarketRegime` has 30+ fields, only ~6 are generic — rest are strategy-specific
+- `AnalystEngine` (1840 lines) and `TraderEngine` (4078 lines) have reusable pipeline shells
+  deeply interleaved with strategy logic — will be wrapped, not refactored
+- ~60% of codebase is cleanly extractable; ~40% needs wrapping or discarding

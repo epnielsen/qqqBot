@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Threading.Channels;
-using MarketBlocks.Bots.Services;
+using MarketBlocks.Trade.Interfaces;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace qqqBot.Tests;

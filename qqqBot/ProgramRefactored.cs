@@ -576,7 +576,7 @@ public static class ProgramRefactored
                     var segmentStart = ctx2.Overrides?.StartTime;
                     var segmentEnd = ctx2.Overrides?.EndTime;
                     
-                    services.AddSingleton<MarketBlocks.Bots.Services.IAnalystMarketDataSource>(sp =>
+                    services.AddSingleton<MarketBlocks.Trade.Interfaces.IAnalystMarketDataSource>(sp =>
                     {
                         var logger = sp.GetRequiredService<ILogger<ReplayMarketDataSource>>();
                         var simBroker = sp.GetRequiredService<SimulatedBroker>();
@@ -663,7 +663,7 @@ public static class ProgramRefactored
                     });
                     services.AddHostedService(sp => sp.GetRequiredService<MarketDataRecorder>());
                     
-                    services.AddSingleton<MarketBlocks.Bots.Services.IAnalystMarketDataSource>(sp =>
+                    services.AddSingleton<MarketBlocks.Trade.Interfaces.IAnalystMarketDataSource>(sp =>
                     {
                         var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
                         var broker = sp.GetRequiredService<IBrokerExecution>();
@@ -746,7 +746,7 @@ public static class ProgramRefactored
                 {
                     var logger = sp.GetRequiredService<ILogger<AnalystEngine>>();
                     var s = sp.GetRequiredService<MarketBlocks.Bots.Domain.TradingSettings>();
-                    var marketSource = sp.GetRequiredService<MarketBlocks.Bots.Services.IAnalystMarketDataSource>();
+                    var marketSource = sp.GetRequiredService<MarketBlocks.Trade.Interfaces.IAnalystMarketDataSource>();
                     var historicalSource = sp.GetService<IMarketDataSource>();  // null in replay
                     var fallbackAdapter = sp.GetService<IMarketDataAdapter>(); // null in replay
                     var trader = sp.GetRequiredService<TraderEngine>();
