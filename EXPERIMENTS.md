@@ -3746,3 +3746,25 @@ New core abstractions:
 - `AnalystEngine` (1840 lines) and `TraderEngine` (4078 lines) have reusable pipeline shells
   deeply interleaved with strategy logic — will be wrapped, not refactored
 - ~60% of codebase is cleanly extractable; ~40% needs wrapping or discarding
+
+---
+
+## Session: 2026-03-02 — OV Market Order Timeout Regression
+
+### Context
+Live trading on 2026-03-02 showed the bot failing to enter a position for 6+ minutes at the open despite a clear BULL signal at 09:32:14 ET. The bot placed 6 consecutive buy orders that all timed out (10s hardcoded `PendingOrderTimeoutSeconds`) and were canceled before filling. The 7th attempt at 09:38:25 ET finally filled. QQQ moved from $601.22 to $604.44 during the missed window.
+
+### Root Cause
+**Regression of the Feb 17-18 bug (fixed 2026-02-20, see TODO.md).** The OV TimeRule overrides had `UseMarketableLimits=false, UseIocOrders=false`, forcing plain Market/Day orders. Alpaca holds these in the opening auction, where they sit in `Accepted` state beyond the 10s timeout. The bot then self-cancels them and enters an escalating cooldown (15s → 30s → 60s → 60s → 60s → 60s).
+
+The broker log (Central Time) confirms all 6 canceled orders were submitted and canceled by the bot — the broker never rejected them. The 7th order at 08:38 CT (09:38 ET) was the first to fill, by which point the auction had long cleared and continuous trading was active.
+
+### Change Made
+- `appsettings.json` OV overrides: `UseMarketableLimits` false→**true**, `UseIocOrders` false→**true**
+- This restores the fix from 2026-02-20 that had regressed
+
+### Known Risk
+IOC orders have historically also caused timeout issues during the open (per user observation). This is a trial — monitor closely on 2026-03-03.
+
+### Future Consideration
+- `PendingOrderTimeoutSeconds` is hardcoded as `const int = 10` in TraderEngine.cs — should be made configurable and potentially phase-aware (longer timeout during OV when auction delays are expected)

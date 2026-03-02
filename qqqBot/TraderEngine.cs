@@ -32,7 +32,6 @@ public class TraderEngine : BackgroundService
     private decimal _pendingOrderBasePrice;
     private decimal _pendingOrderEffectivePrice;
     private DateTime? _pendingOrderSubmitTime;
-    private const int PendingOrderTimeoutSeconds = 10;
     
     // Safe mode flag - set when liquidation fails
     private bool _isSafeMode;
@@ -479,7 +478,7 @@ public class TraderEngine : BackgroundService
                     if (HasPendingOrderTimedOut())
                     {
                         _logger.LogWarning("[PENDING] Order {OrderId} timed out after {Seconds}s. Attempting cancel.",
-                            _pendingOrderId.Value, PendingOrderTimeoutSeconds);
+                            _pendingOrderId.Value, _settings.PendingOrderTimeoutSeconds);
                         
                         try
                         {
@@ -514,7 +513,7 @@ public class TraderEngine : BackgroundService
     private bool HasPendingOrderTimedOut()
     {
         return _pendingOrderSubmitTime.HasValue && 
-               (DateTime.UtcNow - _pendingOrderSubmitTime.Value).TotalSeconds > PendingOrderTimeoutSeconds;
+               (DateTime.UtcNow - _pendingOrderSubmitTime.Value).TotalSeconds > _settings.PendingOrderTimeoutSeconds;
     }
     
     /// <summary>

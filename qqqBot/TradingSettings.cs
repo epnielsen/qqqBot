@@ -25,6 +25,7 @@ public class TradingSettings : BaseTradingSettings
     public DynamicStopConfig DynamicStopLoss { get; set; } = new(); // Ratchet stop
     public int StopLossCooldownSeconds { get; set; } = 10; // Washout latch duration
     public int DirectionSwitchCooldownSeconds { get; set; } = 0; // Min seconds before switching BULL↔BEAR
+    public int PendingOrderTimeoutSeconds { get; set; } = 10; // Max seconds to wait for order fill before canceling
     
     // BRAKE SYSTEM (Velocity/Slope Detection)
     public decimal MinVelocityThreshold { get; set; } = 0.0001m;

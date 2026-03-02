@@ -84,6 +84,7 @@ public class TradingSettingsOverrides
     public decimal? TrendRescueTrailingStopPercent { get; set; }
     public bool? UseMarketableLimits { get; set; }
     public bool? UseIocOrders { get; set; }
+    public int? PendingOrderTimeoutSeconds { get; set; }
     public decimal? IocLimitOffsetCents { get; set; }
     public decimal? IocRetryStepCents { get; set; }
     public decimal? MaxSlippagePercent { get; set; }

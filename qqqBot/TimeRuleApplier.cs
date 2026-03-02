@@ -212,6 +212,7 @@ public class TimeRuleApplier
             TrendRescueTrailingStopPercent = _settings.TrendRescueTrailingStopPercent,
             UseMarketableLimits = _settings.UseMarketableLimits,
             UseIocOrders = _settings.UseIocOrders,
+            PendingOrderTimeoutSeconds = _settings.PendingOrderTimeoutSeconds,
             IocLimitOffsetCents = _settings.IocLimitOffsetCents,
             IocRetryStepCents = _settings.IocRetryStepCents,
             MaxSlippagePercent = _settings.MaxSlippagePercent,
@@ -292,6 +293,7 @@ public class TimeRuleApplier
         _settings.TrendRescueTrailingStopPercent = _baseValues.TrendRescueTrailingStopPercent;
         _settings.UseMarketableLimits = _baseValues.UseMarketableLimits;
         _settings.UseIocOrders = _baseValues.UseIocOrders;
+        _settings.PendingOrderTimeoutSeconds = _baseValues.PendingOrderTimeoutSeconds;
         _settings.IocLimitOffsetCents = _baseValues.IocLimitOffsetCents;
         _settings.IocRetryStepCents = _baseValues.IocRetryStepCents;
         _settings.MaxSlippagePercent = _baseValues.MaxSlippagePercent;
@@ -372,6 +374,7 @@ public class TimeRuleApplier
         if (o.TrendRescueTrailingStopPercent.HasValue) _settings.TrendRescueTrailingStopPercent = o.TrendRescueTrailingStopPercent.Value;
         if (o.UseMarketableLimits.HasValue) _settings.UseMarketableLimits = o.UseMarketableLimits.Value;
         if (o.UseIocOrders.HasValue) _settings.UseIocOrders = o.UseIocOrders.Value;
+        if (o.PendingOrderTimeoutSeconds.HasValue) _settings.PendingOrderTimeoutSeconds = o.PendingOrderTimeoutSeconds.Value;
         if (o.IocLimitOffsetCents.HasValue) _settings.IocLimitOffsetCents = o.IocLimitOffsetCents.Value;
         if (o.IocRetryStepCents.HasValue) _settings.IocRetryStepCents = o.IocRetryStepCents.Value;
         if (o.MaxSlippagePercent.HasValue) _settings.MaxSlippagePercent = o.MaxSlippagePercent.Value;
@@ -458,6 +461,7 @@ public class TimeRuleApplier
         if (o.TrendConfidenceThreshold.HasValue) changes.Add($"TrendConfidence={o.TrendConfidenceThreshold.Value}");
         if (o.UseMarketableLimits.HasValue) changes.Add($"MarketableLimits={o.UseMarketableLimits.Value}");
         if (o.UseIocOrders.HasValue) changes.Add($"IOC={o.UseIocOrders.Value}");
+        if (o.PendingOrderTimeoutSeconds.HasValue) changes.Add($"PendingOrderTimeout={o.PendingOrderTimeoutSeconds.Value}s");
         if (o.EnableTrimming.HasValue) changes.Add($"Trimming={o.EnableTrimming.Value}");
         if (o.DynamicStopLossTiers != null) changes.Add($"StopTiers={o.DynamicStopLossTiers.Count}");
         if (o.BaseDefaultStrategy.HasValue) changes.Add($"BaseStrategy={o.BaseDefaultStrategy.Value}");
@@ -524,6 +528,7 @@ public class SettingsSnapshot
     public decimal TrendRescueTrailingStopPercent { get; init; }
     public bool UseMarketableLimits { get; init; }
     public bool UseIocOrders { get; init; }
+    public int PendingOrderTimeoutSeconds { get; init; }
     public decimal IocLimitOffsetCents { get; init; }
     public decimal IocRetryStepCents { get; init; }
     public decimal MaxSlippagePercent { get; init; }

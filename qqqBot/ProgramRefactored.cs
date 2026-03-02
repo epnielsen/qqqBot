@@ -835,6 +835,7 @@ public static class ProgramRefactored
             DirectionSwitchCooldownSeconds = configuration.GetValue("TradingBot:DirectionSwitchCooldownSeconds", 0),
             StartingAmount = configuration.GetValue("TradingBot:StartingAmount", 10000m),
             UseMarketableLimits = configuration.GetValue("TradingBot:UseMarketableLimits", false),
+            PendingOrderTimeoutSeconds = configuration.GetValue("TradingBot:PendingOrderTimeoutSeconds", 10),
             MaxSlippagePercent = configuration.GetValue("TradingBot:MaxSlippagePercent", 0.002m),
             MaxChaseDeviationPercent = configuration.GetValue("TradingBot:MaxChaseDeviationPercent", 0.003m),
             // Hybrid Engine Settings
@@ -1015,6 +1016,7 @@ public static class ProgramRefactored
         if (section["TrendRescueTrailingStopPercent"] != null) o.TrendRescueTrailingStopPercent = section.GetValue<decimal>("TrendRescueTrailingStopPercent");
         if (section["UseMarketableLimits"] != null) o.UseMarketableLimits = section.GetValue<bool>("UseMarketableLimits");
         if (section["UseIocOrders"] != null) o.UseIocOrders = section.GetValue<bool>("UseIocOrders");
+        if (section["PendingOrderTimeoutSeconds"] != null) o.PendingOrderTimeoutSeconds = section.GetValue<int>("PendingOrderTimeoutSeconds");
         if (section["IocLimitOffsetCents"] != null) o.IocLimitOffsetCents = section.GetValue<decimal>("IocLimitOffsetCents");
         if (section["IocRetryStepCents"] != null) o.IocRetryStepCents = section.GetValue<decimal>("IocRetryStepCents");
         if (section["MaxSlippagePercent"] != null) o.MaxSlippagePercent = section.GetValue<decimal>("MaxSlippagePercent");
