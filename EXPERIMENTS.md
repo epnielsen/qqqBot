@@ -3768,3 +3768,43 @@ IOC orders have historically also caused timeout issues during the open (per use
 
 ### Future Consideration
 - `PendingOrderTimeoutSeconds` is hardcoded as `const int = 10` in TraderEngine.cs — should be made configurable and potentially phase-aware (longer timeout during OV when auction delays are expected)
+
+---
+
+## Session: 2026-03-06 — Fix Stale IOC Liquidation + Phase Stuck Across Multi-Day Runs
+
+### Context
+Two independent production bugs discovered from live trading logs.
+
+### Bug A: Stale IOC Orders Locking Shares During Liquidation
+**Incidents**: Feb 12, Feb 26, Mar 5. On Mar 5, trailing stop triggered liquidation of 609 TQQQ shares. IOC attempt 1 partially filled 251/609. Subsequent IOC attempt got "insufficient qty available for order (requested: 358, available: 0)". Market order fallback also failed 3x with same error — shares existed in position but were locked by stale IOC orders. Exception thrown. Second liquidation attempt (daily limit) eventually succeeded after `CancelAllOpenOrdersAsync` cleared the stale order, but 23 shares had been sold by the settling stale IOC in the interim.
+
+**Root cause**: Neither the IOC→market fallback path nor the resync logic called `CancelAllOpenOrdersAsync` to free shares locked by stale orders. Feb 26 log confirms: second liquidation found "Cancelled 1 stale orders for SQQQ before liquidation".
+
+**Fix** (3 changes):
+1. `TraderEngine.LiquidateCurrentPositionAsync`: Added `CancelAllOpenOrdersAsync` + 100ms delay between IOC phase exit and market order fallback
+2. `TraderEngine.LiquidateCurrentPositionAsync`: Added `CancelAllOpenOrdersAsync` + 100ms delay inside the resync block (when market order fails with "insufficient qty")
+3. `IocMachineGunExecutor`: Added 50ms delay after per-iteration `CancelOrderAsync` + ghost share check to let Alpaca release share locks before next submission
+
+### Bug B: Phase Stuck in "Power Hour" Across Multi-Day Runs
+**Incident**: Mar 3→4→5. Bot ran continuously across 3 days. Day 1 (Mar 3) had correct OV→Base→PH transitions. Days 2-3 were stuck at `[Power Hour]` from 09:30, using MeanReversion strategy at market open (should be Trend for Base phase).
+
+**Root cause**: `TimeRuleApplier` uses monotonic `TimeSpan` guards (`_highWaterTimes` dict, `_globalMaxTime` field) to prevent cross-caller phase bouncing. These only advance forward and were never reset on day boundaries. Day N ends at ~16:00, so Day N+1's 09:30 is rejected by `easternTimeOfDay < hwm` check (09:30 < 16:00). Compounded by `ProcessMarketDataLoop` never exiting at EOD (unreachable exit condition: MARKET_CLOSE emitted at 15:58 but exit required `now >= 16:00` when `IsMarketOpen` was already blocking regime emission).
+
+**Fix** (7 changes):
+1. Added `ResetForNewDay()` method to `TimeRuleApplier` — clears HWM dictionary, resets global max, nulls phase, restores base settings
+2. Added `_lastDate` (DateOnly) field and date-aware `CheckAndApply(DateTime, callerId)` overload that auto-detects day boundaries
+3. Original `CheckAndApply(TimeSpan, callerId)` preserved as backward-compatible wrapper
+4. Added `DayBoundaryDetected` property for callers to check
+5. Updated AnalystEngine + TraderEngine to use DateTime overload
+6. Fixed `ProcessMarketDataLoop` EOD exit: in live mode, exits at 15:58 (MARKET_CLOSE time) so outer loop can reconnect; replay mode still exits at 16:00
+7. Added per-phase one-shot flag reset on ALL phase transitions (drift/displacement consumed flags)
+8. Belt-and-suspenders: TraderEngine day reset block also calls `ResetForNewDay()`
+
+### Tests
+- 7 new tests in `TimeRuleApplierTests.cs` covering day boundary scenarios
+- All 181 qqqBot tests pass, all 527 MarketBlocks tests pass (1 pre-existing skip)
+
+### Verification Needed
+- **Part A**: Next live trading day with liquidation event — check logs for cancel-all messages between IOC and market phases
+- **Part B**: Next multi-day live run — check logs for `[TIME RULES] Day boundary reset` and correct phase transitions on Day 2+

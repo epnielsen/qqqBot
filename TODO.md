@@ -277,6 +277,24 @@
 - [x] **Investigate trailing stop behavior during gradual/trendRescue trends**
   **FIXED (2026-02-20)**: Added `TrendRescueTrailingStopPercent` setting (Base: 0.005 = 0.5%). TrendRescue positions use this wider stop with DynamicStopLoss ratchet skipped. Prevents churn cycle on gradual uptrends. See EXPERIMENTS.md v7 results.
 
+## Stale IOC Orders Locking Shares (2026-03-05)
+
+- [x] **FIX: IOC executor leaves stale orders that lock shares during liquidation fallback**
+  **FIXED (2026-03-06)**: Observed Mar 5 (also Feb 26, Feb 12). IOC partial fill → stale order locks remaining shares at Alpaca → market fallback gets "insufficient qty available for order" 3x → exception. Second liquidation attempt eventually succeeds after CancelAllOpenOrdersAsync clears the stale order.
+  Fix: (1) Added `CancelAllOpenOrdersAsync` + 100ms delay between IOC phase and market fallback in `LiquidateCurrentPositionAsync`. (2) Added `CancelAllOpenOrdersAsync` + 100ms delay inside resync block when market order fails with "insufficient qty". (3) Added 50ms delay in `IocMachineGunExecutor` after per-iteration cancel to let Alpaca release share locks.
+
+- [ ] **VERIFY: Check live logs after deploying stale-IOC fix**
+  After the fix is deployed, on the next AI session during/after a live trading day, check the day's log file for: (1) new cancel-all messages between IOC and market phases (`Cancelled N stale IOC orders`), (2) no "insufficient qty" cascade, (3) clean liquidations, (4) no large equity delta warnings. Mark done once verified on at least one live trading day with a liquidation event.
+
+## Phase Stuck in Power Hour Across Multi-Day Runs (2026-03-06)
+
+- [x] **FIX: TimeRuleApplier monotonic guards never reset across day boundaries**
+  **FIXED (2026-03-06)**: When bot runs continuously across multiple days, `_highWaterTimes` and `_globalMaxTime` (TimeSpan) from Day N's 16:00 blocked all Day N+1 timestamps (09:30 < 16:00), freezing phase at "Power Hour" with wrong strategy/settings. Confirmed Mar 3→4→5 logs showed `[Power Hour]` at 09:30 on Days 3+.
+  Fix: (1) Added `ResetForNewDay()` method to `TimeRuleApplier`. (2) Added date-aware `CheckAndApply(DateTime)` overload that auto-detects day boundaries. (3) Updated AnalystEngine + TraderEngine callers to pass full DateTime. (4) Added `DayBoundaryDetected` flag. (5) Fixed `ProcessMarketDataLoop` EOD exit condition (was unreachable: MARKET_CLOSE at 15:58 but exit required >=16:00 when IsMarketOpen blocks). (6) Reset per-phase one-shot flags on all phase transitions. (7) Belt-and-suspenders `ResetForNewDay()` call in TraderEngine day reset block.
+
+- [ ] **VERIFY: Check live logs after deploying phase-reset fix**
+  On the next multi-day live run, check logs for: (1) `[TIME RULES] Day boundary reset` at day start, (2) correct `[Open Volatility]` phase at 09:30 on Day 2+, (3) `[ANALYST] Session ended (MARKET_CLOSE)` at 15:58 in live mode, (4) `[ANALYST] Waiting for market session` overnight. Mark done once verified on at least one multi-day run.
+
 - [ ] **Add CycleTracker toggle setting**
   CycleTracker audited 2026-02-20: clean, single influence point with mandatory logging. Not a priority.
 

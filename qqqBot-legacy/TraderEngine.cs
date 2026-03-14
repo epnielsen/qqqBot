@@ -318,7 +318,7 @@ public class TraderEngine : BackgroundService
                     if (_timeRuleApplier != null)
                     {
                         var easternNow = TimeZoneInfo.ConvertTimeFromUtc(_currentUtc, _easternZone);
-                        var phaseChanged = _timeRuleApplier.CheckAndApply(easternNow.TimeOfDay, "trader");
+                        var phaseChanged = _timeRuleApplier.CheckAndApply(easternNow, "trader");
                         
                         // Detect phase transition for PH Resume
                         var currentPhase = _timeRuleApplier.ActivePhaseName;
@@ -1634,6 +1634,11 @@ public class TraderEngine : BackgroundService
                     _state.DailyTargetStopLevel = null;
                     _lastDirectionSwitchTime = null; // Reset direction switch cooldown
                     _stateManager.Save(_state);
+                    
+                    // Belt-and-suspenders: explicitly reset TimeRuleApplier phase state.
+                    // This is normally handled by the date-aware CheckAndApply, but ensures
+                    // reset even if the first tick of the new day arrives via an unusual path.
+                    _timeRuleApplier?.ResetForNewDay();
                 }
                 finally
                 {
@@ -2648,6 +2653,26 @@ public class TraderEngine : BackgroundService
             {
                 _logger.LogWarning("[FILL] IOC Sell failed completely. Falling back to market order.");
             }
+            
+            // CRITICAL: Cancel any stale IOC orders before falling back to market orders.
+            // The IOC executor may leave orders in non-terminal states that lock shares via
+            // Alpaca's SellToClose position intent validation, causing "insufficient qty" errors.
+            // Confirmed root cause of Mar 5, Feb 26, Feb 12 liquidation failures.
+            try
+            {
+                var staleCancelled = await _broker.CancelAllOpenOrdersAsync(symbol, ct);
+                if (staleCancelled > 0)
+                {
+                    _logger.LogWarning("[SELL] Cancelled {Count} stale IOC orders for {Symbol} before market fallback", staleCancelled, symbol);
+                }
+                // 100ms delay to let Alpaca fully release share locks from cancelled orders.
+                // 50ms was insufficient based on observed production failures.
+                await Task.Delay(100, ct);
+            }
+            catch (Exception cancelEx)
+            {
+                _logger.LogWarning(cancelEx, "[SELL] Failed to cancel stale orders before market fallback - proceeding anyway");
+            }
         }
 
         // PHASE 2: Market order for remaining shares (fallback or primary if IOC disabled)
@@ -2815,6 +2840,23 @@ public class TraderEngine : BackgroundService
                      _logger.LogWarning("[SELL] Order rejected due to Insufficient Quantity. Resyncing with broker...");
                      try 
                      {
+                         // Cancel any remaining stale orders that may be locking shares
+                         // before querying position and retrying. This addresses the case where
+                         // IOC orders or previous market orders are still open at the broker.
+                         try
+                         {
+                             var resyncCancelled = await _broker.CancelAllOpenOrdersAsync(symbol, ct);
+                             if (resyncCancelled > 0)
+                             {
+                                 _logger.LogWarning("[SELL] Cancelled {Count} stale orders during resync", resyncCancelled);
+                             }
+                             await Task.Delay(100, ct);
+                         }
+                         catch (Exception cancelEx)
+                         {
+                             _logger.LogWarning(cancelEx, "[SELL] Failed to cancel stale orders during resync - proceeding anyway");
+                         }
+
                          var position = await _broker.GetPositionAsync(symbol, ct);
                          var actualQty = position?.Quantity ?? 0;
                          

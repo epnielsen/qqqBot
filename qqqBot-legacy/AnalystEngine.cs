@@ -370,9 +370,14 @@ public class AnalystEngine : BackgroundService
                 {
                     var utcRef = _settings.BypassMarketHoursCheck ? tick.TimestampUtc : DateTime.UtcNow;
                     var now = TimeZoneInfo.ConvertTimeFromUtc(utcRef, _easternZone);
-                    // Standard close is 4:00 PM (16:00). We signal MARKET_CLOSE slightly before.
-                    // If we pass 4:00 PM, we disconnect to reset for next day.
-                    if (now.TimeOfDay >= new TimeSpan(16, 0, 0))
+                    // MARKET_CLOSE is emitted at 15:58. In replay mode, we wait until 16:00
+                    // to give the TraderEngine time to process it. In live mode, we exit at
+                    // 15:58+ since the streaming connection persists and we need the outer
+                    // loop to reconnect fresh the next morning.
+                    var exitTime = _settings.BypassMarketHoursCheck 
+                        ? new TimeSpan(16, 0, 0) 
+                        : new TimeSpan(15, 58, 0);
+                    if (now.TimeOfDay >= exitTime)
                     {
                         if (_settings.BypassMarketHoursCheck)
                         {
@@ -383,7 +388,7 @@ public class AnalystEngine : BackgroundService
                         }
                         else
                         {
-                            _logger.LogInformation("[ANALYST] Session ended (16:00 ET). Restarting loop to wait for next session.");
+                            _logger.LogInformation("[ANALYST] Session ended (MARKET_CLOSE). Restarting loop to wait for next session.");
                         }
                         return;
                     }
@@ -416,13 +421,19 @@ public class AnalystEngine : BackgroundService
         if (_timeRuleApplier != null)
         {
             var snapshot = _timeRuleApplier.SnapshotCurrentSettings();
-            if (_timeRuleApplier.CheckAndApply(easternNow.TimeOfDay, "analyst"))
+            if (_timeRuleApplier.CheckAndApply(easternNow, "analyst"))
             {
                 // Phase changed — check if indicator calculators need rebuilding
                 if (_timeRuleApplier.IndicatorSettingsChanged(snapshot))
                 {
                     ReconfigureIndicators();
                 }
+                
+                // Reset per-phase one-shot flags on ANY phase transition (including day boundary)
+                // so that drift/displacement signals are available in the new phase.
+                _bullDriftConsumedThisPhase = false;
+                _bearDriftConsumedThisPhase = false;
+                _displacementConsumedThisPhase = false;
                 
                 // Analyst phase reset (if configured) — only on PH entry, not OV→Base
                 var currentPhase = _timeRuleApplier.ActivePhaseName ?? "Base Config";

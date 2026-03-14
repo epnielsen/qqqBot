@@ -15,7 +15,7 @@
 
   <!-- Exclude test and library project folders from main project compilation -->
   <ItemGroup>
-    <Compile Remove="qqqBot.Tests\**" />
+    <Compile Remove="qqqBot-legacy.Tests\**" />
   </ItemGroup>
 
   <ItemGroup>

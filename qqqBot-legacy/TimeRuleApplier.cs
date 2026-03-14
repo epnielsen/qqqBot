@@ -40,6 +40,11 @@ public class TimeRuleApplier
     // stays at 10:31. Settings stay consistent for both callers.
     private TimeSpan _globalMaxTime = TimeSpan.Zero;
     
+    // Day boundary detection: tracks the last calendar date seen.
+    // When a new date is detected, all monotonic guards are reset so that
+    // phases transition correctly on Day N+1 (09:30 is no longer blocked by Day N's 16:00).
+    private DateOnly? _lastDate;
+    
     /// <summary>Name of the currently active phase, or null if in base config.</summary>
     public string? ActivePhaseName
     {
@@ -48,6 +53,9 @@ public class TimeRuleApplier
     
     /// <summary>True if the settings were changed since the last call to CheckAndApply().</summary>
     public bool SettingsChangedSinceLastCheck { get; private set; }
+    
+    /// <summary>True if the most recent CheckAndApply call detected a new calendar day.</summary>
+    public bool DayBoundaryDetected { get; private set; }
 
     public TimeRuleApplier(TradingSettings settings, ILogger<TimeRuleApplier> logger)
     {
@@ -79,10 +87,39 @@ public class TimeRuleApplier
     /// <returns>True if settings were changed (phase transition occurred).</returns>
     public bool CheckAndApply(TimeSpan easternTimeOfDay, string callerId = "default")
     {
+        return CheckAndApply(easternTimeOfDay, null, callerId);
+    }
+    
+    /// <summary>
+    /// Date-aware overload. Detects day boundaries and resets monotonic guards so that
+    /// phases transition correctly across multi-day runs.
+    /// </summary>
+    /// <param name="easternNow">Full DateTime in Eastern time.</param>
+    /// <param name="callerId">Identifies the caller (e.g., "analyst" or "trader") for per-caller monotonic guards.</param>
+    /// <returns>True if settings were changed (phase transition occurred).</returns>
+    public bool CheckAndApply(DateTime easternNow, string callerId = "default")
+    {
+        return CheckAndApply(easternNow.TimeOfDay, DateOnly.FromDateTime(easternNow), callerId);
+    }
+    
+    private bool CheckAndApply(TimeSpan easternTimeOfDay, DateOnly? date, string callerId)
+    {
         if (_settings.TimeRules.Count == 0) return false;
         
         lock (_lock)
         {
+            // Day boundary detection: when date changes, reset all monotonic guards.
+            // Without this, Day N's high-water marks (e.g., 16:00) would block
+            // all of Day N+1's timestamps (09:30 < 16:00), freezing the phase.
+            DayBoundaryDetected = false;
+            if (date.HasValue && _lastDate.HasValue && date.Value != _lastDate.Value)
+            {
+                ResetForNewDay();
+                DayBoundaryDetected = true;
+            }
+            if (date.HasValue)
+                _lastDate = date.Value;
+            
             // Per-caller monotonic time guard: ignore timestamps that go backwards
             // for this specific caller.
             if (_highWaterTimes.TryGetValue(callerId, out var hwm) && easternTimeOfDay < hwm)
@@ -150,6 +187,27 @@ public class TimeRuleApplier
             
             return true;
         }
+    }
+    
+    /// <summary>
+    /// Resets all monotonic time guards and phase tracking for a new trading day.
+    /// Called automatically by CheckAndApply when a day boundary is detected,
+    /// or manually by the TraderEngine's day reset logic as a safety net.
+    /// </summary>
+    public void ResetForNewDay()
+    {
+        // Must be called within _lock or by caller who holds it.
+        // Public callers should be fine since this is called from day-reset paths
+        // that don't overlap with tick processing.
+        _highWaterTimes.Clear();
+        _globalMaxTime = TimeSpan.Zero;
+        _activePhaseName = null;
+        _activeRule = null;
+        
+        // Restore settings to base config (clear any Power Hour overrides from yesterday)
+        RestoreBaseValues();
+        
+        _logger.LogInformation("[TIME RULES] Day boundary reset — cleared phase state and restored base config");
     }
     
     /// <summary>

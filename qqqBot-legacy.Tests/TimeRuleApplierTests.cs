@@ -755,4 +755,165 @@ public class TimeRuleApplierTests
         applier.CheckAndApply(new TimeSpan(9, 45, 0), "trader");
         Assert.Equal(baseTrailingStop, settings.TrailingStopPercent);
     }
+
+    // ====================================================================
+    // DAY BOUNDARY RESET (Part B fix — multi-day runs)
+    // ====================================================================
+
+    /// <summary>
+    /// Core regression test: without the day boundary fix, the high-water mark from
+    /// Day N's 16:00 blocks all Day N+1 timestamps (09:30 < 16:00), freezing the phase
+    /// at Power Hour. This test verifies that passing a new date correctly resets.
+    /// </summary>
+    [Fact]
+    public void CheckAndApply_DayBoundary_ResetsPhaseFromPowerHourToOV()
+    {
+        var settings = CreateBaseSettings();
+        var applier = CreateApplier(settings);
+
+        // Day 1: transition through all phases ending in Power Hour
+        var day1 = new DateTime(2026, 3, 5);
+        applier.CheckAndApply(day1.Add(new TimeSpan(9, 30, 0)), "analyst");
+        Assert.Equal("Open Volatility", applier.ActivePhaseName);
+
+        applier.CheckAndApply(day1.Add(new TimeSpan(10, 30, 0)), "analyst");
+        Assert.Null(applier.ActivePhaseName); // Base Config
+
+        applier.CheckAndApply(day1.Add(new TimeSpan(14, 0, 0)), "analyst");
+        Assert.Equal("Power Hour", applier.ActivePhaseName);
+
+        applier.CheckAndApply(day1.Add(new TimeSpan(15, 59, 0)), "analyst");
+        Assert.Equal("Power Hour", applier.ActivePhaseName);
+
+        // Day 2: first tick at 09:30 — must reset to Open Volatility, NOT stay at Power Hour
+        var day2 = new DateTime(2026, 3, 6);
+        var changed = applier.CheckAndApply(day2.Add(new TimeSpan(9, 30, 0)), "analyst");
+
+        Assert.True(changed);
+        Assert.Equal("Open Volatility", applier.ActivePhaseName);
+        Assert.True(applier.DayBoundaryDetected);
+        // Verify OV overrides are applied (not PH overrides stuck from yesterday)
+        Assert.Equal(0.00002m, settings.MinVelocityThreshold);
+    }
+
+    /// <summary>
+    /// Verifies that DayBoundaryDetected is only true on the first call of a new day.
+    /// </summary>
+    [Fact]
+    public void CheckAndApply_DayBoundary_FlagOnlySetOnFirstCall()
+    {
+        var settings = CreateBaseSettings();
+        var applier = CreateApplier(settings);
+
+        var day1 = new DateTime(2026, 3, 5);
+        applier.CheckAndApply(day1.Add(new TimeSpan(14, 0, 0)), "analyst");
+
+        var day2 = new DateTime(2026, 3, 6);
+        applier.CheckAndApply(day2.Add(new TimeSpan(9, 30, 0)), "analyst");
+        Assert.True(applier.DayBoundaryDetected);
+
+        // Second call on same day — DayBoundaryDetected should be false
+        applier.CheckAndApply(day2.Add(new TimeSpan(9, 31, 0)), "analyst");
+        Assert.False(applier.DayBoundaryDetected);
+    }
+
+    /// <summary>
+    /// Verifies that both analyst and trader callers work correctly across day boundaries.
+    /// The trader's high-water mark from Day N must not block Day N+1.
+    /// </summary>
+    [Fact]
+    public void CheckAndApply_DayBoundary_ResetsAllCallerHighWaterMarks()
+    {
+        var settings = CreateBaseSettings();
+        var applier = CreateApplier(settings);
+
+        var day1 = new DateTime(2026, 3, 5);
+        // Both callers advance to late in the day
+        applier.CheckAndApply(day1.Add(new TimeSpan(15, 30, 0)), "analyst");
+        applier.CheckAndApply(day1.Add(new TimeSpan(15, 45, 0)), "trader");
+        Assert.Equal("Power Hour", applier.ActivePhaseName);
+
+        // Day 2: analyst goes first
+        var day2 = new DateTime(2026, 3, 6);
+        applier.CheckAndApply(day2.Add(new TimeSpan(9, 30, 0)), "analyst");
+        Assert.Equal("Open Volatility", applier.ActivePhaseName);
+
+        // Trader at 09:31 on Day 2 — must NOT be blocked by Day 1's 15:45
+        var traderChanged = applier.CheckAndApply(day2.Add(new TimeSpan(9, 31, 0)), "trader");
+        // No phase change (still OV), but the call must succeed (not be rejected by HWM)
+        Assert.False(traderChanged); // Same phase
+        Assert.Equal("Open Volatility", applier.ActivePhaseName);
+    }
+
+    /// <summary>
+    /// Verifies settings are fully restored to base values after day reset
+    /// (not left with stale Power Hour overrides).
+    /// </summary>
+    [Fact]
+    public void CheckAndApply_DayBoundary_RestoresBaseSettingsBeforeNewPhase()
+    {
+        var settings = CreateBaseSettings();
+        var applier = CreateApplier(settings);
+
+        var day1 = new DateTime(2026, 3, 5);
+        applier.CheckAndApply(day1.Add(new TimeSpan(14, 0, 0)), "analyst");
+        // PH overrides are applied
+        Assert.Equal("Power Hour", applier.ActivePhaseName);
+        var phVelocity = settings.MinVelocityThreshold; // PH override value
+
+        // Day 2 at 11:00 (Base Config — no rule matches)
+        var day2 = new DateTime(2026, 3, 6);
+        applier.CheckAndApply(day2.Add(new TimeSpan(11, 0, 0)), "analyst");
+        Assert.Null(applier.ActivePhaseName); // Base Config
+
+        // Verify base values are restored, not PH overrides
+        Assert.Equal(0.000001m, settings.MinVelocityThreshold);
+        Assert.NotEqual(phVelocity, settings.MinVelocityThreshold);
+    }
+
+    /// <summary>
+    /// ResetForNewDay can be called externally (e.g., from TraderEngine's day reset).
+    /// Verifies it clears phase state so the next CheckAndApply evaluates fresh.
+    /// </summary>
+    [Fact]
+    public void ResetForNewDay_ClearsPhaseState()
+    {
+        var settings = CreateBaseSettings();
+        var applier = CreateApplier(settings);
+
+        applier.CheckAndApply(new TimeSpan(14, 0, 0));
+        Assert.Equal("Power Hour", applier.ActivePhaseName);
+
+        applier.ResetForNewDay();
+
+        Assert.Null(applier.ActivePhaseName);
+        // Base values restored
+        Assert.Equal(0.000001m, settings.MinVelocityThreshold);
+        Assert.Equal(180, settings.SMAWindowSeconds);
+        Assert.True(settings.UseMarketableLimits);
+
+        // Can re-enter OV at 09:30 (HWM was cleared)
+        var changed = applier.CheckAndApply(new TimeSpan(9, 30, 0));
+        Assert.True(changed);
+        Assert.Equal("Open Volatility", applier.ActivePhaseName);
+    }
+
+    /// <summary>
+    /// TimeSpan-only overload (no date) still works — maintains backward compatibility.
+    /// Day boundary detection requires the DateTime overload.
+    /// </summary>
+    [Fact]
+    public void CheckAndApply_TimeSpanOverload_StillEnforcesMonotonicGuard()
+    {
+        var settings = CreateBaseSettings();
+        var applier = CreateApplier(settings);
+
+        applier.CheckAndApply(new TimeSpan(14, 0, 0));
+        Assert.Equal("Power Hour", applier.ActivePhaseName);
+
+        // Going backwards is still rejected without a date
+        var changed = applier.CheckAndApply(new TimeSpan(9, 30, 0));
+        Assert.False(changed);
+        Assert.Equal("Power Hour", applier.ActivePhaseName);
+    }
 }

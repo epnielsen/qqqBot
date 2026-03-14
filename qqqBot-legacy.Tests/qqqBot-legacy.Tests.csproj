@@ -1,0 +1,49 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Alpaca.Markets" Version="7.*" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Trade\MarketBlocks.Trade.csproj" />
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Bots\MarketBlocks.Bots.csproj" />
+    <ProjectReference Include="..\..\MarketBlocks\MarketBlocks.Infrastructure\MarketBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <!-- Include source files from main project for testing -->
+  <ItemGroup>
+    <Compile Include="..\qqqBot-legacy\TradingSettings.cs" Link="TradingSettings.cs" />
+    <Compile Include="..\qqqBot-legacy\TradingState.cs" Link="TradingState.cs" />
+    <Compile Include="..\qqqBot-legacy\MarketRegime.cs" Link="MarketRegime.cs" />
+    <Compile Include="..\qqqBot-legacy\StrategyMode.cs" Link="StrategyMode.cs" />
+    <Compile Include="..\qqqBot-legacy\HaltReason.cs" Link="HaltReason.cs" />
+    <Compile Include="..\qqqBot-legacy\AnalystPhaseResetMode.cs" Link="AnalystPhaseResetMode.cs" />
+    <Compile Include="..\qqqBot-legacy\TimeBasedRule.cs" Link="TimeBasedRule.cs" />
+    <Compile Include="..\qqqBot-legacy\AnalystEngine.cs" Link="AnalystEngine.cs" />
+    <Compile Include="..\qqqBot-legacy\TraderEngine.cs" Link="TraderEngine.cs" />
+    <Compile Include="..\qqqBot-legacy\TimeRuleApplier.cs" Link="TimeRuleApplier.cs" />
+    <Compile Include="..\qqqBot-legacy\VolatilityTracker.cs" Link="VolatilityTracker.cs" />
+    <Compile Include="..\qqqBot-legacy\CycleTracker.cs" Link="CycleTracker.cs" />
+    <Compile Include="..\qqqBot-legacy\CommandLineOverrides.cs" Link="CommandLineOverrides.cs" />
+    <Compile Include="..\qqqBot-legacy\TrailingStopEngineExtensions.cs" Link="TrailingStopEngineExtensions.cs" />
+    <Compile Include="..\qqqBot-legacy\TradingStateManager.cs" Link="TradingStateManager.cs" />
+  </ItemGroup>
+
+</Project>

@@ -5,12 +5,12 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
 WORKDIR /src
 
 # Copy csproj and restore as distinct layers for cache efficiency
-COPY ["qqqBot.csproj", "./"]
-RUN dotnet restore "qqqBot.csproj" --runtime linux-musl-x64
+COPY ["qqqBot-legacy.csproj", "./"]
+RUN dotnet restore "qqqBot-legacy.csproj" --runtime linux-musl-x64
 
 # Copy everything else and build
 COPY . .
-RUN dotnet publish "qqqBot.csproj" -c Release -o /app/publish \
+RUN dotnet publish "qqqBot-legacy.csproj" -c Release -o /app/publish \
     --runtime linux-musl-x64 \
     --self-contained false \
     /p:UseAppHost=false \
@@ -46,7 +46,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD pgrep -f "dotnet.*qqqBot" || exit 1
 
 # Entrypoint points back to the /app directory for the DLL
-ENTRYPOINT ["dotnet", "/app/qqqBot.dll"]
+ENTRYPOINT ["dotnet", "/app/qqqBot-legacy.dll"]
 
 # Example usage:
 # docker build -t qqqbot:latest .
