@@ -55,6 +55,7 @@ public record MarketRegime(
     bool IsDisplacementReentry = false
 ) : ISignalMessage
 {
+    public Guid CorrelationId { get; init; } = Guid.NewGuid();
     /// <summary>
     /// Check if this regime data is stale (older than threshold).
     /// </summary>
